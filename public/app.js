@@ -2,6 +2,7 @@ const canvas = document.querySelector("#map-canvas");
 const ctx = canvas.getContext("2d");
 const widthInput = document.querySelector("#map-width");
 const heightInput = document.querySelector("#map-height");
+const riverSourcesInput = document.querySelector("#river-sources");
 const generateButton = document.querySelector("#generate-button");
 const saveButton = document.querySelector("#save-button");
 const loadButton = document.querySelector("#load-button");
@@ -18,6 +19,11 @@ const terrainStyles = {
     fill: "#d8c596",
     stroke: "#7e735f",
     label: "#29251d",
+  },
+  riverSource: {
+    fill: "#2d79b8",
+    stroke: "#9bc7e8",
+    label: "#f3fbff",
   },
 };
 
@@ -56,8 +62,10 @@ function hexPoints(cx, cy, size) {
   return points;
 }
 
-function drawHex(cx, cy, size, label, terrain) {
-  const style = terrainStyles[terrain] || terrainStyles.none;
+function drawHex(cx, cy, size, label, terrain, hasRiverSource) {
+  const style = hasRiverSource
+    ? terrainStyles.riverSource
+    : terrainStyles[terrain] || terrainStyles.none;
   const points = hexPoints(cx, cy, size + 0.15);
   ctx.beginPath();
   points.forEach(([x, y], index) => {
@@ -97,28 +105,33 @@ function drawMap(map) {
   ctx.fillStyle = terrainStyles.none.fill;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+  const riverSourceKeys = new Set((map.river_sources || []).map((source) => `${source.q},${source.r}`));
+
   for (const hex of map.hexes) {
     const col = hex.q - 1;
     const row = hex.r - 1;
     const cx = margin + size + col * size * 1.5;
     const cy = margin + hexHeight / 2 + row * hexHeight + (col % 2) * hexHeight / 2;
-    drawHex(cx, cy, size, `${hex.q},${hex.r}`, hex.terrain);
+    const hasRiverSource = riverSourceKeys.has(`${hex.q},${hex.r}`);
+    drawHex(cx, cy, size, `${hex.q},${hex.r}`, hex.terrain, hasRiverSource);
   }
 }
 
 async function generateMap() {
   const width = clampDimension(widthInput.value, 1, 80, 16);
   const height = clampDimension(heightInput.value, 1, 60, 10);
+  const riverSources = clampDimension(riverSourcesInput.value, 0, 100, 3);
   const seed = newSeed();
   widthInput.value = width;
   heightInput.value = height;
+  riverSourcesInput.value = riverSources;
 
   generateButton.disabled = true;
   try {
     const response = await fetch("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ width, height, seed }),
+      body: JSON.stringify({ width, height, seed, riverSources }),
     });
     const payload = await response.json();
     if (!response.ok) {

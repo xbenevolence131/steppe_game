@@ -55,12 +55,12 @@ function readRequestJson(req) {
   });
 }
 
-function parseDimension(value, fallback) {
+function parseBoundedInteger(value, fallback, min, max) {
   const result = Number(value ?? fallback);
-  if (!Number.isInteger(result) || result <= 0) {
+  if (!Number.isInteger(result) || result < min) {
     return fallback;
   }
-  return Math.min(result, 80);
+  return Math.min(result, max);
 }
 
 function parseSeed(value) {
@@ -88,15 +88,17 @@ async function handleGenerate(req, res) {
     return;
   }
 
-  const width = parseDimension(payload.width, 16);
-  const height = parseDimension(payload.height, 10);
+  const width = parseBoundedInteger(payload.width, 16, 1, 80);
+  const height = parseBoundedInteger(payload.height, 10, 1, 60);
   const seed = parseSeed(payload.seed);
+  const riverSources = parseBoundedInteger(payload.riverSources, 3, 0, 100);
 
   execFile(executable, [
     "generate",
     "--width", String(width),
     "--height", String(height),
     "--seed", String(seed),
+    "--river-sources", String(riverSources),
   ], {
     cwd: rootDir,
     windowsHide: true,

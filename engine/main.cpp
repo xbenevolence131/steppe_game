@@ -3,8 +3,10 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <random>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -12,6 +14,12 @@ struct GenerateArgs {
     int width = 16;
     int height = 10;
     std::uint32_t seed = 1;
+    int river_sources = 3;
+};
+
+struct Coord {
+    int q = 1;
+    int r = 1;
 };
 
 int parse_positive_int(const std::string& value, const std::string& name) {
@@ -26,6 +34,23 @@ int parse_positive_int(const std::string& value, const std::string& name) {
 
     if (parsed != value.size() || result <= 0) {
         throw std::runtime_error(name + " must be a positive integer");
+    }
+
+    return result;
+}
+
+int parse_non_negative_int(const std::string& value, const std::string& name) {
+    std::size_t parsed = 0;
+    int result = 0;
+
+    try {
+        result = std::stoi(value, &parsed, 10);
+    } catch (const std::exception&) {
+        throw std::runtime_error(name + " must be a non-negative integer");
+    }
+
+    if (parsed != value.size() || result < 0) {
+        throw std::runtime_error(name + " must be a non-negative integer");
     }
 
     return result;
@@ -59,6 +84,8 @@ GenerateArgs parse_generate_args(int argc, char** argv) {
             args.height = parse_positive_int(argv[++i], "height");
         } else if (key == "--seed" && i + 1 < argc) {
             args.seed = parse_seed(argv[++i]);
+        } else if (key == "--river-sources" && i + 1 < argc) {
+            args.river_sources = parse_non_negative_int(argv[++i], "river sources");
         } else {
             throw std::runtime_error("unknown or incomplete argument: " + key);
         }
@@ -66,6 +93,9 @@ GenerateArgs parse_generate_args(int argc, char** argv) {
 
     if (args.width > 80 || args.height > 60) {
         throw std::runtime_error("width and height are capped at 80x60 for the prototype");
+    }
+    if (args.river_sources > 100) {
+        throw std::runtime_error("river sources are capped at 100 for the prototype");
     }
 
     return args;
@@ -112,7 +142,77 @@ bool is_steppe_hex(int q, int r, const GenerateArgs& args) {
     return std::abs(static_cast<double>(r) - center_r) <= half_width;
 }
 
+int hex_distance(const Coord& a, const Coord& b) {
+    const int a_col = a.q - 1;
+    const int a_row = a.r - 1;
+    const int b_col = b.q - 1;
+    const int b_row = b.r - 1;
+
+    const int a_x = a_col;
+    const int a_z = a_row - (a_col - (a_col & 1)) / 2;
+    const int a_y = -a_x - a_z;
+    const int b_x = b_col;
+    const int b_z = b_row - (b_col - (b_col & 1)) / 2;
+    const int b_y = -b_x - b_z;
+
+    return std::max({std::abs(a_x - b_x), std::abs(a_y - b_y), std::abs(a_z - b_z)});
+}
+
+bool is_far_enough(const Coord& candidate, const std::vector<Coord>& selected, int minimum_distance) {
+    for (const Coord& source : selected) {
+        if (hex_distance(candidate, source) < minimum_distance) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::vector<Coord> collect_river_source_candidates(const GenerateArgs& args, bool allow_top_edge) {
+    std::vector<Coord> candidates;
+    const int north_limit = std::max(1, static_cast<int>(std::ceil(args.height * 0.35)));
+    const int min_row = allow_top_edge || args.height <= 2 ? 1 : 2;
+
+    for (int r = min_row; r <= north_limit; ++r) {
+        for (int q = 1; q <= args.width; ++q) {
+            if (!is_steppe_hex(q, r, args)) {
+                candidates.push_back({q, r});
+            }
+        }
+    }
+
+    return candidates;
+}
+
+std::vector<Coord> generate_river_sources(const GenerateArgs& args) {
+    std::vector<Coord> candidates = collect_river_source_candidates(args, false);
+    if (candidates.empty()) {
+        candidates = collect_river_source_candidates(args, true);
+    }
+
+    std::mt19937 rng(args.seed ^ 0x5f3759dfU);
+    std::shuffle(candidates.begin(), candidates.end(), rng);
+
+    std::vector<Coord> selected;
+    selected.reserve(std::min(args.river_sources, static_cast<int>(candidates.size())));
+
+    const int starting_distance = std::max(2, std::min(args.width, args.height) / 4 + 1);
+    for (int minimum_distance = starting_distance; minimum_distance >= 1; --minimum_distance) {
+        for (const Coord& candidate : candidates) {
+            if (static_cast<int>(selected.size()) >= args.river_sources) {
+                return selected;
+            }
+            if (is_far_enough(candidate, selected, minimum_distance)) {
+                selected.push_back(candidate);
+            }
+        }
+    }
+
+    return selected;
+}
+
 void print_generated_map(const GenerateArgs& args) {
+    const std::vector<Coord> river_sources = generate_river_sources(args);
+
     std::cout << "{";
     std::cout << "\"schema\":\"steppe-terrain.v1\",";
     std::cout << "\"seed\":" << args.seed << ",";
@@ -133,6 +233,14 @@ void print_generated_map(const GenerateArgs& args) {
     }
 
     std::cout << "],";
+    std::cout << "\"river_sources\":[";
+    for (std::size_t i = 0; i < river_sources.size(); ++i) {
+        if (i > 0) {
+            std::cout << ",";
+        }
+        std::cout << "{\"q\":" << river_sources[i].q << ",\"r\":" << river_sources[i].r << "}";
+    }
+    std::cout << "],";
     std::cout << "\"edges\":[],";
     std::cout << "\"roads\":[],";
     std::cout << "\"metadata\":{";
@@ -144,7 +252,7 @@ void print_generated_map(const GenerateArgs& args) {
 
 void print_usage() {
     std::cerr << "Usage:\n";
-    std::cerr << "  steppe_engine generate --width <n> --height <n> [--seed <n>]\n";
+    std::cerr << "  steppe_engine generate --width <n> --height <n> [--seed <n>] [--river-sources <n>]\n";
 }
 
 } // namespace
