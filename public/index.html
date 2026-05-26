@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Steppe Terrain Generator</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>Steppe Terrain Generator</h1>
+    </header>
+
+    <main class="app-shell">
+      <section class="parameter-panel" aria-label="Scenario generation parameters">
+        <div class="field-grid">
+          <label>
+            <span>Map width</span>
+            <input id="map-width" type="number" min="1" max="80" value="16">
+          </label>
+          <label>
+            <span>Map height</span>
+            <input id="map-height" type="number" min="1" max="60" value="10">
+          </label>
+        </div>
+
+        <div class="panel-actions">
+          <button id="generate-button" type="button">Generate</button>
+          <button id="save-button" type="button">Save Terrain</button>
+          <button id="load-button" type="button">Load Terrain</button>
+        </div>
+      </section>
+
+      <section class="map-panel" aria-label="Generated terrain map">
+        <canvas id="map-canvas"></canvas>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

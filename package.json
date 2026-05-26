@@ -1,0 +1,9 @@
+{
+  "name": "steppe-terrain-generator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Prototype C++ engine and raw Node.js proxy for a steppe terrain generator.",
+  "scripts": {
+    "start": "node proxy/server.js"
+  }
+}
