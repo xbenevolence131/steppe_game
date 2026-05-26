@@ -8,12 +8,31 @@ const loadButton = document.querySelector("#load-button");
 
 let currentMap = null;
 
+const terrainStyles = {
+  none: {
+    fill: "#383a3a",
+    stroke: "#8b8f88",
+    label: "#dedbd1",
+  },
+  grassland: {
+    fill: "#d8c596",
+    stroke: "#7e735f",
+    label: "#29251d",
+  },
+};
+
 function clampDimension(value, min, max, fallback) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed)) {
     return fallback;
   }
   return Math.max(min, Math.min(max, parsed));
+}
+
+function newSeed() {
+  const values = new Uint32Array(1);
+  window.crypto.getRandomValues(values);
+  return values[0];
 }
 
 function resizeCanvas(width, height) {
@@ -37,7 +56,8 @@ function hexPoints(cx, cy, size) {
   return points;
 }
 
-function drawHex(cx, cy, size, label) {
+function drawHex(cx, cy, size, label, terrain) {
+  const style = terrainStyles[terrain] || terrainStyles.none;
   const points = hexPoints(cx, cy, size + 0.15);
   ctx.beginPath();
   points.forEach(([x, y], index) => {
@@ -48,13 +68,13 @@ function drawHex(cx, cy, size, label) {
     }
   });
   ctx.closePath();
-  ctx.fillStyle = "#d8c596";
+  ctx.fillStyle = style.fill;
   ctx.fill();
-  ctx.strokeStyle = "#7e735f";
+  ctx.strokeStyle = style.stroke;
   ctx.lineWidth = 1;
   ctx.stroke();
 
-  ctx.fillStyle = "#29251d";
+  ctx.fillStyle = style.label;
   ctx.font = `${Math.max(10, Math.min(13, size * 0.42))}px Segoe UI, Arial, sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
@@ -74,7 +94,7 @@ function drawMap(map) {
 
   resizeCanvas(Math.max(desiredWidth, mapPixelWidth), Math.max(360, mapPixelHeight));
 
-  ctx.fillStyle = "#d8c596";
+  ctx.fillStyle = terrainStyles.none.fill;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   for (const hex of map.hexes) {
@@ -82,13 +102,14 @@ function drawMap(map) {
     const row = hex.r - 1;
     const cx = margin + size + col * size * 1.5;
     const cy = margin + hexHeight / 2 + row * hexHeight + (col % 2) * hexHeight / 2;
-    drawHex(cx, cy, size, `${hex.q},${hex.r}`);
+    drawHex(cx, cy, size, `${hex.q},${hex.r}`, hex.terrain);
   }
 }
 
 async function generateMap() {
   const width = clampDimension(widthInput.value, 1, 80, 16);
   const height = clampDimension(heightInput.value, 1, 60, 10);
+  const seed = newSeed();
   widthInput.value = width;
   heightInput.value = height;
 
@@ -97,7 +118,7 @@ async function generateMap() {
     const response = await fetch("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ width, height }),
+      body: JSON.stringify({ width, height, seed }),
     });
     const payload = await response.json();
     if (!response.ok) {

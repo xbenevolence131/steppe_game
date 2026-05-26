@@ -2,7 +2,8 @@
 
 Prototype for an authoritative C++ terrain-generation engine with a raw Node.js web proxy.
 
-The current generator intentionally produces a plain beige grassland map. Hexes are labeled with 1-based `q,r` coordinates where `q` is the horizontal index and `r` is the vertical index from the top-left.
+The current generator produces a single east-west-ish grassland steppe blob surrounded by `none` terrain. Hexes are labeled with 1-based `q,r` coordinates where `q` is the horizontal index and `r` is the vertical index from the top-left.
+Each Generate click sends a new seed to the engine, producing a different corridor while keeping all terrain decisions inside C++.
 
 ## Layout
 

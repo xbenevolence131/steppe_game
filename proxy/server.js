@@ -63,6 +63,14 @@ function parseDimension(value, fallback) {
   return Math.min(result, 80);
 }
 
+function parseSeed(value) {
+  const result = Number(value);
+  if (!Number.isInteger(result) || result < 0 || result > 0xffffffff) {
+    return Math.floor(Math.random() * 0x100000000);
+  }
+  return result;
+}
+
 async function handleGenerate(req, res) {
   let payload;
   try {
@@ -82,8 +90,14 @@ async function handleGenerate(req, res) {
 
   const width = parseDimension(payload.width, 16);
   const height = parseDimension(payload.height, 10);
+  const seed = parseSeed(payload.seed);
 
-  execFile(executable, ["generate", "--width", String(width), "--height", String(height)], {
+  execFile(executable, [
+    "generate",
+    "--width", String(width),
+    "--height", String(height),
+    "--seed", String(seed),
+  ], {
     cwd: rootDir,
     windowsHide: true,
     maxBuffer: 8 * 1024 * 1024,

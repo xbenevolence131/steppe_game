@@ -5,6 +5,7 @@
   --line: #b9ad96;
   --text: #22201b;
   --muted: #5d5649;
+  --empty: #383a3a;
   --steppe: #d8c596;
   --steppe-line: #7e735f;
   --accent: #2f6f73;
@@ -106,7 +107,7 @@ button:disabled {
 .map-panel {
   min-height: 360px;
   border: 1px solid var(--line);
-  background: var(--steppe);
+  background: var(--empty);
   overflow: auto;
 }
 
