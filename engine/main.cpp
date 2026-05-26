@@ -63,6 +63,11 @@ struct BoundaryEdge {
     VertexKey second;
 };
 
+struct WorldPoint {
+    double x = 0.0;
+    double y = 0.0;
+};
+
 int parse_positive_int(const std::string& value, const std::string& name) {
     std::size_t parsed = 0;
     int result = 0;
@@ -446,6 +451,77 @@ bool path_contains(const std::vector<Coord>& path, const Coord& coord) {
     return false;
 }
 
+WorldPoint hex_center_world(const Coord& hex) {
+    const int col = hex.q - 1;
+    const int row = hex.r - 1;
+    return {
+        static_cast<double>(col) * 1.5,
+        1.7320508075688772935 * (static_cast<double>(row) + ((col & 1) ? 0.5 : 0.0)),
+    };
+}
+
+Coord nearest_hex_to_world_point(const GenerateArgs& args, const WorldPoint& point) {
+    Coord best{1, 1};
+    double best_distance = std::numeric_limits<double>::max();
+
+    for (int r = 1; r <= args.height; ++r) {
+        for (int q = 1; q <= args.width; ++q) {
+            const Coord candidate{q, r};
+            const WorldPoint center = hex_center_world(candidate);
+            const double dx = center.x - point.x;
+            const double dy = center.y - point.y;
+            const double distance = dx * dx + dy * dy;
+            if (distance < best_distance) {
+                best = candidate;
+                best_distance = distance;
+            }
+        }
+    }
+
+    return best;
+}
+
+std::vector<Coord> generate_meander_control_points(
+    const GenerateArgs& args,
+    const Coord& source,
+    const Coord& destination,
+    int segment_id
+) {
+    const WorldPoint start = hex_center_world(source);
+    const WorldPoint end = hex_center_world(destination);
+    const double dx = end.x - start.x;
+    const double dy = end.y - start.y;
+    const double length = std::sqrt(dx * dx + dy * dy);
+    if (length < 4.0) {
+        return {};
+    }
+
+    const int control_count = std::max(1, std::min(5, static_cast<int>(std::round(length / 10.0))));
+    const double normal_x = -dy / length;
+    const double normal_y = dx / length;
+    const double amplitude = std::max(1.5, std::min(args.width, args.height) * 0.12);
+
+    std::vector<Coord> controls;
+    controls.reserve(control_count);
+    for (int i = 1; i <= control_count; ++i) {
+        const double t = static_cast<double>(i) / static_cast<double>(control_count + 1);
+        const double wave = (i % 2 == 0 ? -1.0 : 1.0);
+        const double jitter = signed_noise(args.seed, static_cast<std::uint32_t>(segment_id * 30000 + i * 97));
+        const double offset = wave * amplitude * (0.65 + std::abs(jitter) * 0.7);
+        const double along = signed_noise(args.seed, static_cast<std::uint32_t>(segment_id * 30000 + i * 97 + 31)) * 1.4;
+        const WorldPoint target{
+            start.x + dx * t + normal_x * offset + (dx / length) * along,
+            start.y + dy * t + normal_y * offset + (dy / length) * along,
+        };
+        const Coord snapped = nearest_hex_to_world_point(args, target);
+        if (!coord_equal(snapped, source) && !coord_equal(snapped, destination) && !path_contains(controls, snapped)) {
+            controls.push_back(snapped);
+        }
+    }
+
+    return controls;
+}
+
 std::vector<Coord> route_river_path(const GenerateArgs& args, const Coord& source, const Coord& destination, int river_id) {
     std::vector<Coord> path;
     path.push_back(source);
@@ -487,6 +563,45 @@ std::vector<Coord> route_river_path(const GenerateArgs& args, const Coord& sourc
     }
 
     return path;
+}
+
+std::vector<Coord> route_meandering_river_path(
+    const GenerateArgs& args,
+    const Coord& source,
+    const Coord& destination,
+    int segment_id
+) {
+    std::vector<Coord> waypoints;
+    waypoints.push_back(source);
+    for (const Coord& control : generate_meander_control_points(args, source, destination, segment_id)) {
+        waypoints.push_back(control);
+    }
+    waypoints.push_back(destination);
+
+    std::vector<Coord> full_path;
+    for (std::size_t i = 1; i < waypoints.size(); ++i) {
+        std::vector<Coord> subpath = route_river_path(
+            args,
+            waypoints[i - 1],
+            waypoints[i],
+            segment_id * 100 + static_cast<int>(i)
+        );
+        if (subpath.empty()) {
+            continue;
+        }
+
+        if (full_path.empty()) {
+            full_path = subpath;
+        } else {
+            full_path.insert(full_path.end(), subpath.begin() + 1, subpath.end());
+        }
+    }
+
+    if (full_path.empty() || !coord_equal(full_path.back(), destination)) {
+        return route_river_path(args, source, destination, segment_id);
+    }
+
+    return full_path;
 }
 
 bool contains_edge(const std::vector<RiverEdge>& edges, const RiverEdge& edge) {
@@ -793,7 +908,7 @@ std::vector<RiverSegment> generate_river_segments(
     if (merge_points.empty()) {
         const int count = std::min(static_cast<int>(sources.size()), static_cast<int>(destinations.size()));
         for (int i = 0; i < count; ++i) {
-            const std::vector<Coord> hex_path = route_river_path(args, sources[i], destinations[i], segment_id);
+            const std::vector<Coord> hex_path = route_meandering_river_path(args, sources[i], destinations[i], segment_id);
             segments.push_back({
                 segment_id,
                 sources[i],
@@ -806,22 +921,40 @@ std::vector<RiverSegment> generate_river_segments(
         return segments;
     }
 
-    for (std::size_t i = 0; i < sources.size(); ++i) {
-        const Coord& merge_point = merge_points[i % merge_points.size()];
-        const std::vector<Coord> hex_path = route_river_path(args, sources[i], merge_point, segment_id);
-        segments.push_back({
-            segment_id,
-            sources[i],
-            merge_point,
-            "source_to_merge",
-            trace_outside_edge_path(args, hex_path, segment_id),
-        });
-        ++segment_id;
+    std::vector<int> sources_per_merge(merge_points.size(), static_cast<int>(sources.size() / merge_points.size()));
+    std::vector<int> remainder_targets;
+    remainder_targets.reserve(merge_points.size());
+    for (std::size_t i = 0; i < merge_points.size(); ++i) {
+        remainder_targets.push_back(static_cast<int>(i));
+    }
+    std::mt19937 merge_assignment_rng(args.seed ^ 0x27d4eb2dU);
+    std::shuffle(remainder_targets.begin(), remainder_targets.end(), merge_assignment_rng);
+
+    const int remainder = static_cast<int>(sources.size() % merge_points.size());
+    for (int i = 0; i < remainder; ++i) {
+        ++sources_per_merge[remainder_targets[i]];
+    }
+
+    std::size_t source_index = 0;
+    for (std::size_t merge_index = 0; merge_index < merge_points.size(); ++merge_index) {
+        for (int assigned = 0; assigned < sources_per_merge[merge_index] && source_index < sources.size(); ++assigned) {
+            const Coord& merge_point = merge_points[merge_index];
+            const std::vector<Coord> hex_path = route_meandering_river_path(args, sources[source_index], merge_point, segment_id);
+            segments.push_back({
+                segment_id,
+                sources[source_index],
+                merge_point,
+                "source_to_merge",
+                trace_outside_edge_path(args, hex_path, segment_id),
+            });
+            ++source_index;
+            ++segment_id;
+        }
     }
 
     const int downstream_count = std::min(static_cast<int>(merge_points.size()), static_cast<int>(destinations.size()));
     for (int i = 0; i < downstream_count; ++i) {
-        const std::vector<Coord> hex_path = route_river_path(args, merge_points[i], destinations[i], segment_id);
+        const std::vector<Coord> hex_path = route_meandering_river_path(args, merge_points[i], destinations[i], segment_id);
         segments.push_back({
             segment_id,
             merge_points[i],
