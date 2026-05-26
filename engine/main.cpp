@@ -5,6 +5,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <optional>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -13,11 +14,12 @@
 namespace {
 
 struct GenerateArgs {
-    int width = 50;
-    int height = 20;
+    int width = 100;
+    int height = 40;
     std::uint32_t seed = 1;
     int river_count = 3;
-    int merge_point_count = 1;
+    int source_variance = 8;
+    int horizontal_band = 8;
 };
 
 struct Coord {
@@ -43,6 +45,17 @@ struct RiverSegment {
     Coord to;
     std::string kind;
     std::vector<RiverEdge> edge_path;
+};
+
+struct SourceMerge {
+    Coord first_source;
+    Coord second_source;
+    Coord merge_point;
+};
+
+struct RiverOutlet {
+    Coord point;
+    std::string kind;
 };
 
 struct VertexKey {
@@ -132,21 +145,26 @@ GenerateArgs parse_generate_args(int argc, char** argv) {
             args.seed = parse_seed(argv[++i]);
         } else if ((key == "--rivers" || key == "--river-sources") && i + 1 < argc) {
             args.river_count = parse_non_negative_int(argv[++i], "rivers");
-        } else if (key == "--merge-points" && i + 1 < argc) {
-            args.merge_point_count = parse_non_negative_int(argv[++i], "merge points");
+        } else if ((key == "--source-variance" || key == "--source-exclusion-radius") && i + 1 < argc) {
+            args.source_variance = parse_non_negative_int(argv[++i], "source variance");
+        } else if (key == "--horizontal-band" && i + 1 < argc) {
+            args.horizontal_band = parse_non_negative_int(argv[++i], "horizontal band");
         } else {
             throw std::runtime_error("unknown or incomplete argument: " + key);
         }
     }
 
-    if (args.width > 80 || args.height > 60) {
-        throw std::runtime_error("width and height are capped at 80x60 for the prototype");
+    if (args.width > 160 || args.height > 80) {
+        throw std::runtime_error("width and height are capped at 160x80 for the prototype");
     }
     if (args.river_count > 100) {
         throw std::runtime_error("rivers are capped at 100 for the prototype");
     }
-    if (args.merge_point_count > 100) {
-        throw std::runtime_error("merge points are capped at 100 for the prototype");
+    if (args.source_variance > 100) {
+        throw std::runtime_error("source variance is capped at 100 for the prototype");
+    }
+    if (args.horizontal_band > 100) {
+        throw std::runtime_error("horizontal band is capped at 100 for the prototype");
     }
 
     return args;
@@ -258,13 +276,20 @@ bool vertex_equal(const VertexKey& a, const VertexKey& b) {
     return a.x == b.x && a.y == b.y;
 }
 
-std::vector<Coord> collect_northern_candidates(const GenerateArgs& args, bool allow_top_edge) {
+std::vector<Coord> collect_northern_candidates(
+    const GenerateArgs& args,
+    bool allow_top_edge,
+    int min_q,
+    int max_q
+) {
     std::vector<Coord> candidates;
     const int north_limit = std::max(1, static_cast<int>(std::ceil(args.height * 0.35)));
     const int min_row = allow_top_edge || args.height <= 2 ? 1 : 2;
+    const int clamped_min_q = std::max(1, min_q);
+    const int clamped_max_q = std::min(args.width, max_q);
 
     for (int r = min_row; r <= north_limit; ++r) {
-        for (int q = 1; q <= args.width; ++q) {
+        for (int q = clamped_min_q; q <= clamped_max_q; ++q) {
             if (!is_steppe_hex(q, r, args)) {
                 candidates.push_back({q, r});
             }
@@ -274,13 +299,20 @@ std::vector<Coord> collect_northern_candidates(const GenerateArgs& args, bool al
     return candidates;
 }
 
-std::vector<Coord> collect_southern_candidates(const GenerateArgs& args, bool allow_bottom_edge) {
+std::vector<Coord> collect_southern_candidates(
+    const GenerateArgs& args,
+    bool allow_bottom_edge,
+    int min_q,
+    int max_q
+) {
     std::vector<Coord> candidates;
     const int south_start = std::min(args.height, std::max(1, static_cast<int>(std::floor(args.height * 0.65))));
     const int max_row = allow_bottom_edge || args.height <= 2 ? args.height : std::max(1, args.height - 1);
+    const int clamped_min_q = std::max(1, min_q);
+    const int clamped_max_q = std::min(args.width, max_q);
 
     for (int r = south_start; r <= max_row; ++r) {
-        for (int q = 1; q <= args.width; ++q) {
+        for (int q = clamped_min_q; q <= clamped_max_q; ++q) {
             if (!is_steppe_hex(q, r, args)) {
                 candidates.push_back({q, r});
             }
@@ -290,13 +322,19 @@ std::vector<Coord> collect_southern_candidates(const GenerateArgs& args, bool al
     return candidates;
 }
 
-std::vector<Coord> collect_merge_point_candidates(const GenerateArgs& args) {
+std::vector<Coord> collect_merge_point_candidates(
+    const GenerateArgs& args,
+    int min_q,
+    int max_q
+) {
     std::vector<Coord> candidates;
     const int min_row = std::max(1, static_cast<int>(std::floor(args.height * 0.35)));
     const int max_row = std::min(args.height, static_cast<int>(std::ceil(args.height * 0.72)));
+    const int clamped_min_q = std::max(2, min_q);
+    const int clamped_max_q = std::min(std::max(1, args.width - 1), max_q);
 
     for (int r = min_row; r <= max_row; ++r) {
-        for (int q = 2; q <= std::max(1, args.width - 1); ++q) {
+        for (int q = clamped_min_q; q <= clamped_max_q; ++q) {
             if (is_steppe_hex(q, r, args)) {
                 candidates.push_back({q, r});
             }
@@ -311,7 +349,8 @@ std::vector<Coord> select_spaced_points(
     int count,
     std::uint32_t seed,
     int width,
-    int height
+    int height,
+    int spacing
 ) {
     std::mt19937 rng(seed);
     std::shuffle(candidates.begin(), candidates.end(), rng);
@@ -319,7 +358,7 @@ std::vector<Coord> select_spaced_points(
     std::vector<Coord> selected;
     selected.reserve(std::min(count, static_cast<int>(candidates.size())));
 
-    const int starting_distance = std::max(2, std::min(width, height) / 4 + 1);
+    const int starting_distance = std::max(1, std::min({width, height, spacing}));
     for (int minimum_distance = starting_distance; minimum_distance >= 1; --minimum_distance) {
         for (const Coord& candidate : candidates) {
             if (static_cast<int>(selected.size()) >= count) {
@@ -335,31 +374,116 @@ std::vector<Coord> select_spaced_points(
 }
 
 std::vector<Coord> generate_river_sources(const GenerateArgs& args, int count) {
-    std::vector<Coord> candidates = collect_northern_candidates(args, false);
-    if (candidates.empty()) {
-        candidates = collect_northern_candidates(args, true);
+    std::vector<Coord> sources;
+    const int source_count = std::min(count, args.width);
+    sources.reserve(source_count);
+    if (count <= 0) {
+        return sources;
     }
 
-    return select_spaced_points(candidates, count, args.seed ^ 0x5f3759dfU, args.width, args.height);
+    std::vector<bool> occupied(static_cast<std::size_t>(args.width + 1), false);
+    const auto nearest_open_q = [&](int preferred_q, int min_q, int max_q) {
+        const auto scan = [&](int scan_min_q, int scan_max_q) -> std::optional<int> {
+            for (int radius = 0; radius <= args.width; ++radius) {
+                const int left_q = preferred_q - radius;
+                if (left_q >= scan_min_q && left_q <= scan_max_q && !occupied[static_cast<std::size_t>(left_q)]) {
+                    return left_q;
+                }
+
+                const int right_q = preferred_q + radius;
+                if (right_q != left_q && right_q >= scan_min_q && right_q <= scan_max_q && !occupied[static_cast<std::size_t>(right_q)]) {
+                    return right_q;
+                }
+            }
+            return std::nullopt;
+        };
+
+        if (const std::optional<int> local_q = scan(min_q, max_q); local_q.has_value()) {
+            return *local_q;
+        }
+        if (const std::optional<int> global_q = scan(1, args.width); global_q.has_value()) {
+            return *global_q;
+        }
+        return std::max(1, std::min(args.width, preferred_q));
+    };
+
+    const double spacing = static_cast<double>(args.width) / static_cast<double>(source_count + 1);
+    for (int index = 1; index <= source_count; ++index) {
+        const int ideal_q = std::max(1, std::min(args.width, static_cast<int>(std::llround(spacing * index))));
+        const int variance = args.source_variance;
+        const int min_q = std::max(1, ideal_q - variance);
+        const int max_q = std::min(args.width, ideal_q + variance);
+        const double roll = unit_noise(args.seed, static_cast<std::uint32_t>(0x5f3759dfU + index * 7919));
+        int q = min_q + static_cast<int>(std::floor(roll * static_cast<double>(max_q - min_q + 1)));
+        q = std::max(1, std::min(args.width, q));
+
+        q = nearest_open_q(q, min_q, max_q);
+        occupied[static_cast<std::size_t>(q)] = true;
+        sources.push_back({q, 1});
+    }
+
+    std::sort(sources.begin(), sources.end(), coord_less);
+    return sources;
 }
 
 std::vector<Coord> generate_river_destinations(const GenerateArgs& args, int count) {
-    std::vector<Coord> candidates = collect_southern_candidates(args, false);
+    std::vector<Coord> candidates = collect_southern_candidates(args, false, 1, args.width);
     if (candidates.empty()) {
-        candidates = collect_southern_candidates(args, true);
+        candidates = collect_southern_candidates(args, true, 1, args.width);
     }
 
-    return select_spaced_points(candidates, count, args.seed ^ 0x85ebca6bU, args.width, args.height);
+    return select_spaced_points(candidates, count, args.seed ^ 0x85ebca6bU, args.width, args.height, 2);
 }
 
 std::vector<Coord> generate_merge_points(const GenerateArgs& args, int count) {
     return select_spaced_points(
-        collect_merge_point_candidates(args),
+        collect_merge_point_candidates(args, 1, args.width),
         count,
         args.seed ^ 0xc2b2ae35U,
         args.width,
-        args.height
+        args.height,
+        2
     );
+}
+
+std::optional<Coord> choose_merge_point_for_sources(
+    const GenerateArgs& args,
+    const Coord& first_source,
+    const Coord& second_source,
+    int merge_index
+) {
+    const int min_q = std::min(first_source.q, second_source.q) - args.horizontal_band;
+    const int max_q = std::max(first_source.q, second_source.q) + args.horizontal_band;
+    std::vector<Coord> candidates = collect_merge_point_candidates(args, min_q, max_q);
+    if (candidates.empty()) {
+        candidates = collect_merge_point_candidates(args, 1, args.width);
+    }
+
+    std::vector<Coord> selected = select_spaced_points(
+        candidates,
+        1,
+        args.seed ^ static_cast<std::uint32_t>(0xc2b2ae35U + merge_index * 4099),
+        args.width,
+        args.height,
+        1
+    );
+
+    if (selected.empty()) {
+        return std::nullopt;
+    }
+    return selected[0];
+}
+
+std::optional<Coord> choose_destination_for_outlet(
+    const GenerateArgs& args,
+    const Coord& outlet,
+    int destination_index
+) {
+    const int min_q = std::max(1, outlet.q - args.horizontal_band);
+    const int max_q = std::min(args.width, outlet.q + args.horizontal_band);
+    const double roll = unit_noise(args.seed, static_cast<std::uint32_t>(0x85ebca6bU + destination_index * 6151));
+    const int q = min_q + static_cast<int>(std::floor(roll * static_cast<double>(max_q - min_q + 1)));
+    return Coord{std::max(1, std::min(args.width, q)), args.height};
 }
 
 bool in_bounds(const Coord& coord, const GenerateArgs& args) {
@@ -891,79 +1015,99 @@ std::vector<RiverSegment> generate_river_segments(
     sources = generate_river_sources(args, args.river_count);
     std::sort(sources.begin(), sources.end(), coord_less);
 
-    const int desired_merge_points = std::min(args.merge_point_count, static_cast<int>(sources.size()));
-    merge_points = generate_merge_points(args, desired_merge_points);
-    std::sort(merge_points.begin(), merge_points.end(), coord_less);
-
-    const int destination_count = merge_points.empty()
-        ? static_cast<int>(sources.size())
-        : static_cast<int>(merge_points.size());
-    destinations = generate_river_destinations(args, destination_count);
-    std::sort(sources.begin(), sources.end(), coord_less);
-    std::sort(destinations.begin(), destinations.end(), coord_less);
-
     std::vector<RiverSegment> segments;
     int segment_id = 1;
+    std::vector<RiverOutlet> outlets;
+    int merge_index = 0;
 
-    if (merge_points.empty()) {
-        const int count = std::min(static_cast<int>(sources.size()), static_cast<int>(destinations.size()));
-        for (int i = 0; i < count; ++i) {
-            const std::vector<Coord> hex_path = route_meandering_river_path(args, sources[i], destinations[i], segment_id);
-            segments.push_back({
-                segment_id,
+    for (std::size_t i = 0; i < sources.size();) {
+        const bool can_merge = i + 1 < sources.size();
+        const double merge_roll = can_merge
+            ? unit_noise(args.seed, static_cast<std::uint32_t>(0x6d2b79f5U + i * 97))
+            : 1.0;
+
+        if (can_merge && merge_roll < 0.28) {
+            const std::optional<Coord> merge_point = choose_merge_point_for_sources(
+                args,
                 sources[i],
-                destinations[i],
-                "source_to_destination",
-                trace_outside_edge_path(args, hex_path, segment_id),
-            });
-            ++segment_id;
+                sources[i + 1],
+                merge_index
+            );
+
+            if (merge_point.has_value()) {
+                merge_points.push_back(*merge_point);
+
+                const std::vector<Coord> first_hex_path = route_meandering_river_path(
+                    args,
+                    sources[i],
+                    *merge_point,
+                    segment_id
+                );
+                segments.push_back({
+                    segment_id,
+                    sources[i],
+                    *merge_point,
+                    "source_to_merge",
+                    trace_outside_edge_path(args, first_hex_path, segment_id),
+                });
+                ++segment_id;
+
+                const std::vector<Coord> second_hex_path = route_meandering_river_path(
+                    args,
+                    sources[i + 1],
+                    *merge_point,
+                    segment_id
+                );
+                segments.push_back({
+                    segment_id,
+                    sources[i + 1],
+                    *merge_point,
+                    "source_to_merge",
+                    trace_outside_edge_path(args, second_hex_path, segment_id),
+                });
+                ++segment_id;
+
+                outlets.push_back({*merge_point, "merge_to_destination"});
+                ++merge_index;
+                i += 2;
+                continue;
+            }
         }
-        return segments;
+
+        outlets.push_back({sources[i], "source_to_destination"});
+        ++i;
     }
 
-    std::vector<int> sources_per_merge(merge_points.size(), static_cast<int>(sources.size() / merge_points.size()));
-    std::vector<int> remainder_targets;
-    remainder_targets.reserve(merge_points.size());
-    for (std::size_t i = 0; i < merge_points.size(); ++i) {
-        remainder_targets.push_back(static_cast<int>(i));
-    }
-    std::mt19937 merge_assignment_rng(args.seed ^ 0x27d4eb2dU);
-    std::shuffle(remainder_targets.begin(), remainder_targets.end(), merge_assignment_rng);
+    std::sort(merge_points.begin(), merge_points.end(), coord_less);
 
-    const int remainder = static_cast<int>(sources.size() % merge_points.size());
-    for (int i = 0; i < remainder; ++i) {
-        ++sources_per_merge[remainder_targets[i]];
-    }
-
-    std::size_t source_index = 0;
-    for (std::size_t merge_index = 0; merge_index < merge_points.size(); ++merge_index) {
-        for (int assigned = 0; assigned < sources_per_merge[merge_index] && source_index < sources.size(); ++assigned) {
-            const Coord& merge_point = merge_points[merge_index];
-            const std::vector<Coord> hex_path = route_meandering_river_path(args, sources[source_index], merge_point, segment_id);
-            segments.push_back({
-                segment_id,
-                sources[source_index],
-                merge_point,
-                "source_to_merge",
-                trace_outside_edge_path(args, hex_path, segment_id),
-            });
-            ++source_index;
-            ++segment_id;
+    for (std::size_t i = 0; i < outlets.size(); ++i) {
+        const std::optional<Coord> destination = choose_destination_for_outlet(
+            args,
+            outlets[i].point,
+            static_cast<int>(i)
+        );
+        if (!destination.has_value()) {
+            continue;
         }
-    }
 
-    const int downstream_count = std::min(static_cast<int>(merge_points.size()), static_cast<int>(destinations.size()));
-    for (int i = 0; i < downstream_count; ++i) {
-        const std::vector<Coord> hex_path = route_meandering_river_path(args, merge_points[i], destinations[i], segment_id);
+        destinations.push_back(*destination);
+        const std::vector<Coord> hex_path = route_meandering_river_path(
+            args,
+            outlets[i].point,
+            *destination,
+            segment_id
+        );
         segments.push_back({
             segment_id,
-            merge_points[i],
-            destinations[i],
-            "merge_to_destination",
+            outlets[i].point,
+            *destination,
+            outlets[i].kind,
             trace_outside_edge_path(args, hex_path, segment_id),
         });
         ++segment_id;
     }
+
+    std::sort(destinations.begin(), destinations.end(), coord_less);
 
     return segments;
 }
@@ -1079,7 +1223,7 @@ void print_generated_map(const GenerateArgs& args) {
 
 void print_usage() {
     std::cerr << "Usage:\n";
-    std::cerr << "  steppe_engine generate --width <n> --height <n> [--seed <n>] [--rivers <n>] [--merge-points <n>]\n";
+    std::cerr << "  steppe_engine generate --width <n> --height <n> [--seed <n>] [--rivers <n>] [--source-variance <n>] [--horizontal-band <n>]\n";
 }
 
 } // namespace

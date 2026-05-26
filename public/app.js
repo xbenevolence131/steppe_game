@@ -3,7 +3,8 @@ const ctx = canvas.getContext("2d");
 const widthInput = document.querySelector("#map-width");
 const heightInput = document.querySelector("#map-height");
 const riversInput = document.querySelector("#rivers");
-const mergePointsInput = document.querySelector("#merge-points");
+const sourceVarianceInput = document.querySelector("#source-variance");
+const horizontalBandInput = document.querySelector("#horizontal-band");
 const generateButton = document.querySelector("#generate-button");
 const saveButton = document.querySelector("#save-button");
 const loadButton = document.querySelector("#load-button");
@@ -218,22 +219,24 @@ function drawMap(map) {
 }
 
 async function generateMap() {
-  const width = clampDimension(widthInput.value, 1, 80, 50);
-  const height = clampDimension(heightInput.value, 1, 60, 20);
+  const width = clampDimension(widthInput.value, 1, 160, 100);
+  const height = clampDimension(heightInput.value, 1, 80, 40);
   const rivers = clampDimension(riversInput.value, 0, 100, 3);
-  const mergePoints = clampDimension(mergePointsInput.value, 0, 100, 1);
+  const sourceVariance = clampDimension(sourceVarianceInput.value, 0, 100, 8);
+  const horizontalBand = clampDimension(horizontalBandInput.value, 0, 100, 8);
   const seed = newSeed();
   widthInput.value = width;
   heightInput.value = height;
   riversInput.value = rivers;
-  mergePointsInput.value = mergePoints;
+  sourceVarianceInput.value = sourceVariance;
+  horizontalBandInput.value = horizontalBand;
 
   generateButton.disabled = true;
   try {
     const response = await fetch("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ width, height, seed, rivers, mergePoints }),
+      body: JSON.stringify({ width, height, seed, rivers, sourceVariance, horizontalBand }),
     });
     const payload = await response.json();
     if (!response.ok) {

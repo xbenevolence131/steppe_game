@@ -88,11 +88,12 @@ async function handleGenerate(req, res) {
     return;
   }
 
-  const width = parseBoundedInteger(payload.width, 50, 1, 80);
-  const height = parseBoundedInteger(payload.height, 20, 1, 60);
+  const width = parseBoundedInteger(payload.width, 100, 1, 160);
+  const height = parseBoundedInteger(payload.height, 40, 1, 80);
   const seed = parseSeed(payload.seed);
   const rivers = parseBoundedInteger(payload.rivers, 3, 0, 100);
-  const mergePoints = parseBoundedInteger(payload.mergePoints, 1, 0, 100);
+  const sourceVariance = parseBoundedInteger(payload.sourceVariance, 8, 0, 100);
+  const horizontalBand = parseBoundedInteger(payload.horizontalBand, 8, 0, 100);
 
   execFile(executable, [
     "generate",
@@ -100,7 +101,8 @@ async function handleGenerate(req, res) {
     "--height", String(height),
     "--seed", String(seed),
     "--rivers", String(rivers),
-    "--merge-points", String(mergePoints),
+    "--source-variance", String(sourceVariance),
+    "--horizontal-band", String(horizontalBand),
   ], {
     cwd: rootDir,
     windowsHide: true,
