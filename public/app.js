@@ -4,6 +4,13 @@ const mapPanel = document.querySelector("#map-panel");
 const widthInput = document.querySelector("#map-width");
 const heightInput = document.querySelector("#map-height");
 const riversInput = document.querySelector("#river-sources");
+const meanderForwardInput = document.querySelector("#meander-forward");
+const meanderForwardJitterInput = document.querySelector("#meander-forward-jitter");
+const meanderLateralInput = document.querySelector("#meander-lateral");
+const meanderLateralJitterInput = document.querySelector("#meander-lateral-jitter");
+const meanderStrengthInput = document.querySelector("#meander-strength");
+const meanderReachInput = document.querySelector("#meander-reach");
+const meanderTimeoutInput = document.querySelector("#meander-timeout");
 const generateButton = document.querySelector("#generate-button");
 const saveButton = document.querySelector("#save-button");
 const loadButton = document.querySelector("#load-button");
@@ -57,6 +64,13 @@ function clampDimension(value, min, max, fallback) {
     return fallback;
   }
   return Math.max(min, Math.min(max, parsed));
+}
+
+function clampNumberInput(input, min, max, fallback) {
+  const parsed = Number(input.value);
+  const value = Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback;
+  input.value = value;
+  return value;
 }
 
 function clamp(value, min, max) {
@@ -305,17 +319,37 @@ async function generateMap() {
   const width = clampDimension(widthInput.value, 1, 120, 120);
   const height = clampDimension(heightInput.value, 1, 80, 80);
   const rivers = clampDimension(riversInput.value, 0, 20, 4);
+  const meanderForward = clampNumberInput(meanderForwardInput, 0, 40, 14);
+  const meanderForwardJitter = clampNumberInput(meanderForwardJitterInput, 0, 40, 4);
+  const meanderLateral = clampNumberInput(meanderLateralInput, 0, 40, 10);
+  const meanderLateralJitter = clampNumberInput(meanderLateralJitterInput, 0, 40, 4);
+  const meanderStrength = clampNumberInput(meanderStrengthInput, 0, 10, 1.6);
+  const meanderReach = clampNumberInput(meanderReachInput, 0, 40, 2);
+  const meanderTimeout = clampDimension(meanderTimeoutInput.value, 1, 200, 28);
   const seed = newSeed();
   widthInput.value = width;
   heightInput.value = height;
   riversInput.value = rivers;
+  meanderTimeoutInput.value = meanderTimeout;
 
   generateButton.disabled = true;
   try {
     const response = await fetch("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ width, height, rivers, seed }),
+      body: JSON.stringify({
+        width,
+        height,
+        rivers,
+        meanderForward,
+        meanderForwardJitter,
+        meanderLateral,
+        meanderLateralJitter,
+        meanderStrength,
+        meanderReach,
+        meanderTimeout,
+        seed,
+      }),
     });
     const payload = await response.json();
     if (!response.ok) {

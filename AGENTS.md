@@ -39,7 +39,7 @@ On Windows, if a clean build fails with missing standard-library includes, run t
 ## Working Notes
 
 - The main east-west steppe blob generation is currently in acceptable shape.
-- River generation is a fresh baseline pass. Rivers live on hex edges, are routed on the vertex graph, grow generally north-to-south, use steppe-only lateral meander steering, and should preserve clean merge topology.
+- River generation is a fresh baseline pass. Rivers live on hex edges, are routed on the vertex graph, grow generally north-to-south, use tunable steppe-only lateral meander steering, and should preserve clean merge topology.
 - Each successful browser/proxy map generation writes `latest-map.json` for inspection. This is generated output and should stay untracked.
 - Keep changes scoped to the experiment being explored; avoid broad refactors unless they directly improve generation behavior or observability.
 - Preserve deterministic seeded generation. A fixed seed should produce the same map for the same parameters.

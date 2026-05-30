@@ -72,6 +72,14 @@ function parseBoundedInteger(value, fallback, min, max) {
   return Math.max(min, Math.min(max, result));
 }
 
+function parseBoundedNumber(value, fallback, min, max) {
+  const result = Number(value ?? fallback);
+  if (!Number.isFinite(result)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(max, result));
+}
+
 function parseSeed(value) {
   const result = Number(value);
   if (!Number.isInteger(result) || result < 0 || result > 0xffffffff) {
@@ -100,6 +108,13 @@ async function handleGenerate(req, res) {
   const width = parseDimension(payload.width, 120, 120);
   const height = parseDimension(payload.height, 80, 80);
   const rivers = parseBoundedInteger(payload.rivers, 4, 0, 20);
+  const meanderForward = parseBoundedNumber(payload.meanderForward, 14, 0, 40);
+  const meanderForwardJitter = parseBoundedNumber(payload.meanderForwardJitter, 4, 0, 40);
+  const meanderLateral = parseBoundedNumber(payload.meanderLateral, 10, 0, 40);
+  const meanderLateralJitter = parseBoundedNumber(payload.meanderLateralJitter, 4, 0, 40);
+  const meanderStrength = parseBoundedNumber(payload.meanderStrength, 1.6, 0, 10);
+  const meanderReach = parseBoundedNumber(payload.meanderReach, 2, 0, 40);
+  const meanderTimeout = parseBoundedInteger(payload.meanderTimeout, 28, 1, 200);
   const seed = parseSeed(payload.seed);
 
   execFile(executable, [
@@ -107,6 +122,13 @@ async function handleGenerate(req, res) {
     "--width", String(width),
     "--height", String(height),
     "--rivers", String(rivers),
+    "--meander-forward", String(meanderForward),
+    "--meander-forward-jitter", String(meanderForwardJitter),
+    "--meander-lateral", String(meanderLateral),
+    "--meander-lateral-jitter", String(meanderLateralJitter),
+    "--meander-strength", String(meanderStrength),
+    "--meander-reach", String(meanderReach),
+    "--meander-timeout", String(meanderTimeout),
     "--seed", String(seed),
   ], {
     cwd: rootDir,
