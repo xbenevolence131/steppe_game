@@ -5,6 +5,7 @@ const { execFile } = require("child_process");
 
 const rootDir = path.resolve(__dirname, "..");
 const publicDir = path.join(rootDir, "public");
+const latestMapPath = path.join(rootDir, "latest-map.json");
 const port = Number(process.env.PORT || 3000);
 
 const mimeTypes = {
@@ -55,9 +56,9 @@ function readRequestJson(req) {
   });
 }
 
-function parseBoundedInteger(value, fallback, min, max) {
+function parseDimension(value, fallback, max) {
   const result = Number(value ?? fallback);
-  if (!Number.isInteger(result) || result < min) {
+  if (!Number.isInteger(result) || result <= 0) {
     return fallback;
   }
   return Math.min(result, max);
@@ -88,21 +89,15 @@ async function handleGenerate(req, res) {
     return;
   }
 
-  const width = parseBoundedInteger(payload.width, 100, 1, 160);
-  const height = parseBoundedInteger(payload.height, 40, 1, 80);
+  const width = parseDimension(payload.width, 120, 120);
+  const height = parseDimension(payload.height, 80, 80);
   const seed = parseSeed(payload.seed);
-  const rivers = parseBoundedInteger(payload.rivers, 3, 0, 100);
-  const sourceVariance = parseBoundedInteger(payload.sourceVariance, 8, 0, 100);
-  const horizontalBand = parseBoundedInteger(payload.horizontalBand, 8, 0, 100);
 
   execFile(executable, [
     "generate",
     "--width", String(width),
     "--height", String(height),
     "--seed", String(seed),
-    "--rivers", String(rivers),
-    "--source-variance", String(sourceVariance),
-    "--horizontal-band", String(horizontalBand),
   ], {
     cwd: rootDir,
     windowsHide: true,
@@ -113,11 +108,22 @@ async function handleGenerate(req, res) {
       return;
     }
 
+    let map;
     try {
-      sendJson(res, 200, JSON.parse(stdout));
+      map = JSON.parse(stdout);
     } catch {
       sendJson(res, 500, { error: "Engine returned invalid JSON" });
+      return;
     }
+
+    try {
+      fs.writeFileSync(latestMapPath, `${JSON.stringify(map, null, 2)}\n`, "utf8");
+    } catch (writeError) {
+      sendJson(res, 500, { error: `Could not write latest-map.json: ${writeError.message}` });
+      return;
+    }
+
+    sendJson(res, 200, map);
   });
 }
 
