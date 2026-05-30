@@ -67,6 +67,11 @@ struct RiverHead {
     bool active = true;
     bool merged = false;
     Coord endpoint;
+    bool has_meander_target = false;
+    int next_meander_side = 1;
+    double meander_target_x = 0.0;
+    double meander_target_y = 0.0;
+    int meander_steps = 0;
 };
 
 int parse_positive_int(const std::string& value, const std::string& name) {
@@ -241,6 +246,10 @@ bool edge_touches_coord(const RiverEdge& edge, const Coord& coord) {
     return coord_equal(edge.a, coord) || coord_equal(edge.b, coord);
 }
 
+bool edge_touches_steppe(const RiverEdge& edge, const GenerateArgs& args) {
+    return is_steppe_hex(edge.a.q, edge.a.r, args) || is_steppe_hex(edge.b.q, edge.b.r, args);
+}
+
 bool contains_edge(const std::vector<RiverEdge>& edges, const RiverEdge& edge) {
     for (const RiverEdge& existing : edges) {
         if (edge_equal(existing, edge)) {
@@ -358,18 +367,17 @@ Coord representative_coord_for_edge_vertex(const VertexKey& vertex, const Bounda
 
 std::vector<RiverEdge> all_map_edges(const GenerateArgs& args) {
     std::vector<RiverEdge> edges;
+    edges.reserve(static_cast<std::size_t>(args.width * args.height * 3));
     for (int r = 1; r <= args.height; ++r) {
         for (int q = 1; q <= args.width; ++q) {
             const Coord hex{q, r};
-            for (int direction = 0; direction < 6; ++direction) {
+            const int directions[] = {0, 1, 5};
+            for (const int direction : directions) {
                 const Coord neighbor = neighbor_in_direction(hex, direction);
                 if (!in_bounds(neighbor, args)) {
                     continue;
                 }
-                const RiverEdge edge = canonical_edge(hex, neighbor);
-                if (!contains_edge(edges, edge)) {
-                    edges.push_back(edge);
-                }
+                edges.push_back(canonical_edge(hex, neighbor));
             }
         }
     }
@@ -487,6 +495,24 @@ RiverNetwork generate_river_network(const GenerateArgs& args) {
     const double max_x = 1.5 * static_cast<double>(std::max(1, args.width - 1));
     const int max_steps = std::max(32, args.width * args.height);
     const int minimum_steps_before_merge = std::max(6, args.height / 12);
+    const auto reset_meander_target = [&](RiverHead& head, int step) {
+        const double forward_rows = 6.0 + unit_noise(
+            args.seed,
+            static_cast<std::uint32_t>(head.id * 31000 + step * 19 + 1)
+        ) * 7.0;
+        const double lateral_cols = 3.0 + unit_noise(
+            args.seed,
+            static_cast<std::uint32_t>(head.id * 31000 + step * 19 + 2)
+        ) * 5.0;
+        const double target_x = vertex_x(head.current_vertex) + static_cast<double>(head.next_meander_side) * lateral_cols * 1.5;
+        const double target_y = vertex_y(head.current_vertex) + forward_rows * std::sqrt(3.0);
+
+        head.meander_target_x = std::max(1.5, std::min(max_x - 1.5, target_x));
+        head.meander_target_y = std::min(bottom_y, target_y);
+        head.next_meander_side *= -1;
+        head.has_meander_target = true;
+        head.meander_steps = 0;
+    };
 
     for (int step = 0; step < max_steps; ++step) {
         bool any_active = false;
@@ -516,6 +542,18 @@ RiverNetwork generate_river_network(const GenerateArgs& args) {
             VertexKey best_next;
             double best_score = std::numeric_limits<double>::max();
             const bool can_merge = static_cast<int>(head.edge_path.size()) >= minimum_steps_before_merge;
+            const bool meander_active = edge_touches_steppe(edges[head.current_edge], args);
+            if (meander_active) {
+                const double target_dx = vertex_x(head.current_vertex) - head.meander_target_x;
+                const double target_dy = vertex_y(head.current_vertex) - head.meander_target_y;
+                const double target_distance = std::sqrt(target_dx * target_dx + target_dy * target_dy);
+                if (!head.has_meander_target || target_distance < 3.0 || head.meander_steps > 18) {
+                    reset_meander_target(head, step);
+                }
+            } else {
+                head.has_meander_target = false;
+                head.meander_steps = 0;
+            }
 
             for (const int candidate : found->second) {
                 if (candidate == head.current_edge) {
@@ -541,12 +579,17 @@ RiverNetwork generate_river_network(const GenerateArgs& args) {
                 const double side_score = vertex_y(next_vertex) < bottom_y * 0.9
                     ? (side_distance < 1.0 ? 90.0 : (side_distance < 2.0 ? 35.0 : 0.0))
                     : 0.0;
+                const double meander_dx = vertex_x(next_vertex) - head.meander_target_x;
+                const double meander_dy = vertex_y(next_vertex) - head.meander_target_y;
+                const double meander_score = meander_active && head.has_meander_target
+                    ? std::sqrt(meander_dx * meander_dx + meander_dy * meander_dy) * 1.05
+                    : 0.0;
                 const double merge_score = (occupied_by_other_edge || occupied_by_other_vertex) ? -30.0 : 0.0;
                 const double noise = unit_noise(
                     args.seed,
                     static_cast<std::uint32_t>(head.id * 20000 + step * 131 + candidate * 17)
                 ) * 14.0;
-                const double score = south_score + side_score + merge_score + noise;
+                const double score = south_score + side_score + meander_score + merge_score + noise;
 
                 if (score < best_score) {
                     best_score = score;
@@ -571,6 +614,9 @@ RiverNetwork generate_river_network(const GenerateArgs& args) {
                 head.current_vertex = best_next;
                 head.edge_path.push_back(edges[best_edge]);
                 head.visited_vertices.insert(best_next);
+                if (meander_active && head.has_meander_target) {
+                    ++head.meander_steps;
+                }
                 occupied_edges.insert(edges[best_edge]);
                 occupied_vertices[best_next] = head.id;
                 add_unique_edge(network.edges, edges[best_edge]);
