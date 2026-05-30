@@ -31,8 +31,15 @@
         </div>
       </section>
 
-      <section class="map-panel" aria-label="Generated terrain map">
-        <canvas id="map-canvas"></canvas>
+      <section class="map-section" aria-label="Generated terrain map">
+        <div class="map-toolbar" aria-label="Map view controls">
+          <button id="zoom-out-button" class="secondary icon-button" type="button" aria-label="Zoom out" title="Zoom out">−</button>
+          <button id="zoom-in-button" class="secondary icon-button" type="button" aria-label="Zoom in" title="Zoom in">+</button>
+          <button id="fit-button" class="secondary fit-button" type="button" aria-label="Fit map" title="Fit map">Fit</button>
+        </div>
+        <div id="map-panel" class="map-panel" tabindex="0">
+          <canvas id="map-canvas"></canvas>
+        </div>
       </section>
     </main>
 

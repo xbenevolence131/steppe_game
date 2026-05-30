@@ -104,11 +104,46 @@ button:disabled {
   opacity: 0.7;
 }
 
-.map-panel {
-  min-height: 360px;
+.map-section {
   border: 1px solid var(--line);
   background: var(--empty);
-  overflow: auto;
+}
+
+.map-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  padding: 8px;
+}
+
+.icon-button {
+  width: 34px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.fit-button {
+  min-width: 48px;
+}
+
+.map-panel {
+  position: relative;
+  min-height: 360px;
+  background: var(--empty);
+  overflow: hidden;
+  outline: none;
+  cursor: default;
+}
+
+.map-panel:focus {
+  box-shadow: inset 0 0 0 2px #2f6f73;
+}
+
+.map-panel.is-panning {
+  cursor: grabbing;
 }
 
 #map-canvas {
