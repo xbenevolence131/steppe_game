@@ -3,6 +3,7 @@ const ctx = canvas.getContext("2d");
 const mapPanel = document.querySelector("#map-panel");
 const widthInput = document.querySelector("#map-width");
 const heightInput = document.querySelector("#map-height");
+const riversInput = document.querySelector("#river-sources");
 const generateButton = document.querySelector("#generate-button");
 const saveButton = document.querySelector("#save-button");
 const loadButton = document.querySelector("#load-button");
@@ -41,6 +42,12 @@ const terrainStyles = {
     fill: "#d8c596",
     stroke: "#7e735f",
     label: "#29251d",
+  },
+  river: {
+    stroke: "#2679a6",
+    source: "#60c4e8",
+    merge: "#f4e48a",
+    destination: "#1f5f83",
   },
 };
 
@@ -84,6 +91,34 @@ function hexPoints(cx, cy, size) {
     ]);
   }
   return points;
+}
+
+function hexCenter(coord) {
+  const col = coord.q - 1;
+  const row = coord.r - 1;
+  const hexHeight = Math.sqrt(3) * geometry.size;
+  return {
+    x: geometry.margin + geometry.size + col * geometry.size * 1.5,
+    y: geometry.margin + hexHeight / 2 + row * hexHeight + (col % 2) * hexHeight / 2,
+  };
+}
+
+function edgeBoundaryPoints(edge) {
+  const firstCenter = hexCenter(edge.a);
+  const secondCenter = hexCenter(edge.b);
+  const firstCorners = hexPoints(firstCenter.x, firstCenter.y, geometry.size);
+  const secondCorners = hexPoints(secondCenter.x, secondCenter.y, geometry.size);
+  const shared = [];
+
+  for (const first of firstCorners) {
+    for (const second of secondCorners) {
+      if (Math.hypot(first[0] - second[0], first[1] - second[1]) < 0.001) {
+        shared.push(first);
+      }
+    }
+  }
+
+  return shared.length === 2 ? shared : null;
 }
 
 function updateGeometry(map) {
@@ -191,6 +226,53 @@ function drawHex(cx, cy, size, label, terrain) {
   ctx.fillText(label, cx, cy);
 }
 
+function drawRiverEdges(edges) {
+  if (!edges || edges.length === 0) {
+    return;
+  }
+
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = terrainStyles.river.stroke;
+  ctx.lineWidth = 3.5 / viewport.scale;
+
+  for (const edge of edges) {
+    if (!edge.river) {
+      continue;
+    }
+    const boundary = edgeBoundaryPoints(edge);
+    if (!boundary) {
+      continue;
+    }
+    ctx.beginPath();
+    ctx.moveTo(boundary[0][0], boundary[0][1]);
+    ctx.lineTo(boundary[1][0], boundary[1][1]);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function drawMapMarkers(coords, fillStyle, radius) {
+  if (!coords || coords.length === 0) {
+    return;
+  }
+
+  ctx.save();
+  ctx.fillStyle = fillStyle;
+  ctx.strokeStyle = "#1c1d1b";
+  ctx.lineWidth = 1 / viewport.scale;
+  for (const coord of coords) {
+    const center = hexCenter(coord);
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, radius / viewport.scale, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawMap() {
   if (!currentMap) {
     return;
@@ -206,14 +288,15 @@ function drawMap() {
   ctx.translate(viewport.offsetX, viewport.offsetY);
   ctx.scale(viewport.scale, viewport.scale);
 
-  const hexHeight = Math.sqrt(3) * geometry.size;
   for (const hex of currentMap.hexes) {
-    const col = hex.q - 1;
-    const row = hex.r - 1;
-    const cx = geometry.margin + geometry.size + col * geometry.size * 1.5;
-    const cy = geometry.margin + hexHeight / 2 + row * hexHeight + (col % 2) * hexHeight / 2;
-    drawHex(cx, cy, geometry.size, `${hex.q},${hex.r}`, hex.terrain);
+    const center = hexCenter(hex);
+    drawHex(center.x, center.y, geometry.size, `${hex.q},${hex.r}`, hex.terrain);
   }
+
+  drawRiverEdges(currentMap.edges);
+  drawMapMarkers(currentMap.river_sources, terrainStyles.river.source, 5);
+  drawMapMarkers(currentMap.merge_points, terrainStyles.river.merge, 5);
+  drawMapMarkers(currentMap.river_destinations, terrainStyles.river.destination, 5);
 
   ctx.restore();
 }
@@ -221,16 +304,18 @@ function drawMap() {
 async function generateMap() {
   const width = clampDimension(widthInput.value, 1, 120, 120);
   const height = clampDimension(heightInput.value, 1, 80, 80);
+  const rivers = clampDimension(riversInput.value, 0, 20, 4);
   const seed = newSeed();
   widthInput.value = width;
   heightInput.value = height;
+  riversInput.value = rivers;
 
   generateButton.disabled = true;
   try {
     const response = await fetch("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ width, height, seed }),
+      body: JSON.stringify({ width, height, rivers, seed }),
     });
     const payload = await response.json();
     if (!response.ok) {

@@ -64,6 +64,14 @@ function parseDimension(value, fallback, max) {
   return Math.min(result, max);
 }
 
+function parseBoundedInteger(value, fallback, min, max) {
+  const result = Number(value ?? fallback);
+  if (!Number.isInteger(result)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(max, result));
+}
+
 function parseSeed(value) {
   const result = Number(value);
   if (!Number.isInteger(result) || result < 0 || result > 0xffffffff) {
@@ -91,12 +99,14 @@ async function handleGenerate(req, res) {
 
   const width = parseDimension(payload.width, 120, 120);
   const height = parseDimension(payload.height, 80, 80);
+  const rivers = parseBoundedInteger(payload.rivers, 4, 0, 20);
   const seed = parseSeed(payload.seed);
 
   execFile(executable, [
     "generate",
     "--width", String(width),
     "--height", String(height),
+    "--rivers", String(rivers),
     "--seed", String(seed),
   ], {
     cwd: rootDir,
