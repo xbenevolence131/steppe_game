@@ -17,6 +17,8 @@ struct GenerateArgs {
     int width = 120;
     int height = 80;
     int river_count = 4;
+    int lake_count = 4;
+    int lake_size = 6;
     double meander_forward = 8.0;
     double meander_forward_jitter = 4.0;
     double meander_lateral = 7.0;
@@ -63,6 +65,11 @@ struct RiverNetwork {
     std::vector<Coord> merge_points;
     std::vector<RiverSegment> segments;
     std::vector<RiverEdge> edges;
+};
+
+struct LakeCandidate {
+    RiverEdge edge;
+    double score = 0.0;
 };
 
 struct RiverHead {
@@ -164,6 +171,10 @@ GenerateArgs parse_generate_args(int argc, char** argv) {
             args.seed = parse_seed(argv[++i]);
         } else if ((key == "--rivers" || key == "--river-sources") && i + 1 < argc) {
             args.river_count = parse_non_negative_int(argv[++i], "rivers");
+        } else if (key == "--lakes" && i + 1 < argc) {
+            args.lake_count = parse_non_negative_int(argv[++i], "lakes");
+        } else if (key == "--lake-size" && i + 1 < argc) {
+            args.lake_size = parse_positive_int(argv[++i], "lake size");
         } else if (key == "--meander-forward" && i + 1 < argc) {
             args.meander_forward = parse_non_negative_double(argv[++i], "meander forward");
         } else if (key == "--meander-forward-jitter" && i + 1 < argc) {
@@ -190,6 +201,9 @@ GenerateArgs parse_generate_args(int argc, char** argv) {
     }
     if (args.river_count > 20) {
         throw std::runtime_error("rivers are capped at 20 for the prototype");
+    }
+    if (args.lake_count > 20 || args.lake_size > 40) {
+        throw std::runtime_error("lake values exceed prototype limits");
     }
     if (args.meander_forward > 40.0 || args.meander_forward_jitter > 40.0 || args.meander_lateral > 40.0 || args.meander_lateral_jitter > 40.0) {
         throw std::runtime_error("meander distances are capped at 40 for the prototype");
@@ -727,6 +741,121 @@ RiverNetwork generate_river_network(const GenerateArgs& args) {
     return network;
 }
 
+int rough_coord_distance(const Coord& first, const Coord& second) {
+    return std::abs(first.q - second.q) + std::abs(first.r - second.r);
+}
+
+bool contains_coord(const std::vector<Coord>& coords, const Coord& coord) {
+    return std::find_if(coords.begin(), coords.end(), [&coord](const Coord& existing) {
+        return coord_equal(existing, coord);
+    }) != coords.end();
+}
+
+std::set<Coord, decltype(coord_less)*> generate_lake_hexes(const GenerateArgs& args, const RiverNetwork& rivers) {
+    std::set<Coord, decltype(coord_less)*> lake_hexes(coord_less);
+    if (args.lake_count == 0 || args.lake_size == 0 || rivers.segments.empty()) {
+        return lake_hexes;
+    }
+
+    std::vector<LakeCandidate> candidates;
+    for (const RiverSegment& segment : rivers.segments) {
+        if (segment.edge_path.size() < 8) {
+            continue;
+        }
+
+        const std::size_t start = std::max<std::size_t>(1, segment.edge_path.size() / 4);
+        const std::size_t end = std::max(start + 1, segment.edge_path.size() * 9 / 10);
+        for (std::size_t index = start; index < end; ++index) {
+            const RiverEdge& edge = segment.edge_path[index];
+            const double progress = static_cast<double>(index) / static_cast<double>(std::max<std::size_t>(1, segment.edge_path.size() - 1));
+            const double center_bias = 1.0 - std::abs(progress - 0.62);
+            const double score = center_bias + unit_noise(
+                args.seed,
+                static_cast<std::uint32_t>(segment.id * 41000 + index * 23 + 11)
+            );
+            candidates.push_back({edge, score});
+        }
+    }
+
+    std::sort(candidates.begin(), candidates.end(), [](const LakeCandidate& first, const LakeCandidate& second) {
+        return first.score > second.score;
+    });
+
+    std::vector<Coord> seed_coords;
+    int built_lakes = 0;
+    for (const LakeCandidate& candidate : candidates) {
+        if (built_lakes >= args.lake_count) {
+            break;
+        }
+
+        const Coord seed = unit_noise(args.seed, static_cast<std::uint32_t>(built_lakes * 53000 + candidate.edge.a.q * 97 + candidate.edge.a.r * 31)) < 0.5
+            ? candidate.edge.a
+            : candidate.edge.b;
+        if (!in_bounds(seed, args) || seed.r <= 2 || seed.r >= args.height) {
+            continue;
+        }
+
+        bool too_close = false;
+        for (const Coord& existing : seed_coords) {
+            if (rough_coord_distance(seed, existing) < std::max(5, args.lake_size)) {
+                too_close = true;
+                break;
+            }
+        }
+        if (too_close) {
+            continue;
+        }
+
+        const int target_size = std::max(2, args.lake_size - 2 + static_cast<int>(
+            std::floor(unit_noise(args.seed, static_cast<std::uint32_t>(built_lakes * 53000 + 17)) * 5.0)
+        ));
+        std::vector<Coord> lake_cells;
+        std::vector<Coord> frontier;
+        const Coord initial_cells[] = {candidate.edge.a, candidate.edge.b};
+        for (const Coord& coord : initial_cells) {
+            if (in_bounds(coord, args) && lake_hexes.find(coord) == lake_hexes.end() && !contains_coord(lake_cells, coord)) {
+                lake_cells.push_back(coord);
+                frontier.push_back(coord);
+            }
+        }
+
+        while (static_cast<int>(lake_cells.size()) < target_size && !frontier.empty()) {
+            std::vector<Coord> neighbor_candidates;
+            for (const Coord& coord : frontier) {
+                for (int direction = 0; direction < 6; ++direction) {
+                    const Coord neighbor = neighbor_in_direction(coord, direction);
+                    if (!in_bounds(neighbor, args) || lake_hexes.find(neighbor) != lake_hexes.end() || contains_coord(lake_cells, neighbor) || contains_coord(neighbor_candidates, neighbor)) {
+                        continue;
+                    }
+                    neighbor_candidates.push_back(neighbor);
+                }
+            }
+
+            if (neighbor_candidates.empty()) {
+                break;
+            }
+
+            std::sort(neighbor_candidates.begin(), neighbor_candidates.end(), [&](const Coord& first, const Coord& second) {
+                const double first_score = unit_noise(args.seed, static_cast<std::uint32_t>(built_lakes * 61000 + first.q * 131 + first.r * 37));
+                const double second_score = unit_noise(args.seed, static_cast<std::uint32_t>(built_lakes * 61000 + second.q * 131 + second.r * 37));
+                return first_score > second_score;
+            });
+
+            const Coord next = neighbor_candidates.front();
+            lake_cells.push_back(next);
+            frontier.push_back(next);
+        }
+
+        for (const Coord& coord : lake_cells) {
+            lake_hexes.insert(coord);
+        }
+        seed_coords.push_back(seed);
+        ++built_lakes;
+    }
+
+    return lake_hexes;
+}
+
 void print_coord(const Coord& coord) {
     std::cout << "{\"q\":" << coord.q << ",\"r\":" << coord.r << "}";
 }
@@ -741,6 +870,7 @@ void print_edge(const RiverEdge& edge) {
 
 void print_generated_map(const GenerateArgs& args) {
     const RiverNetwork rivers = generate_river_network(args);
+    const std::set<Coord, decltype(coord_less)*> lakes = generate_lake_hexes(args, rivers);
 
     std::cout << "{";
     std::cout << "\"schema\":\"steppe-terrain.v1\",";
@@ -756,7 +886,10 @@ void print_generated_map(const GenerateArgs& args) {
                 std::cout << ",";
             }
             first = false;
-            const char* terrain = is_steppe_hex(q, r, args) ? "grassland" : "none";
+            const Coord coord{q, r};
+            const char* terrain = lakes.find(coord) != lakes.end()
+                ? "lake"
+                : (is_steppe_hex(q, r, args) ? "grassland" : "none");
             std::cout << "{\"q\":" << q << ",\"r\":" << r << ",\"terrain\":\"" << terrain << "\"}";
         }
     }
@@ -817,14 +950,14 @@ void print_generated_map(const GenerateArgs& args) {
     std::cout << "\"roads\":[],";
     std::cout << "\"metadata\":{";
     std::cout << "\"generator\":\"prototype-steppe-blob\",";
-    std::cout << "\"terrain_types\":[\"none\",\"grassland\",\"light_forest\",\"heavy_forest\",\"hills\",\"mountains\",\"urban\"]";
+    std::cout << "\"terrain_types\":[\"none\",\"grassland\",\"lake\",\"light_forest\",\"heavy_forest\",\"hills\",\"mountains\",\"urban\"]";
     std::cout << "}";
     std::cout << "}\n";
 }
 
 void print_usage() {
     std::cerr << "Usage:\n";
-    std::cerr << "  steppe_engine generate --width <n> --height <n> [--seed <n>] [--rivers <n>] [--meander-forward <n>] [--meander-forward-jitter <n>] [--meander-lateral <n>] [--meander-lateral-jitter <n>] [--meander-strength <n>] [--meander-reach <n>] [--river-slant-strength <n>] [--meander-timeout <n>]\n";
+    std::cerr << "  steppe_engine generate --width <n> --height <n> [--seed <n>] [--rivers <n>] [--lakes <n>] [--lake-size <n>] [--meander-forward <n>] [--meander-forward-jitter <n>] [--meander-lateral <n>] [--meander-lateral-jitter <n>] [--meander-strength <n>] [--meander-reach <n>] [--river-slant-strength <n>] [--meander-timeout <n>]\n";
 }
 
 } // namespace

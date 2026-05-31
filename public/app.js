@@ -4,6 +4,8 @@ const mapPanel = document.querySelector("#map-panel");
 const widthInput = document.querySelector("#map-width");
 const heightInput = document.querySelector("#map-height");
 const riversInput = document.querySelector("#river-sources");
+const lakesInput = document.querySelector("#lake-count");
+const lakeSizeInput = document.querySelector("#lake-size");
 const meanderForwardInput = document.querySelector("#meander-forward");
 const meanderForwardJitterInput = document.querySelector("#meander-forward-jitter");
 const meanderLateralInput = document.querySelector("#meander-lateral");
@@ -50,6 +52,11 @@ const terrainStyles = {
     fill: "#d8c596",
     stroke: "#7e735f",
     label: "#29251d",
+  },
+  lake: {
+    fill: "#4f9fc0",
+    stroke: "#245e78",
+    label: "#082c3a",
   },
   river: {
     stroke: "#2679a6",
@@ -320,6 +327,8 @@ async function generateMap() {
   const width = clampDimension(widthInput.value, 1, 120, 120);
   const height = clampDimension(heightInput.value, 1, 80, 80);
   const rivers = clampDimension(riversInput.value, 0, 20, 4);
+  const lakes = clampDimension(lakesInput.value, 0, 20, 4);
+  const lakeSize = clampDimension(lakeSizeInput.value, 1, 40, 6);
   const meanderForward = clampNumberInput(meanderForwardInput, 0, 40, 8);
   const meanderForwardJitter = clampNumberInput(meanderForwardJitterInput, 0, 40, 4);
   const meanderLateral = clampNumberInput(meanderLateralInput, 0, 40, 7);
@@ -332,6 +341,8 @@ async function generateMap() {
   widthInput.value = width;
   heightInput.value = height;
   riversInput.value = rivers;
+  lakesInput.value = lakes;
+  lakeSizeInput.value = lakeSize;
   meanderTimeoutInput.value = meanderTimeout;
 
   generateButton.disabled = true;
@@ -343,6 +354,8 @@ async function generateMap() {
         width,
         height,
         rivers,
+        lakes,
+        lakeSize,
         meanderForward,
         meanderForwardJitter,
         meanderLateral,

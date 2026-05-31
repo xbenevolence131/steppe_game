@@ -108,6 +108,8 @@ async function handleGenerate(req, res) {
   const width = parseDimension(payload.width, 120, 120);
   const height = parseDimension(payload.height, 80, 80);
   const rivers = parseBoundedInteger(payload.rivers, 4, 0, 20);
+  const lakes = parseBoundedInteger(payload.lakes, 4, 0, 20);
+  const lakeSize = parseBoundedInteger(payload.lakeSize, 6, 1, 40);
   const meanderForward = parseBoundedNumber(payload.meanderForward, 8, 0, 40);
   const meanderForwardJitter = parseBoundedNumber(payload.meanderForwardJitter, 4, 0, 40);
   const meanderLateral = parseBoundedNumber(payload.meanderLateral, 7, 0, 40);
@@ -123,6 +125,8 @@ async function handleGenerate(req, res) {
     "--width", String(width),
     "--height", String(height),
     "--rivers", String(rivers),
+    "--lakes", String(lakes),
+    "--lake-size", String(lakeSize),
     "--meander-forward", String(meanderForward),
     "--meander-forward-jitter", String(meanderForwardJitter),
     "--meander-lateral", String(meanderLateral),
