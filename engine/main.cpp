@@ -81,6 +81,23 @@ struct LakeRiverConnection {
     RiverEdge river_edge;
 };
 
+struct LakeNetworkTemplate {
+    int id = 0;
+    int width = 0;
+    int height = 0;
+    Coord anchor;
+    std::vector<Coord> lake_hexes;
+    std::vector<RiverEdge> edges;
+};
+
+struct LakeNetworkOverlay {
+    bool placed = false;
+    int template_id = 0;
+    Coord anchor;
+    std::vector<Coord> lake_hexes;
+    std::vector<RiverEdge> edges;
+};
+
 struct RiverHead {
     int id = 0;
     Coord source;
@@ -364,7 +381,11 @@ BoundaryEdge make_boundary_edge(const RiverEdge& edge) {
     }
 
     if (shared.size() != 2) {
-        throw std::runtime_error("could not resolve shared edge vertices");
+        throw std::runtime_error(
+            "could not resolve shared edge vertices for edge "
+            + std::to_string(edge.a.q) + "," + std::to_string(edge.a.r)
+            + " to " + std::to_string(edge.b.q) + "," + std::to_string(edge.b.r)
+        );
     }
 
     if (shared[1] < shared[0]) {
@@ -960,6 +981,170 @@ std::set<Coord, decltype(coord_less)*> generate_lake_hexes(const GenerateArgs& a
     return lake_hexes;
 }
 
+std::vector<LakeNetworkTemplate> chinese_lake_network_templates() {
+    return {
+        {
+            1,
+            20,
+            10,
+            {10, 5},
+            {{8, 2}, {7, 3}, {8, 3}, {8, 4}, {9, 4}, {14, 4}, {15, 4}, {15, 5}, {7, 7}, {8, 7}, {7, 8}},
+            {{{10, 3}, {10, 4}}, {{10, 4}, {11, 4}}, {{11, 4}, {11, 5}}, {{12, 4}, {11, 5}}, {{12, 4}, {12, 5}}, {{12, 4}, {13, 5}}, {{13, 4}, {13, 5}}, {{8, 5}, {9, 5}}, {{8, 5}, {8, 6}}, {{8, 5}, {9, 6}}, {{7, 6}, {8, 6}}},
+        },
+        {
+            2,
+            20,
+            10,
+            {10, 5},
+            {{14, 4}, {7, 5}, {8, 5}, {12, 5}, {13, 5}, {14, 5}, {6, 6}, {7, 6}, {8, 6}, {11, 6}, {18, 6}, {19, 6}, {7, 7}, {17, 7}, {18, 7}, {17, 8}},
+            {{{9, 5}, {9, 6}}, {{10, 5}, {9, 6}}, {{10, 5}, {10, 6}}, {{14, 6}, {15, 6}}, {{15, 6}, {15, 7}}, {{16, 6}, {15, 7}}, {{16, 6}, {16, 7}}},
+        },
+        {
+            3,
+            20,
+            10,
+            {10, 5},
+            {{10, 3}, {10, 4}, {9, 5}, {11, 5}, {14, 6}, {15, 6}, {16, 6}, {17, 6}, {10, 7}, {15, 7}, {16, 7}, {9, 8}, {10, 8}, {11, 8}},
+            {{{12, 5}, {11, 6}}, {{12, 5}, {12, 6}}, {{12, 6}, {13, 6}}, {{12, 6}, {12, 7}}, {{12, 6}, {13, 7}}, {{13, 6}, {13, 7}}, {{11, 7}, {12, 7}}},
+        },
+        {
+            4,
+            20,
+            10,
+            {10, 5},
+            {{6, 4}, {6, 5}, {7, 5}, {12, 6}, {5, 7}, {6, 7}, {11, 7}, {12, 7}, {13, 7}, {14, 7}, {5, 8}, {6, 8}, {13, 8}},
+            {{{8, 4}, {8, 5}}, {{8, 5}, {9, 5}}, {{9, 5}, {9, 6}}, {{10, 5}, {9, 6}}, {{10, 5}, {10, 6}}, {{6, 6}, {7, 6}}, {{6, 6}, {7, 7}}, {{10, 6}, {11, 6}}},
+        },
+    };
+}
+
+Coord translate_template_coord(const LakeNetworkTemplate& lake_template, const Coord& anchor, const Coord& coord) {
+    return {
+        anchor.q + coord.q - lake_template.anchor.q,
+        anchor.r + coord.r - lake_template.anchor.r,
+    };
+}
+
+Coord clamp_template_anchor(const GenerateArgs& args, const LakeNetworkTemplate& lake_template, Coord anchor) {
+    const int min_q = lake_template.anchor.q;
+    const int min_r = lake_template.anchor.r;
+    const int max_q = args.width - lake_template.width + lake_template.anchor.q;
+    const int max_r = args.height - lake_template.height + lake_template.anchor.r;
+    anchor.q = std::max(min_q, std::min(max_q, anchor.q));
+    anchor.r = std::max(min_r, std::min(max_r, anchor.r));
+    if ((anchor.q - lake_template.anchor.q) % 2 != 0) {
+        if (anchor.q + 1 <= max_q) {
+            ++anchor.q;
+        } else if (anchor.q - 1 >= min_q) {
+            --anchor.q;
+        }
+    }
+    return anchor;
+}
+
+double score_chinese_lake_network_anchor(
+    const GenerateArgs& args,
+    const LakeNetworkTemplate& lake_template,
+    const std::set<Coord, decltype(coord_less)*>& occupied_lakes,
+    const Coord& anchor,
+    int candidate_index
+) {
+    const double target_q = static_cast<double>(args.width) * 0.78;
+    const double target_r = static_cast<double>(args.height) * 0.68;
+    double score = -std::abs(static_cast<double>(anchor.q) - target_q) * 0.16
+        - std::abs(static_cast<double>(anchor.r) - target_r) * 0.22
+        + unit_noise(args.seed, static_cast<std::uint32_t>(73000 + candidate_index * 37 + lake_template.id)) * 6.0;
+
+    for (const Coord& coord : lake_template.lake_hexes) {
+        const Coord placed = translate_template_coord(lake_template, anchor, coord);
+        if (!in_bounds(placed, args)) {
+            score -= 1000.0;
+            continue;
+        }
+        score += is_steppe_hex(placed.q, placed.r, args) ? 7.0 : -2.5;
+        if (occupied_lakes.find(placed) != occupied_lakes.end()) {
+            score -= 35.0;
+        }
+    }
+
+    for (const RiverEdge& edge : lake_template.edges) {
+        const Coord first = translate_template_coord(lake_template, anchor, edge.a);
+        const Coord second = translate_template_coord(lake_template, anchor, edge.b);
+        if (!in_bounds(first, args) || !in_bounds(second, args)) {
+            score -= 1000.0;
+            continue;
+        }
+        if (is_steppe_hex(first.q, first.r, args) || is_steppe_hex(second.q, second.r, args)) {
+            score += 1.2;
+        }
+    }
+
+    return score;
+}
+
+LakeNetworkOverlay generate_chinese_lake_network_overlay(
+    const GenerateArgs& args,
+    const std::set<Coord, decltype(coord_less)*>& occupied_lakes
+) {
+    LakeNetworkOverlay overlay;
+    const std::vector<LakeNetworkTemplate> templates = chinese_lake_network_templates();
+    if (templates.empty() || args.width < 20 || args.height < 10) {
+        return overlay;
+    }
+
+    const int template_index = std::min(
+        static_cast<int>(templates.size()) - 1,
+        static_cast<int>(std::floor(unit_noise(args.seed, 73101) * static_cast<double>(templates.size())))
+    );
+    const LakeNetworkTemplate& lake_template = templates[template_index];
+
+    Coord best_anchor = clamp_template_anchor(args, lake_template, {
+        static_cast<int>(std::round(static_cast<double>(args.width) * 0.78)),
+        static_cast<int>(std::round(static_cast<double>(args.height) * 0.68)),
+    });
+    double best_score = -std::numeric_limits<double>::max();
+
+    for (int candidate = 0; candidate < 48; ++candidate) {
+        Coord anchor{
+            static_cast<int>(std::round(
+                static_cast<double>(args.width) * 0.78
+                + signed_noise(args.seed, static_cast<std::uint32_t>(73200 + candidate * 2)) * static_cast<double>(args.width) * 0.12
+            )),
+            static_cast<int>(std::round(
+                static_cast<double>(args.height) * 0.68
+                + signed_noise(args.seed, static_cast<std::uint32_t>(73201 + candidate * 2)) * static_cast<double>(args.height) * 0.12
+            )),
+        };
+        anchor = clamp_template_anchor(args, lake_template, anchor);
+        const double score = score_chinese_lake_network_anchor(args, lake_template, occupied_lakes, anchor, candidate);
+        if (score > best_score) {
+            best_score = score;
+            best_anchor = anchor;
+        }
+    }
+
+    overlay.placed = true;
+    overlay.template_id = lake_template.id;
+    overlay.anchor = best_anchor;
+    for (const Coord& coord : lake_template.lake_hexes) {
+        const Coord placed = translate_template_coord(lake_template, best_anchor, coord);
+        if (in_bounds(placed, args) && !contains_coord(overlay.lake_hexes, placed)) {
+            overlay.lake_hexes.push_back(placed);
+        }
+    }
+    for (const RiverEdge& edge : lake_template.edges) {
+        const Coord first = translate_template_coord(lake_template, best_anchor, edge.a);
+        const Coord second = translate_template_coord(lake_template, best_anchor, edge.b);
+        if (in_bounds(first, args) && in_bounds(second, args)) {
+            add_unique_edge(overlay.edges, canonical_edge(first, second));
+        }
+    }
+
+    std::sort(overlay.lake_hexes.begin(), overlay.lake_hexes.end(), coord_less);
+    std::sort(overlay.edges.begin(), overlay.edges.end(), edge_less);
+    return overlay;
+}
+
 std::vector<LakeRiverConnection> derive_lake_river_connections(
     const std::set<Coord, decltype(coord_less)*>& lake_hexes,
     const std::vector<RiverEdge>& river_edges
@@ -1068,7 +1253,16 @@ void print_generated_map(const GenerateArgs& args) {
     all_lakes.insert(lakes.begin(), lakes.end());
     all_lakes.insert(baikal.begin(), baikal.end());
     all_lakes.insert(caspian.begin(), caspian.end());
-    const std::vector<LakeRiverConnection> lake_river_connections = derive_lake_river_connections(all_lakes, rivers.edges);
+    const LakeNetworkOverlay chinese_lake_network = generate_chinese_lake_network_overlay(args, all_lakes);
+    for (const Coord& lake : chinese_lake_network.lake_hexes) {
+        all_lakes.insert(lake);
+    }
+    std::vector<RiverEdge> all_river_edges = rivers.edges;
+    for (const RiverEdge& edge : chinese_lake_network.edges) {
+        add_unique_edge(all_river_edges, edge);
+    }
+    std::sort(all_river_edges.begin(), all_river_edges.end(), edge_less);
+    const std::vector<LakeRiverConnection> lake_river_connections = derive_lake_river_connections(all_lakes, all_river_edges);
 
     std::cout << "{";
     std::cout << "\"schema\":\"steppe-terrain.v1\",";
@@ -1138,11 +1332,11 @@ void print_generated_map(const GenerateArgs& args) {
     }
     std::cout << "],";
     std::cout << "\"edges\":[";
-    for (std::size_t i = 0; i < rivers.edges.size(); ++i) {
+    for (std::size_t i = 0; i < all_river_edges.size(); ++i) {
         if (i > 0) {
             std::cout << ",";
         }
-        print_edge(rivers.edges[i]);
+        print_edge(all_river_edges[i]);
     }
     std::cout << "],";
     std::cout << "\"lake_river_connections\":[";
@@ -1173,7 +1367,15 @@ void print_generated_map(const GenerateArgs& args) {
     std::cout << "\"metadata\":{";
     std::cout << "\"generator\":\"prototype-steppe-blob\",";
     std::cout << "\"terrain_types\":[\"none\",\"grassland\",\"lake\",\"hill\",\"mountain\",\"woods\",\"marsh\",\"urban\"],";
-    std::cout << "\"lake_river_connection_model\":\"river-terminal-lake-vertex.v1\"";
+    std::cout << "\"lake_river_connection_model\":\"river-terminal-lake-vertex.v1\",";
+    std::cout << "\"chinese_lake_network\":";
+    if (chinese_lake_network.placed) {
+        std::cout << "{\"template_id\":" << chinese_lake_network.template_id << ",\"anchor\":";
+        print_coord(chinese_lake_network.anchor);
+        std::cout << "}";
+    } else {
+        std::cout << "null";
+    }
     std::cout << "}";
     std::cout << "}\n";
 }
