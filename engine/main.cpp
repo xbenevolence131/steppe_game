@@ -26,6 +26,7 @@ struct GenerateArgs {
     double meander_strength = 1.0;
     double meander_reach = 2.0;
     double river_slant_strength = 10.0;
+    double valley_thickness = 2.0;
     int meander_timeout = 28;
     std::uint32_t seed = 1;
 };
@@ -215,6 +216,8 @@ GenerateArgs parse_generate_args(int argc, char** argv) {
             args.meander_reach = parse_non_negative_double(argv[++i], "meander reach");
         } else if ((key == "--river-slant" || key == "--river-slant-strength") && i + 1 < argc) {
             args.river_slant_strength = parse_non_negative_double(argv[++i], "river slant strength");
+        } else if (key == "--valley-thickness" && i + 1 < argc) {
+            args.valley_thickness = parse_non_negative_double(argv[++i], "valley thickness");
         } else if (key == "--meander-timeout" && i + 1 < argc) {
             args.meander_timeout = parse_positive_int(argv[++i], "meander timeout");
         } else {
@@ -234,7 +237,7 @@ GenerateArgs parse_generate_args(int argc, char** argv) {
     if (args.meander_forward > 40.0 || args.meander_forward_jitter > 40.0 || args.meander_lateral > 40.0 || args.meander_lateral_jitter > 40.0) {
         throw std::runtime_error("meander distances are capped at 40 for the prototype");
     }
-    if (args.meander_strength > 10.0 || args.meander_reach > 40.0 || args.river_slant_strength > 10.0 || args.meander_timeout > 200) {
+    if (args.meander_strength > 10.0 || args.meander_reach > 40.0 || args.river_slant_strength > 10.0 || args.valley_thickness > 5.0 || args.meander_timeout > 200) {
         throw std::runtime_error("meander tuning values exceed prototype limits");
     }
 
@@ -1145,6 +1148,136 @@ LakeNetworkOverlay generate_chinese_lake_network_overlay(
     return overlay;
 }
 
+void add_valley_candidate(
+    std::map<Coord, double, decltype(coord_less)*>& candidates,
+    const Coord& coord,
+    double strength
+) {
+    const auto found = candidates.find(coord);
+    if (found == candidates.end() || strength > found->second) {
+        candidates[coord] = strength;
+    }
+}
+
+double valley_ring_scale(double thickness, int distance) {
+    if (thickness <= 0.0) {
+        return 0.0;
+    }
+    if (distance == 0) {
+        return std::min(1.0, thickness);
+    }
+
+    const int full_distance = static_cast<int>(std::floor(thickness));
+    if (distance <= full_distance) {
+        return 1.0;
+    }
+    if (distance == full_distance + 1) {
+        return thickness - static_cast<double>(full_distance);
+    }
+    return 0.0;
+}
+
+double river_valley_strength(int distance) {
+    if (distance == 0) {
+        return 1.0;
+    }
+    if (distance == 1) {
+        return 0.96;
+    }
+    if (distance == 2) {
+        return 0.82;
+    }
+    return 0.48 * std::pow(0.62, static_cast<double>(distance - 3));
+}
+
+double lake_valley_strength(int distance) {
+    if (distance == 1) {
+        return 0.98;
+    }
+    if (distance == 2) {
+        return 0.86;
+    }
+    if (distance == 3) {
+        return 0.62;
+    }
+    return 0.34 * std::pow(0.62, static_cast<double>(distance - 4));
+}
+
+std::set<Coord, decltype(coord_less)*> next_neighbor_ring(
+    const GenerateArgs& args,
+    const std::set<Coord, decltype(coord_less)*>& current_ring
+) {
+    std::set<Coord, decltype(coord_less)*> next_ring(coord_less);
+    for (const Coord& coord : current_ring) {
+        for (int direction = 0; direction < 6; ++direction) {
+            const Coord neighbor = neighbor_in_direction(coord, direction);
+            if (in_bounds(neighbor, args)) {
+                next_ring.insert(neighbor);
+            }
+        }
+    }
+    return next_ring;
+}
+
+std::set<Coord, decltype(coord_less)*> derive_valley_hexes(
+    const GenerateArgs& args,
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const std::vector<RiverEdge>& river_edges
+) {
+    std::set<Coord, decltype(coord_less)*> valley_hexes(coord_less);
+    std::map<Coord, double, decltype(coord_less)*> candidates(coord_less);
+    if (args.valley_thickness <= 0.0) {
+        return valley_hexes;
+    }
+
+    std::set<Coord, decltype(coord_less)*> river_ring(coord_less);
+    for (const RiverEdge& edge : river_edges) {
+        river_ring.insert(edge.a);
+        river_ring.insert(edge.b);
+    }
+    const int max_river_distance = static_cast<int>(std::ceil(args.valley_thickness));
+    for (int distance = 0; distance <= max_river_distance && !river_ring.empty(); ++distance) {
+        const double scale = valley_ring_scale(args.valley_thickness, distance);
+        if (scale > 0.0) {
+            for (const Coord& coord : river_ring) {
+                add_valley_candidate(candidates, coord, river_valley_strength(distance) * scale);
+            }
+        }
+        river_ring = next_neighbor_ring(args, river_ring);
+    }
+
+    std::set<Coord, decltype(coord_less)*> lake_ring = next_neighbor_ring(args, lake_hexes);
+    const double lake_effective_thickness = args.valley_thickness + 1.0;
+    const int max_lake_distance = static_cast<int>(std::ceil(lake_effective_thickness));
+    for (int distance = 1; distance <= max_lake_distance && !lake_ring.empty(); ++distance) {
+        const double scale = valley_ring_scale(lake_effective_thickness, distance);
+        if (scale > 0.0) {
+            for (const Coord& coord : lake_ring) {
+                if (lake_hexes.find(coord) == lake_hexes.end()) {
+                    add_valley_candidate(candidates, coord, lake_valley_strength(distance) * scale);
+                }
+            }
+        }
+        lake_ring = next_neighbor_ring(args, lake_ring);
+    }
+
+    for (const auto& entry : candidates) {
+        const Coord coord = entry.first;
+        if (lake_hexes.find(coord) != lake_hexes.end() || is_steppe_hex(coord.q, coord.r, args)) {
+            continue;
+        }
+
+        const double north_south_bias = static_cast<double>(coord.r) / static_cast<double>(std::max(1, args.height));
+        const double threshold = std::min(0.985, entry.second + north_south_bias * 0.04);
+        const double roll = unit_noise(args.seed, static_cast<std::uint32_t>(74000 + coord.q * 193 + coord.r * 389));
+        if (roll < threshold) {
+            valley_hexes.insert(coord);
+        }
+    }
+
+    return valley_hexes;
+}
+
 std::vector<LakeRiverConnection> derive_lake_river_connections(
     const std::set<Coord, decltype(coord_less)*>& lake_hexes,
     const std::vector<RiverEdge>& river_edges
@@ -1262,6 +1395,7 @@ void print_generated_map(const GenerateArgs& args) {
         add_unique_edge(all_river_edges, edge);
     }
     std::sort(all_river_edges.begin(), all_river_edges.end(), edge_less);
+    const std::set<Coord, decltype(coord_less)*> valley_hexes = derive_valley_hexes(args, all_lakes, all_river_edges);
     const std::vector<LakeRiverConnection> lake_river_connections = derive_lake_river_connections(all_lakes, all_river_edges);
 
     std::cout << "{";
@@ -1279,9 +1413,12 @@ void print_generated_map(const GenerateArgs& args) {
             }
             first = false;
             const Coord coord{q, r};
-            const char* terrain = all_lakes.find(coord) != all_lakes.end()
-                ? "lake"
-                : (is_steppe_hex(q, r, args) ? "grassland" : "none");
+            const char* terrain = "none";
+            if (all_lakes.find(coord) != all_lakes.end()) {
+                terrain = "lake";
+            } else if (valley_hexes.find(coord) != valley_hexes.end() || is_steppe_hex(q, r, args)) {
+                terrain = "grassland";
+            }
             std::cout << "{\"q\":" << q << ",\"r\":" << r << ",\"terrain\":\"" << terrain << "\"}";
         }
     }
@@ -1382,7 +1519,7 @@ void print_generated_map(const GenerateArgs& args) {
 
 void print_usage() {
     std::cerr << "Usage:\n";
-    std::cerr << "  steppe_engine generate --width <n> --height <n> [--seed <n>] [--rivers <n>] [--lakes <n>] [--lake-size <n>] [--meander-forward <n>] [--meander-forward-jitter <n>] [--meander-lateral <n>] [--meander-lateral-jitter <n>] [--meander-strength <n>] [--meander-reach <n>] [--river-slant-strength <n>] [--meander-timeout <n>]\n";
+    std::cerr << "  steppe_engine generate --width <n> --height <n> [--seed <n>] [--rivers <n>] [--lakes <n>] [--lake-size <n>] [--meander-forward <n>] [--meander-forward-jitter <n>] [--meander-lateral <n>] [--meander-lateral-jitter <n>] [--meander-strength <n>] [--meander-reach <n>] [--river-slant-strength <n>] [--valley-thickness <n>] [--meander-timeout <n>]\n";
 }
 
 } // namespace
