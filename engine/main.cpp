@@ -1776,6 +1776,12 @@ void print_town(const Town& town) {
     std::cout << "{\"q\":" << town.coord.q << ",\"r\":" << town.coord.r << ",\"feature\":\"" << town.feature << "\"}";
 }
 
+bool coord_in_vector(const std::vector<Coord>& coords, const Coord& target) {
+    return std::find_if(coords.begin(), coords.end(), [&target](const Coord& coord) {
+        return coord_equal(coord, target);
+    }) != coords.end();
+}
+
 void print_generated_map(const GenerateArgs& args) {
     const RiverNetwork rivers = generate_river_network(args);
     const std::set<Coord, decltype(coord_less)*> lakes = generate_lake_hexes(args, rivers);
@@ -1822,6 +1828,10 @@ void print_generated_map(const GenerateArgs& args) {
             const Coord coord{q, r};
             const bool base_steppe = is_steppe_hex(q, r, args);
             const bool lake = all_lakes.find(coord) != all_lakes.end();
+            const bool random_lake = lakes.find(coord) != lakes.end();
+            const bool baikal_lake = baikal.find(coord) != baikal.end();
+            const bool caspian_lake = caspian.find(coord) != caspian.end();
+            const bool chinese_lake = coord_in_vector(chinese_lake_network.lake_hexes, coord);
             const bool valley = valley_hexes.find(coord) != valley_hexes.end();
             const bool forest_blob = forest_blob_hexes.find(coord) != forest_blob_hexes.end();
             const auto town = std::find_if(towns.begin(), towns.end(), [&coord](const Town& candidate) {
@@ -1829,33 +1839,20 @@ void print_generated_map(const GenerateArgs& args) {
             });
             const bool urban = town != towns.end();
             std::vector<std::string> labels{
-                base_steppe ? "base_steppe" : "base_none",
+                base_steppe ? "base_steppe" : "wild_terrain",
+            };
+            const auto remove_label = [&](const std::string& label) {
+                labels.erase(std::remove(labels.begin(), labels.end(), label), labels.end());
             };
             const char* terrain = "none";
             if (urban) {
                 terrain = "urban";
-                if (valley) {
-                    labels.push_back("valley");
-                }
-                labels.push_back("urban");
-                labels.push_back(town->feature == "grassland_water" ? "water_adjacent_town" : "fixed_feature_town");
-                labels.push_back(town->feature);
             } else if (lake) {
                 terrain = "lake";
-                labels.push_back("lake");
             } else if (forest_blob) {
                 terrain = "forest";
-                labels.push_back("forest_blob");
-                if (valley) {
-                    labels.push_back("valley");
-                } else if (!base_steppe) {
-                    labels.push_back("wild_terrain");
-                }
             } else if (valley || base_steppe) {
                 terrain = "grassland";
-                if (valley) {
-                    labels.push_back("valley");
-                }
             } else {
                 const auto distance = grassland_distances.find(coord);
                 terrain = wild_terrain_for_distance(
@@ -1863,7 +1860,38 @@ void print_generated_map(const GenerateArgs& args) {
                     coord,
                     distance == grassland_distances.end() ? std::max(args.width, args.height) : distance->second
                 );
-                labels.push_back("wild_terrain");
+            }
+
+            if (forest_blob && base_steppe) {
+                remove_label("base_steppe");
+            }
+            if ((lake || valley || urban) && !base_steppe) {
+                remove_label("wild_terrain");
+            }
+            if (valley) {
+                labels.push_back("valley");
+            }
+            if (forest_blob) {
+                labels.push_back("forest_blob");
+            }
+            if (lake) {
+                if (random_lake) {
+                    labels.push_back("random_lakes");
+                }
+                if (baikal_lake) {
+                    labels.push_back("lake_baikal");
+                }
+                if (caspian_lake) {
+                    labels.push_back("caspian_sea");
+                }
+                if (chinese_lake) {
+                    labels.push_back("chinese_lakes");
+                }
+            }
+            if (urban) {
+                labels.push_back("urban");
+                labels.push_back(town->feature == "grassland_water" ? "water_adjacent_town" : "fixed_feature_town");
+                labels.push_back(town->feature);
             }
             std::cout << "{\"q\":" << q << ",\"r\":" << r << ",\"terrain\":\"" << terrain << "\",\"labels\":";
             print_string_array(labels);
@@ -1960,7 +1988,7 @@ void print_generated_map(const GenerateArgs& args) {
     std::cout << "\"metadata\":{";
     std::cout << "\"generator\":\"prototype-steppe-blob\",";
     std::cout << "\"terrain_types\":[\"none\",\"grassland\",\"lake\",\"hill\",\"mountain\",\"forest\",\"marsh\",\"urban\"],";
-    std::cout << "\"hex_label_model\":\"base-plus-generation-role.v1\",";
+    std::cout << "\"hex_label_model\":\"final-semantic-labels.v1\",";
     std::cout << "\"lake_river_connection_model\":\"river-terminal-lake-vertex.v1\",";
     std::cout << "\"chinese_lake_network\":";
     if (chinese_lake_network.placed) {

@@ -716,7 +716,7 @@ function toggleHexTerrain(hex, terrain) {
 
 function editorLabelsForTerrain(terrain) {
   if (terrain === "lake") {
-    return ["lake"];
+    return [];
   }
   if (terrain === "grassland") {
     return ["base_steppe"];
@@ -728,7 +728,7 @@ function editorLabelsForTerrain(terrain) {
     return ["urban"];
   }
   if (terrain === "none") {
-    return ["base_none"];
+    return [];
   }
   return [];
 }
