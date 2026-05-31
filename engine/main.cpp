@@ -1582,7 +1582,7 @@ bool final_grassland_before_towns(
     return base_grassland_after_valleys(args, lake_hexes, valley_hexes, coord);
 }
 
-std::vector<Town> place_fixed_feature_towns_for_feature(
+std::vector<Town> place_generic_lake_feature_towns(
     const GenerateArgs& args,
     const std::string& feature,
     const std::set<Coord, decltype(coord_less)*>& feature_lakes,
@@ -1672,7 +1672,7 @@ Coord north_east_most_coord(const std::set<Coord, decltype(coord_less)*>& coords
     });
 }
 
-std::vector<Town> place_caspian_towns(
+std::vector<Town> generate_persian_region(
     const GenerateArgs& args,
     const std::set<Coord, decltype(coord_less)*>& caspian,
     const std::set<Coord, decltype(coord_less)*>& all_lakes,
@@ -1733,6 +1733,28 @@ std::vector<Town> place_caspian_towns(
     return towns;
 }
 
+std::vector<Town> generate_chinese_region(
+    const GenerateArgs& args,
+    const LakeNetworkOverlay& chinese_lake_network,
+    const std::set<Coord, decltype(coord_less)*>& all_lakes,
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes,
+    const std::set<Coord, decltype(coord_less)*>& occupied_towns
+) {
+    std::set<Coord, decltype(coord_less)*> chinese_lakes(coord_less);
+    for (const Coord& coord : chinese_lake_network.lake_hexes) {
+        chinese_lakes.insert(coord);
+    }
+    return place_generic_lake_feature_towns(
+        args,
+        "chinese_town",
+        chinese_lakes,
+        all_lakes,
+        valley_hexes,
+        occupied_towns,
+        76003
+    );
+}
+
 std::vector<Town> place_fixed_feature_towns(
     const GenerateArgs& args,
     const std::set<Coord, decltype(coord_less)*>& baikal,
@@ -1753,14 +1775,9 @@ std::vector<Town> place_fixed_feature_towns(
         }
     };
 
-    add_feature_towns(place_fixed_feature_towns_for_feature(args, "baikal", baikal, all_lakes, valley_hexes, occupied_towns, 76001));
-    add_feature_towns(place_caspian_towns(args, caspian, all_lakes, valley_hexes, occupied_towns));
-
-    std::set<Coord, decltype(coord_less)*> chinese_lakes(coord_less);
-    for (const Coord& coord : chinese_lake_network.lake_hexes) {
-        chinese_lakes.insert(coord);
-    }
-    add_feature_towns(place_fixed_feature_towns_for_feature(args, "chinese_town", chinese_lakes, all_lakes, valley_hexes, occupied_towns, 76003));
+    add_feature_towns(place_generic_lake_feature_towns(args, "baikal", baikal, all_lakes, valley_hexes, occupied_towns, 76001));
+    add_feature_towns(generate_persian_region(args, caspian, all_lakes, valley_hexes, occupied_towns));
+    add_feature_towns(generate_chinese_region(args, chinese_lake_network, all_lakes, valley_hexes, occupied_towns));
 
     std::sort(towns.begin(), towns.end(), [](const Town& first, const Town& second) {
         return coord_less(first.coord, second.coord);
