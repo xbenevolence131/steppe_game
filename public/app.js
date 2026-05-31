@@ -14,6 +14,8 @@ const meanderStrengthInput = document.querySelector("#meander-strength");
 const meanderReachInput = document.querySelector("#meander-reach");
 const riverSlantStrengthInput = document.querySelector("#river-slant-strength");
 const valleyThicknessInput = document.querySelector("#valley-thickness");
+const forestBlobsInput = document.querySelector("#forest-blobs");
+const forestBlobRadiusInput = document.querySelector("#forest-blob-radius");
 const meanderTimeoutInput = document.querySelector("#meander-timeout");
 const generateButton = document.querySelector("#generate-button");
 const blankMapButton = document.querySelector("#blank-map-button");
@@ -59,7 +61,7 @@ const editorTerrains = [
   { key: "lake", label: "Lake", fill: "#82c7e6", stroke: "#245e78", labelColor: "#082c3a" },
   { key: "hill", label: "Hill", fill: "#b98c56", stroke: "#6f4f2f", labelColor: "#21170f" },
   { key: "mountain", label: "Mountain", fill: "#5b3724", stroke: "#2c1a11", labelColor: "#f1e7d8" },
-  { key: "woods", label: "Woods", fill: "#246b3b", stroke: "#133c22", labelColor: "#eef7e8" },
+  { key: "forest", label: "Forest", fill: "#246b3b", stroke: "#133c22", labelColor: "#eef7e8" },
   { key: "marsh", label: "Marsh", fill: "#74794b", stroke: "#42462a", labelColor: "#f3eed0" },
   { key: "urban", label: "Urban", fill: "#8e8e8e", stroke: "#4e4e4e", labelColor: "#111111" },
 ];
@@ -72,9 +74,15 @@ const terrainStyles = {
   hills: terrainStyle("hill"),
   mountain: terrainStyle("mountain"),
   mountains: terrainStyle("mountain"),
-  woods: terrainStyle("woods"),
-  light_forest: terrainStyle("woods"),
-  heavy_forest: terrainStyle("woods"),
+  forest: terrainStyle("forest"),
+  woods: terrainStyle("forest"),
+  light_forest: terrainStyle("forest"),
+  heavy_forest: terrainStyle("forest"),
+  forest_blob: {
+    fill: "#2f8f4e",
+    stroke: "#0f4d27",
+    label: "#eef7e8",
+  },
   marsh: terrainStyle("marsh"),
   urban: terrainStyle("urban"),
   river: {
@@ -521,8 +529,11 @@ function stopPainting() {
   paintStrokeKeys = new Set();
 }
 
-function drawHex(cx, cy, size, label, terrain) {
-  const style = terrainStyles[terrain] || terrainStyles.none;
+function drawHex(cx, cy, size, label, hex) {
+  const terrain = hex.terrain;
+  const style = hex.labels && hex.labels.includes("forest_blob")
+    ? terrainStyles.forest_blob
+    : (terrainStyles[terrain] || terrainStyles.none);
   const points = hexPoints(cx, cy, size + 0.15);
   ctx.beginPath();
   points.forEach(([x, y], index) => {
@@ -615,7 +626,7 @@ function drawMap() {
 
   for (const hex of currentMap.hexes) {
     const center = hexCenter(hex);
-    drawHex(center.x, center.y, geometry.size, `${hex.q},${hex.r}`, hex.terrain);
+    drawHex(center.x, center.y, geometry.size, `${hex.q},${hex.r}`, hex);
   }
 
   drawRiverEdges(currentMap.edges);
@@ -710,7 +721,7 @@ function editorLabelsForTerrain(terrain) {
   if (terrain === "grassland") {
     return ["base_steppe"];
   }
-  if (terrain === "hill" || terrain === "mountain" || terrain === "woods") {
+  if (terrain === "hill" || terrain === "mountain" || terrain === "forest" || terrain === "woods") {
     return ["wild_terrain"];
   }
   if (terrain === "urban") {
@@ -777,6 +788,8 @@ async function generateMap() {
   const meanderReach = clampNumberInput(meanderReachInput, 0, 40, 2);
   const riverSlantStrength = clampNumberInput(riverSlantStrengthInput, 0, 10, 10);
   const valleyThickness = clampNumberInput(valleyThicknessInput, 0, 5, 2);
+  const forestBlobs = clampDimension(forestBlobsInput.value, 0, 10, 4);
+  const forestBlobRadius = clampNumberInput(forestBlobRadiusInput, 0, 20, 4);
   const meanderTimeout = clampDimension(meanderTimeoutInput.value, 1, 200, 28);
   const seed = newSeed();
   widthInput.value = width;
@@ -784,6 +797,7 @@ async function generateMap() {
   riversInput.value = rivers;
   lakesInput.value = lakes;
   lakeSizeInput.value = lakeSize;
+  forestBlobsInput.value = forestBlobs;
   meanderTimeoutInput.value = meanderTimeout;
 
   generateButton.disabled = true;
@@ -805,6 +819,8 @@ async function generateMap() {
         meanderReach,
         riverSlantStrength,
         valleyThickness,
+        forestBlobs,
+        forestBlobRadius,
         meanderTimeout,
         seed,
       }),

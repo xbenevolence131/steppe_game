@@ -118,6 +118,8 @@ async function handleGenerate(req, res) {
   const meanderReach = parseBoundedNumber(payload.meanderReach, 2, 0, 40);
   const riverSlantStrength = parseBoundedNumber(payload.riverSlantStrength, 10, 0, 10);
   const valleyThickness = parseBoundedNumber(payload.valleyThickness, 2, 0, 5);
+  const forestBlobs = parseBoundedInteger(payload.forestBlobs, 4, 0, 10);
+  const forestBlobRadius = parseBoundedNumber(payload.forestBlobRadius, 4, 0, 20);
   const meanderTimeout = parseBoundedInteger(payload.meanderTimeout, 28, 1, 200);
   const seed = parseSeed(payload.seed);
 
@@ -136,6 +138,8 @@ async function handleGenerate(req, res) {
     "--meander-reach", String(meanderReach),
     "--river-slant-strength", String(riverSlantStrength),
     "--valley-thickness", String(valleyThickness),
+    "--forest-blobs", String(forestBlobs),
+    "--forest-blob-radius", String(forestBlobRadius),
     "--meander-timeout", String(meanderTimeout),
     "--seed", String(seed),
   ], {

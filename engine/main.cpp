@@ -27,6 +27,8 @@ struct GenerateArgs {
     double meander_reach = 2.0;
     double river_slant_strength = 10.0;
     double valley_thickness = 2.0;
+    int forest_blob_count = 4;
+    double forest_blob_radius = 4.0;
     int meander_timeout = 28;
     std::uint32_t seed = 1;
 };
@@ -223,6 +225,10 @@ GenerateArgs parse_generate_args(int argc, char** argv) {
             args.river_slant_strength = parse_non_negative_double(argv[++i], "river slant strength");
         } else if (key == "--valley-thickness" && i + 1 < argc) {
             args.valley_thickness = parse_non_negative_double(argv[++i], "valley thickness");
+        } else if ((key == "--forest-blobs" || key == "--forest-blob-count") && i + 1 < argc) {
+            args.forest_blob_count = parse_non_negative_int(argv[++i], "forest blobs");
+        } else if (key == "--forest-blob-radius" && i + 1 < argc) {
+            args.forest_blob_radius = parse_non_negative_double(argv[++i], "forest blob radius");
         } else if (key == "--meander-timeout" && i + 1 < argc) {
             args.meander_timeout = parse_positive_int(argv[++i], "meander timeout");
         } else {
@@ -242,7 +248,7 @@ GenerateArgs parse_generate_args(int argc, char** argv) {
     if (args.meander_forward > 40.0 || args.meander_forward_jitter > 40.0 || args.meander_lateral > 40.0 || args.meander_lateral_jitter > 40.0) {
         throw std::runtime_error("meander distances are capped at 40 for the prototype");
     }
-    if (args.meander_strength > 10.0 || args.meander_reach > 40.0 || args.river_slant_strength > 10.0 || args.valley_thickness > 5.0 || args.meander_timeout > 200) {
+    if (args.meander_strength > 10.0 || args.meander_reach > 40.0 || args.river_slant_strength > 10.0 || args.valley_thickness > 5.0 || args.forest_blob_count > 10 || args.forest_blob_radius > 20.0 || args.meander_timeout > 200) {
         throw std::runtime_error("meander tuning values exceed prototype limits");
     }
 
@@ -1408,10 +1414,10 @@ const char* wild_terrain_for_distance(const GenerateArgs& args, const Coord& coo
     const double adjusted_distance = std::max(1.0, static_cast<double>(grassland_distance) + coarse_texture);
 
     if (adjusted_distance <= 1.8) {
-        return fine_roll < 0.58 ? "hill" : "woods";
+        return fine_roll < 0.58 ? "hill" : "forest";
     }
     if (adjusted_distance <= 2.6) {
-        return fine_roll < 0.76 ? "hill" : "woods";
+        return fine_roll < 0.76 ? "hill" : "forest";
     }
     if (adjusted_distance <= 4.2) {
         return fine_roll < 0.84 ? "mountain" : "hill";
@@ -1419,7 +1425,7 @@ const char* wild_terrain_for_distance(const GenerateArgs& args, const Coord& coo
     return fine_roll < 0.96 ? "mountain" : "hill";
 }
 
-bool final_grassland_before_towns(
+bool base_grassland_after_valleys(
     const GenerateArgs& args,
     const std::set<Coord, decltype(coord_less)*>& lake_hexes,
     const std::set<Coord, decltype(coord_less)*>& valley_hexes,
@@ -1428,6 +1434,152 @@ bool final_grassland_before_towns(
     return in_bounds(coord, args)
         && lake_hexes.find(coord) == lake_hexes.end()
         && (valley_hexes.find(coord) != valley_hexes.end() || is_steppe_hex(coord.q, coord.r, args));
+}
+
+bool adjacent_to_base_grassland(
+    const GenerateArgs& args,
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes,
+    const Coord& coord
+) {
+    for (int direction = 0; direction < 6; ++direction) {
+        const Coord neighbor = neighbor_in_direction(coord, direction);
+        if (base_grassland_after_valleys(args, lake_hexes, valley_hexes, neighbor)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool forest_blob_can_grow(
+    const GenerateArgs& args,
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const Coord& coord
+) {
+    return in_bounds(coord, args) && lake_hexes.find(coord) == lake_hexes.end();
+}
+
+int hex_grid_distance(const Coord& first, const Coord& second) {
+    const int first_col = first.q - 1;
+    const int first_row = first.r - 1;
+    const int second_col = second.q - 1;
+    const int second_row = second.r - 1;
+    const int first_x = first_col;
+    const int first_z = first_row - (first_col - (first_col & 1)) / 2;
+    const int first_y = -first_x - first_z;
+    const int second_x = second_col;
+    const int second_z = second_row - (second_col - (second_col & 1)) / 2;
+    const int second_y = -second_x - second_z;
+    return std::max({
+        std::abs(first_x - second_x),
+        std::abs(first_y - second_y),
+        std::abs(first_z - second_z),
+    });
+}
+
+std::set<Coord, decltype(coord_less)*> derive_forest_blob_hexes(
+    const GenerateArgs& args,
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes
+) {
+    std::set<Coord, decltype(coord_less)*> forest_hexes(coord_less);
+    std::vector<Coord> seeds;
+    if (args.forest_blob_count <= 0 || args.forest_blob_radius <= 0.0) {
+        return forest_hexes;
+    }
+
+    for (int r = 1; r <= args.height; ++r) {
+        for (int q = 1; q <= args.width; ++q) {
+            const Coord coord{q, r};
+            if (lake_hexes.find(coord) != lake_hexes.end()
+                || base_grassland_after_valleys(args, lake_hexes, valley_hexes, coord)
+                || !adjacent_to_base_grassland(args, lake_hexes, valley_hexes, coord)) {
+                continue;
+            }
+            seeds.push_back(coord);
+        }
+    }
+
+    std::sort(seeds.begin(), seeds.end(), [&](const Coord& first, const Coord& second) {
+        const double first_score = unit_noise(args.seed, static_cast<std::uint32_t>(78000 + first.q * 173 + first.r * 379));
+        const double second_score = unit_noise(args.seed, static_cast<std::uint32_t>(78000 + second.q * 173 + second.r * 379));
+        return first_score > second_score;
+    });
+
+    const int target_blobs = args.forest_blob_count;
+    int blobs_built = 0;
+    for (const Coord& seed : seeds) {
+        if (blobs_built >= target_blobs) {
+            break;
+        }
+        if (forest_hexes.find(seed) != forest_hexes.end()) {
+            continue;
+        }
+
+        const int radius = std::max(1, static_cast<int>(std::round(args.forest_blob_radius)));
+        const int disk_area = 1 + 3 * radius * (radius + 1);
+        const double size_scale = 0.55 + unit_noise(
+            args.seed,
+            static_cast<std::uint32_t>(78100 + blobs_built * 97 + seed.q * 11 + seed.r * 23)
+        ) * 0.25;
+        const int target_size = std::max(1, static_cast<int>(std::round(static_cast<double>(disk_area) * size_scale)));
+        std::vector<Coord> blob;
+        std::vector<Coord> frontier{seed};
+        blob.push_back(seed);
+        forest_hexes.insert(seed);
+
+        while (static_cast<int>(blob.size()) < target_size && !frontier.empty()) {
+            std::vector<Coord> candidates;
+            for (const Coord& frontier_coord : frontier) {
+                for (int direction = 0; direction < 6; ++direction) {
+                    const Coord neighbor = neighbor_in_direction(frontier_coord, direction);
+                    if (!forest_blob_can_grow(args, lake_hexes, neighbor)
+                        || hex_grid_distance(seed, neighbor) > radius
+                        || forest_hexes.find(neighbor) != forest_hexes.end()
+                        || contains_coord(blob, neighbor)
+                        || contains_coord(candidates, neighbor)) {
+                        continue;
+                    }
+                    candidates.push_back(neighbor);
+                }
+            }
+            if (candidates.empty()) {
+                break;
+            }
+
+            std::sort(candidates.begin(), candidates.end(), [&](const Coord& first, const Coord& second) {
+                const double first_grassland_bonus = base_grassland_after_valleys(args, lake_hexes, valley_hexes, first) ? 0.18 : 0.0;
+                const double second_grassland_bonus = base_grassland_after_valleys(args, lake_hexes, valley_hexes, second) ? 0.18 : 0.0;
+                const double first_score = first_grassland_bonus + unit_noise(
+                    args.seed,
+                    static_cast<std::uint32_t>(78200 + blobs_built * 997 + first.q * 191 + first.r * 389)
+                );
+                const double second_score = second_grassland_bonus + unit_noise(
+                    args.seed,
+                    static_cast<std::uint32_t>(78200 + blobs_built * 997 + second.q * 191 + second.r * 389)
+                );
+                return first_score > second_score;
+            });
+
+            const Coord next = candidates.front();
+            blob.push_back(next);
+            frontier.push_back(next);
+            forest_hexes.insert(next);
+        }
+
+        ++blobs_built;
+    }
+
+    return forest_hexes;
+}
+
+bool final_grassland_before_towns(
+    const GenerateArgs& args,
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes,
+    const Coord& coord
+) {
+    return base_grassland_after_valleys(args, lake_hexes, valley_hexes, coord);
 }
 
 std::vector<Town> place_fixed_feature_towns_for_feature(
@@ -1643,6 +1795,7 @@ void print_generated_map(const GenerateArgs& args) {
     }
     std::sort(all_river_edges.begin(), all_river_edges.end(), edge_less);
     const std::set<Coord, decltype(coord_less)*> valley_hexes = derive_valley_hexes(args, all_lakes, all_river_edges);
+    const std::set<Coord, decltype(coord_less)*> forest_blob_hexes = derive_forest_blob_hexes(args, all_lakes, valley_hexes);
     std::vector<Town> towns = place_fixed_feature_towns(args, baikal, caspian, chinese_lake_network, all_lakes, valley_hexes);
     const std::vector<Town> extra_towns = place_extra_grassland_towns(args, all_lakes, valley_hexes, all_river_edges, towns);
     towns.insert(towns.end(), extra_towns.begin(), extra_towns.end());
@@ -1670,6 +1823,7 @@ void print_generated_map(const GenerateArgs& args) {
             const bool base_steppe = is_steppe_hex(q, r, args);
             const bool lake = all_lakes.find(coord) != all_lakes.end();
             const bool valley = valley_hexes.find(coord) != valley_hexes.end();
+            const bool forest_blob = forest_blob_hexes.find(coord) != forest_blob_hexes.end();
             const auto town = std::find_if(towns.begin(), towns.end(), [&coord](const Town& candidate) {
                 return coord_equal(candidate.coord, coord);
             });
@@ -1689,6 +1843,14 @@ void print_generated_map(const GenerateArgs& args) {
             } else if (lake) {
                 terrain = "lake";
                 labels.push_back("lake");
+            } else if (forest_blob) {
+                terrain = "forest";
+                labels.push_back("forest_blob");
+                if (valley) {
+                    labels.push_back("valley");
+                } else if (!base_steppe) {
+                    labels.push_back("wild_terrain");
+                }
             } else if (valley || base_steppe) {
                 terrain = "grassland";
                 if (valley) {
@@ -1797,7 +1959,7 @@ void print_generated_map(const GenerateArgs& args) {
     std::cout << "\"roads\":[],";
     std::cout << "\"metadata\":{";
     std::cout << "\"generator\":\"prototype-steppe-blob\",";
-    std::cout << "\"terrain_types\":[\"none\",\"grassland\",\"lake\",\"hill\",\"mountain\",\"woods\",\"marsh\",\"urban\"],";
+    std::cout << "\"terrain_types\":[\"none\",\"grassland\",\"lake\",\"hill\",\"mountain\",\"forest\",\"marsh\",\"urban\"],";
     std::cout << "\"hex_label_model\":\"base-plus-generation-role.v1\",";
     std::cout << "\"lake_river_connection_model\":\"river-terminal-lake-vertex.v1\",";
     std::cout << "\"chinese_lake_network\":";
@@ -1814,7 +1976,7 @@ void print_generated_map(const GenerateArgs& args) {
 
 void print_usage() {
     std::cerr << "Usage:\n";
-    std::cerr << "  steppe_engine generate --width <n> --height <n> [--seed <n>] [--rivers <n>] [--lakes <n>] [--lake-size <n>] [--meander-forward <n>] [--meander-forward-jitter <n>] [--meander-lateral <n>] [--meander-lateral-jitter <n>] [--meander-strength <n>] [--meander-reach <n>] [--river-slant-strength <n>] [--valley-thickness <n>] [--meander-timeout <n>]\n";
+    std::cerr << "  steppe_engine generate --width <n> --height <n> [--seed <n>] [--rivers <n>] [--lakes <n>] [--lake-size <n>] [--meander-forward <n>] [--meander-forward-jitter <n>] [--meander-lateral <n>] [--meander-lateral-jitter <n>] [--meander-strength <n>] [--meander-reach <n>] [--river-slant-strength <n>] [--valley-thickness <n>] [--forest-blobs <n>] [--forest-blob-radius <n>] [--meander-timeout <n>]\n";
 }
 
 } // namespace
