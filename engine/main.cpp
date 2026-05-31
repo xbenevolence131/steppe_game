@@ -751,6 +751,46 @@ bool contains_coord(const std::vector<Coord>& coords, const Coord& coord) {
     }) != coords.end();
 }
 
+std::set<Coord, decltype(coord_less)*> generate_baikal_hexes(const GenerateArgs& args) {
+    std::set<Coord, decltype(coord_less)*> lake_hexes(coord_less);
+    if (args.width < 20 || args.height < 20) {
+        return lake_hexes;
+    }
+
+    const double center_q = static_cast<double>(args.width) * (0.68 + signed_noise(args.seed, 71001) * 0.035);
+    const double center_r = static_cast<double>(args.height) * (0.19 + signed_noise(args.seed, 71002) * 0.035);
+    const double major_radius = static_cast<double>(args.width) * (0.075 + unit_noise(args.seed, 71003) * 0.025);
+    const double minor_radius = static_cast<double>(args.height) * (0.028 + unit_noise(args.seed, 71004) * 0.018);
+    const double angle = (-25.0 + signed_noise(args.seed, 71005) * 18.0) * 3.14159265358979323846 / 180.0;
+    const double cos_angle = std::cos(angle);
+    const double sin_angle = std::sin(angle);
+
+    const int min_q = std::max(1, static_cast<int>(std::floor(center_q - major_radius - 3.0)));
+    const int max_q = std::min(args.width, static_cast<int>(std::ceil(center_q + major_radius + 3.0)));
+    const int min_r = std::max(1, static_cast<int>(std::floor(center_r - major_radius - 3.0)));
+    const int max_r = std::min(args.height, static_cast<int>(std::ceil(center_r + major_radius + 3.0)));
+
+    for (int r = min_r; r <= max_r; ++r) {
+        for (int q = min_q; q <= max_q; ++q) {
+            const double dx = static_cast<double>(q) - center_q;
+            const double dy = (static_cast<double>(r) - center_r) * 1.35;
+            const double along = dx * cos_angle + dy * sin_angle;
+            const double across = -dx * sin_angle + dy * cos_angle;
+            const double shoreline = 1.0 + signed_noise(
+                args.seed,
+                static_cast<std::uint32_t>(71050 + q * 97 + r * 131)
+            ) * 0.16;
+            const double normalized = (along * along) / (major_radius * major_radius)
+                + (across * across) / (minor_radius * minor_radius);
+            if (normalized <= shoreline) {
+                lake_hexes.insert({q, r});
+            }
+        }
+    }
+
+    return lake_hexes;
+}
+
 std::set<Coord, decltype(coord_less)*> generate_lake_hexes(const GenerateArgs& args, const RiverNetwork& rivers) {
     std::set<Coord, decltype(coord_less)*> lake_hexes(coord_less);
     if (args.lake_count == 0 || args.lake_size == 0 || rivers.segments.empty()) {
@@ -871,6 +911,7 @@ void print_edge(const RiverEdge& edge) {
 void print_generated_map(const GenerateArgs& args) {
     const RiverNetwork rivers = generate_river_network(args);
     const std::set<Coord, decltype(coord_less)*> lakes = generate_lake_hexes(args, rivers);
+    const std::set<Coord, decltype(coord_less)*> baikal = generate_baikal_hexes(args);
 
     std::cout << "{";
     std::cout << "\"schema\":\"steppe-terrain.v1\",";
@@ -887,7 +928,7 @@ void print_generated_map(const GenerateArgs& args) {
             }
             first = false;
             const Coord coord{q, r};
-            const char* terrain = lakes.find(coord) != lakes.end()
+            const char* terrain = baikal.find(coord) != baikal.end() || lakes.find(coord) != lakes.end()
                 ? "lake"
                 : (is_steppe_hex(q, r, args) ? "grassland" : "none");
             std::cout << "{\"q\":" << q << ",\"r\":" << r << ",\"terrain\":\"" << terrain << "\"}";
