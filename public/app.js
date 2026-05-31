@@ -692,6 +692,7 @@ function toggleHexTerrain(hex, terrain) {
   if (hex.terrain === terrain) {
     hex.terrain = terrainUndo.get(key) || "grassland";
     terrainUndo.delete(key);
+    hex.labels = editorLabelsForTerrain(hex.terrain);
     return;
   }
 
@@ -699,6 +700,23 @@ function toggleHexTerrain(hex, terrain) {
     terrainUndo.set(key, hex.terrain);
   }
   hex.terrain = terrain;
+  hex.labels = editorLabelsForTerrain(hex.terrain);
+}
+
+function editorLabelsForTerrain(terrain) {
+  if (terrain === "lake") {
+    return ["lake"];
+  }
+  if (terrain === "grassland") {
+    return ["base_steppe"];
+  }
+  if (terrain === "hill" || terrain === "mountain" || terrain === "woods") {
+    return ["wild_terrain"];
+  }
+  if (terrain === "none") {
+    return ["base_none"];
+  }
+  return [];
 }
 
 function paintAtPointer(event) {
@@ -812,7 +830,7 @@ function createBlankMap() {
   const hexes = [];
   for (let r = 1; r <= height; r += 1) {
     for (let q = 1; q <= width; q += 1) {
-      hexes.push({ q, r, terrain: "grassland" });
+      hexes.push({ q, r, terrain: "grassland", labels: ["base_steppe"] });
     }
   }
 
@@ -831,6 +849,7 @@ function createBlankMap() {
     metadata: {
       generator: "blank-editor",
       terrain_types: editorTerrains.map((terrain) => terrain.key),
+      hex_label_model: "base-plus-generation-role.v1",
     },
   };
   terrainUndo = new Map();
@@ -858,6 +877,9 @@ function normalizeLoadedMap(map) {
       q: Number(hex.q),
       r: Number(hex.r),
       terrain: typeof hex.terrain === "string" ? hex.terrain : "grassland",
+      labels: Array.isArray(hex.labels)
+        ? hex.labels.filter((label) => typeof label === "string")
+        : editorLabelsForTerrain(typeof hex.terrain === "string" ? hex.terrain : "grassland"),
     })).filter((hex) => Number.isInteger(hex.q) && Number.isInteger(hex.r)),
     river_sources: Array.isArray(map.river_sources) ? map.river_sources : [],
     river_destinations: Array.isArray(map.river_destinations) ? map.river_destinations : [],

@@ -1418,6 +1418,17 @@ void print_coord(const Coord& coord) {
     std::cout << "{\"q\":" << coord.q << ",\"r\":" << coord.r << "}";
 }
 
+void print_string_array(const std::vector<std::string>& values) {
+    std::cout << "[";
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) {
+            std::cout << ",";
+        }
+        std::cout << "\"" << values[i] << "\"";
+    }
+    std::cout << "]";
+}
+
 void print_vertex(const VertexKey& vertex) {
     std::cout << "{\"x\":" << vertex.x << ",\"y\":" << vertex.y << "}";
 }
@@ -1467,11 +1478,21 @@ void print_generated_map(const GenerateArgs& args) {
             }
             first = false;
             const Coord coord{q, r};
+            const bool base_steppe = is_steppe_hex(q, r, args);
+            const bool lake = all_lakes.find(coord) != all_lakes.end();
+            const bool valley = valley_hexes.find(coord) != valley_hexes.end();
+            std::vector<std::string> labels{
+                base_steppe ? "base_steppe" : "base_none",
+            };
             const char* terrain = "none";
-            if (all_lakes.find(coord) != all_lakes.end()) {
+            if (lake) {
                 terrain = "lake";
-            } else if (valley_hexes.find(coord) != valley_hexes.end() || is_steppe_hex(q, r, args)) {
+                labels.push_back("lake");
+            } else if (valley || base_steppe) {
                 terrain = "grassland";
+                if (valley) {
+                    labels.push_back("valley");
+                }
             } else {
                 const auto distance = grassland_distances.find(coord);
                 terrain = wild_terrain_for_distance(
@@ -1479,8 +1500,11 @@ void print_generated_map(const GenerateArgs& args) {
                     coord,
                     distance == grassland_distances.end() ? std::max(args.width, args.height) : distance->second
                 );
+                labels.push_back("wild_terrain");
             }
-            std::cout << "{\"q\":" << q << ",\"r\":" << r << ",\"terrain\":\"" << terrain << "\"}";
+            std::cout << "{\"q\":" << q << ",\"r\":" << r << ",\"terrain\":\"" << terrain << "\",\"labels\":";
+            print_string_array(labels);
+            std::cout << "}";
         }
     }
 
@@ -1565,6 +1589,7 @@ void print_generated_map(const GenerateArgs& args) {
     std::cout << "\"metadata\":{";
     std::cout << "\"generator\":\"prototype-steppe-blob\",";
     std::cout << "\"terrain_types\":[\"none\",\"grassland\",\"lake\",\"hill\",\"mountain\",\"woods\",\"marsh\",\"urban\"],";
+    std::cout << "\"hex_label_model\":\"base-plus-generation-role.v1\",";
     std::cout << "\"lake_river_connection_model\":\"river-terminal-lake-vertex.v1\",";
     std::cout << "\"chinese_lake_network\":";
     if (chinese_lake_network.placed) {
