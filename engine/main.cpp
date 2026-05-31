@@ -791,6 +791,61 @@ std::set<Coord, decltype(coord_less)*> generate_baikal_hexes(const GenerateArgs&
     return lake_hexes;
 }
 
+std::set<Coord, decltype(coord_less)*> generate_caspian_hexes(const GenerateArgs& args) {
+    std::set<Coord, decltype(coord_less)*> lake_hexes(coord_less);
+    if (args.width < 20 || args.height < 20) {
+        return lake_hexes;
+    }
+
+    std::vector<int> west_steppe_rows;
+    const int steppe_probe_max_q = std::min(args.width, std::max(8, args.width / 7));
+    for (int r = 1; r <= args.height; ++r) {
+        for (int q = 1; q <= steppe_probe_max_q; ++q) {
+            if (is_steppe_hex(q, r, args)) {
+                west_steppe_rows.push_back(r);
+                break;
+            }
+        }
+    }
+
+    double steppe_anchor_r = static_cast<double>(args.height) * 0.72;
+    if (!west_steppe_rows.empty()) {
+        const int min_steppe_r = *std::min_element(west_steppe_rows.begin(), west_steppe_rows.end());
+        const int max_steppe_r = *std::max_element(west_steppe_rows.begin(), west_steppe_rows.end());
+        steppe_anchor_r = static_cast<double>(min_steppe_r + max_steppe_r) * 0.5
+            + static_cast<double>(max_steppe_r - min_steppe_r) * 0.55;
+    }
+
+    const double vertical_radius = static_cast<double>(args.height) * (0.115 + unit_noise(args.seed, 72002) * 0.025);
+    const double center_r = std::max(
+        vertical_radius + 1.0,
+        std::min(static_cast<double>(args.height) - vertical_radius * 0.35, steppe_anchor_r + signed_noise(args.seed, 72001) * args.height * 0.035)
+    );
+    const double base_depth = static_cast<double>(args.width) * (0.018 + unit_noise(args.seed, 72003) * 0.009);
+    const double max_extra_depth = static_cast<double>(args.width) * (0.035 + unit_noise(args.seed, 72004) * 0.018);
+    const double wave_phase = unit_noise(args.seed, 72005) * 2.0 * 3.14159265358979323846;
+
+    for (int r = 1; r <= args.height; ++r) {
+        const double normalized_r = (static_cast<double>(r) - center_r) / vertical_radius;
+        if (std::abs(normalized_r) > 1.05) {
+            continue;
+        }
+
+        const double bulge = std::max(0.0, 1.0 - normalized_r * normalized_r);
+        const double southern_bias = static_cast<double>(r) / static_cast<double>(args.height);
+        const double wave = std::sin(static_cast<double>(r) * 0.34 + wave_phase) * 1.7;
+        const double row_noise = signed_noise(args.seed, static_cast<std::uint32_t>(72050 + r * 43)) * 1.6;
+        const int depth = std::max(1, static_cast<int>(std::round(
+            base_depth + max_extra_depth * bulge * (0.38 + southern_bias * 0.95) + wave + row_noise
+        )));
+        for (int q = 1; q <= std::min(args.width, depth); ++q) {
+            lake_hexes.insert({q, r});
+        }
+    }
+
+    return lake_hexes;
+}
+
 std::set<Coord, decltype(coord_less)*> generate_lake_hexes(const GenerateArgs& args, const RiverNetwork& rivers) {
     std::set<Coord, decltype(coord_less)*> lake_hexes(coord_less);
     if (args.lake_count == 0 || args.lake_size == 0 || rivers.segments.empty()) {
@@ -912,6 +967,7 @@ void print_generated_map(const GenerateArgs& args) {
     const RiverNetwork rivers = generate_river_network(args);
     const std::set<Coord, decltype(coord_less)*> lakes = generate_lake_hexes(args, rivers);
     const std::set<Coord, decltype(coord_less)*> baikal = generate_baikal_hexes(args);
+    const std::set<Coord, decltype(coord_less)*> caspian = generate_caspian_hexes(args);
 
     std::cout << "{";
     std::cout << "\"schema\":\"steppe-terrain.v1\",";
@@ -928,7 +984,7 @@ void print_generated_map(const GenerateArgs& args) {
             }
             first = false;
             const Coord coord{q, r};
-            const char* terrain = baikal.find(coord) != baikal.end() || lakes.find(coord) != lakes.end()
+            const char* terrain = baikal.find(coord) != baikal.end() || caspian.find(coord) != caspian.end() || lakes.find(coord) != lakes.end()
                 ? "lake"
                 : (is_steppe_hex(q, r, args) ? "grassland" : "none");
             std::cout << "{\"q\":" << q << ",\"r\":" << r << ",\"terrain\":\"" << terrain << "\"}";

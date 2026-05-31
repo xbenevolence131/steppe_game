@@ -43,6 +43,7 @@ On Windows, if a clean build fails with missing standard-library includes, run t
 - Current map defaults are `120` width, `80` height, and `4` river sources.
 - Lake generation grows small lake hex clusters out of selected river edges. Current defaults are `4` lakes with `Lake size=6`.
 - A Baikal analogue is always generated as a large northern lake with slight seeded variation in placement, size, aspect ratio, and orientation.
+- A Caspian analogue is always generated as the visible eastern edge of a giant off-map western lake/sea, biased slightly south with a seeded wavy shoreline.
 - Current meander defaults are: `Bend forward=8`, `Forward jitter=4`, `Bend lateral=7`, `Lateral jitter=4`, `Bend strength=1`, `Bend reach=2`, `River slant=10`, `Bend timeout=28`.
 - Meander scoring currently uses progress toward the active lateral target, not absolute target distance, so bend strength has a visible effect. The router also heavily penalizes northward moves, lightly penalizes flat side moves, and clamps meander influence so lateral bends do not overpower southward drainage.
 - Each river gets an independent seed-derived east or west slant direction, producing subtle SSE/SSW angles without overriding southward drainage.
