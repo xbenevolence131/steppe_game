@@ -1361,6 +1361,59 @@ std::vector<LakeRiverConnection> derive_lake_river_connections(
     return connections;
 }
 
+std::map<Coord, int, decltype(coord_less)*> derive_grassland_distances(
+    const GenerateArgs& args,
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes
+) {
+    std::map<Coord, int, decltype(coord_less)*> distances(coord_less);
+    std::vector<Coord> queue;
+
+    for (int r = 1; r <= args.height; ++r) {
+        for (int q = 1; q <= args.width; ++q) {
+            const Coord coord{q, r};
+            if (is_steppe_hex(q, r, args) || valley_hexes.find(coord) != valley_hexes.end()) {
+                distances[coord] = 0;
+                queue.push_back(coord);
+            }
+        }
+    }
+
+    for (std::size_t index = 0; index < queue.size(); ++index) {
+        const Coord current = queue[index];
+        const int current_distance = distances[current];
+        for (int direction = 0; direction < 6; ++direction) {
+            const Coord neighbor = neighbor_in_direction(current, direction);
+            if (!in_bounds(neighbor, args) || distances.find(neighbor) != distances.end()) {
+                continue;
+            }
+            distances[neighbor] = current_distance + 1;
+            queue.push_back(neighbor);
+        }
+    }
+
+    return distances;
+}
+
+const char* wild_terrain_for_distance(const GenerateArgs& args, const Coord& coord, int grassland_distance) {
+    const double coarse_texture = signed_noise(
+        args.seed,
+        static_cast<std::uint32_t>(75100 + (coord.q / 5) * 137 + (coord.r / 5) * 257)
+    ) * 0.45;
+    const double fine_roll = unit_noise(args.seed, static_cast<std::uint32_t>(75200 + coord.q * 197 + coord.r * 431));
+    const double adjusted_distance = std::max(1.0, static_cast<double>(grassland_distance) + coarse_texture);
+
+    if (adjusted_distance <= 1.8) {
+        return fine_roll < 0.58 ? "hill" : "woods";
+    }
+    if (adjusted_distance <= 2.6) {
+        return fine_roll < 0.76 ? "hill" : "woods";
+    }
+    if (adjusted_distance <= 4.2) {
+        return fine_roll < 0.84 ? "mountain" : "hill";
+    }
+    return fine_roll < 0.96 ? "mountain" : "hill";
+}
+
 void print_coord(const Coord& coord) {
     std::cout << "{\"q\":" << coord.q << ",\"r\":" << coord.r << "}";
 }
@@ -1396,6 +1449,7 @@ void print_generated_map(const GenerateArgs& args) {
     }
     std::sort(all_river_edges.begin(), all_river_edges.end(), edge_less);
     const std::set<Coord, decltype(coord_less)*> valley_hexes = derive_valley_hexes(args, all_lakes, all_river_edges);
+    const std::map<Coord, int, decltype(coord_less)*> grassland_distances = derive_grassland_distances(args, valley_hexes);
     const std::vector<LakeRiverConnection> lake_river_connections = derive_lake_river_connections(all_lakes, all_river_edges);
 
     std::cout << "{";
@@ -1418,6 +1472,13 @@ void print_generated_map(const GenerateArgs& args) {
                 terrain = "lake";
             } else if (valley_hexes.find(coord) != valley_hexes.end() || is_steppe_hex(q, r, args)) {
                 terrain = "grassland";
+            } else {
+                const auto distance = grassland_distances.find(coord);
+                terrain = wild_terrain_for_distance(
+                    args,
+                    coord,
+                    distance == grassland_distances.end() ? std::max(args.width, args.height) : distance->second
+                );
             }
             std::cout << "{\"q\":" << q << ",\"r\":" << r << ",\"terrain\":\"" << terrain << "\"}";
         }
