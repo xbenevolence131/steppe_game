@@ -188,6 +188,167 @@ function edgeKey(edge) {
   return `${coordKey(edge.a)}|${coordKey(edge.b)}`;
 }
 
+function topologyVertexKey(vertex) {
+  return `${vertex.x},${vertex.y}`;
+}
+
+function compareTopologyVertexKeys(first, second) {
+  const [firstX, firstY] = first.split(",").map(Number);
+  const [secondX, secondY] = second.split(",").map(Number);
+  return firstY === secondY ? firstX - secondX : firstY - secondY;
+}
+
+function topologyHexCorners(coord) {
+  const scale = 1000000;
+  const col = coord.q - 1;
+  const row = coord.r - 1;
+  const centerX = col * 1.5;
+  const centerY = Math.sqrt(3) * (row + (col % 2) * 0.5);
+  const corners = [];
+
+  for (let i = 0; i < 6; i += 1) {
+    const angle = Math.PI / 180 * (60 * i);
+    corners.push({
+      x: Math.round((centerX + Math.cos(angle)) * scale),
+      y: Math.round((centerY + Math.sin(angle)) * scale),
+    });
+  }
+
+  return corners;
+}
+
+function topologyEdgeBoundary(edge) {
+  const firstCorners = topologyHexCorners(edge.a);
+  const secondCorners = topologyHexCorners(edge.b);
+  const secondKeys = new Map(secondCorners.map((corner) => [topologyVertexKey(corner), corner]));
+  const shared = firstCorners.filter((corner) => secondKeys.has(topologyVertexKey(corner)));
+  if (shared.length !== 2) {
+    return null;
+  }
+  return shared.sort((first, second) => first.y === second.y ? first.x - second.x : first.y - second.y);
+}
+
+function addGraphEdge(graph, firstKey, secondKey) {
+  if (!graph.has(firstKey)) {
+    graph.set(firstKey, new Set());
+  }
+  if (!graph.has(secondKey)) {
+    graph.set(secondKey, new Set());
+  }
+  graph.get(firstKey).add(secondKey);
+  graph.get(secondKey).add(firstKey);
+}
+
+function deriveLakeRiverConnections(map) {
+  if (!map || !Array.isArray(map.hexes) || !Array.isArray(map.edges)) {
+    return [];
+  }
+
+  const verticesByKey = new Map();
+  const lakeHexesByVertex = new Map();
+  for (const hex of map.hexes) {
+    if (hex.terrain !== "lake") {
+      continue;
+    }
+    const coord = { q: Number(hex.q), r: Number(hex.r) };
+    if (!Number.isInteger(coord.q) || !Number.isInteger(coord.r)) {
+      continue;
+    }
+    for (const vertex of topologyHexCorners(coord)) {
+      const key = topologyVertexKey(vertex);
+      verticesByKey.set(key, vertex);
+      if (!lakeHexesByVertex.has(key)) {
+        lakeHexesByVertex.set(key, []);
+      }
+      lakeHexesByVertex.get(key).push(coord);
+    }
+  }
+
+  const graph = new Map();
+  const incidentEdges = new Map();
+  for (const edge of map.edges) {
+    if (!edge || !edge.a || !edge.b) {
+      continue;
+    }
+    const canonical = canonicalEdge(edge.a, edge.b);
+    const boundary = topologyEdgeBoundary(canonical);
+    if (!boundary) {
+      continue;
+    }
+    const firstKey = topologyVertexKey(boundary[0]);
+    const secondKey = topologyVertexKey(boundary[1]);
+    verticesByKey.set(firstKey, boundary[0]);
+    verticesByKey.set(secondKey, boundary[1]);
+    addGraphEdge(graph, firstKey, secondKey);
+    if (!incidentEdges.has(firstKey)) {
+      incidentEdges.set(firstKey, []);
+    }
+    if (!incidentEdges.has(secondKey)) {
+      incidentEdges.set(secondKey, []);
+    }
+    incidentEdges.get(firstKey).push(canonical);
+    incidentEdges.get(secondKey).push(canonical);
+  }
+
+  const connections = [];
+  const seen = new Set();
+  let componentId = 0;
+  const sortedVertices = [...graph.keys()].sort(compareTopologyVertexKeys);
+  for (const startKey of sortedVertices) {
+    if (seen.has(startKey)) {
+      continue;
+    }
+    componentId += 1;
+    const stack = [startKey];
+    const componentVertices = [];
+    seen.add(startKey);
+
+    while (stack.length > 0) {
+      const current = stack.pop();
+      componentVertices.push(current);
+      for (const next of graph.get(current) || []) {
+        if (!seen.has(next)) {
+          seen.add(next);
+          stack.push(next);
+        }
+      }
+    }
+
+    let terminalIndex = 0;
+    const terminals = componentVertices
+      .filter((key) => (graph.get(key) || new Set()).size === 1)
+      .sort(compareTopologyVertexKeys);
+    for (const terminalKey of terminals) {
+      terminalIndex += 1;
+      const lakeHexes = lakeHexesByVertex.get(terminalKey);
+      if (!lakeHexes) {
+        continue;
+      }
+      connections.push({
+        id: connections.length + 1,
+        kind: "river_terminal_to_lake_vertex",
+        river_component: componentId,
+        terminal_index: terminalIndex,
+        vertex: verticesByKey.get(terminalKey),
+        lake_hexes: lakeHexes.map((coord) => ({ ...coord })),
+        river_edge: canonicalEdge(incidentEdges.get(terminalKey)[0].a, incidentEdges.get(terminalKey)[0].b),
+      });
+    }
+  }
+
+  return connections;
+}
+
+function refreshDerivedTopology(map = currentMap) {
+  if (!map) {
+    return null;
+  }
+  map.lake_river_connections = deriveLakeRiverConnections(map);
+  map.metadata = map.metadata && typeof map.metadata === "object" ? map.metadata : {};
+  map.metadata.lake_river_connection_model = "river-terminal-lake-vertex.v1";
+  return map;
+}
+
 function neighborInDirection(coord, direction) {
   const shiftedDown = (coord.q - 1) % 2 === 1;
   switch (direction) {
@@ -560,6 +721,7 @@ function paintAtPointer(event) {
     } else {
       toggleRiverEdge(edge);
     }
+    refreshDerivedTopology();
     drawMap();
     return;
   }
@@ -575,6 +737,7 @@ function paintAtPointer(event) {
   }
   paintStrokeKeys.add(key);
   toggleHexTerrain(hex, terrain);
+  refreshDerivedTopology();
   drawMap();
 }
 
@@ -628,6 +791,7 @@ async function generateMap() {
     }
     currentMap = payload;
     terrainUndo = new Map();
+    refreshDerivedTopology();
     fitMap();
   } catch (error) {
     window.alert(error.message);
@@ -667,6 +831,7 @@ function createBlankMap() {
     },
   };
   terrainUndo = new Map();
+  refreshDerivedTopology();
   fitMap();
 }
 
@@ -681,7 +846,7 @@ function normalizeLoadedMap(map) {
     throw new Error("Loaded map is missing hex terrain.");
   }
 
-  return {
+  return refreshDerivedTopology({
     schema: typeof map.schema === "string" ? map.schema : "steppe-terrain.v1",
     seed: Number.isInteger(map.seed) ? map.seed : 0,
     width: map.width,
@@ -700,7 +865,7 @@ function normalizeLoadedMap(map) {
     metadata: map.metadata && typeof map.metadata === "object"
       ? map.metadata
       : { generator: "loaded-editor", terrain_types: editorTerrains.map((terrain) => terrain.key) },
-  };
+  });
 }
 
 function defaultMapFilename() {
@@ -718,6 +883,7 @@ function mapFilePickerTypes() {
 }
 
 function mapBlob() {
+  refreshDerivedTopology();
   return new Blob([`${JSON.stringify(currentMap, null, 2)}\n`], { type: "application/json" });
 }
 

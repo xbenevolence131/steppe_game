@@ -40,6 +40,7 @@ On Windows, if a clean build fails with missing standard-library includes, run t
 
 - The main east-west steppe blob generation is currently in acceptable shape.
 - River generation is a fresh baseline pass. Rivers live on hex edges, are routed on the vertex graph, grow generally north-to-south, use tunable steppe-only lateral meander steering, and should preserve clean merge topology.
+- Lake/river connectivity is vertex-based: a river/canal sequence may connect to a lake by starting or terminating on any vertex of a lake hex. Do not test this as river-edge face adjacency. The derived `lake_river_connections` array records `river_terminal_to_lake_vertex` links for gameplay/topology code.
 - Current map defaults are `120` width, `80` height, and `4` river sources.
 - Lake generation grows small lake hex clusters out of selected river edges. Current defaults are `4` lakes with `Lake size=6`.
 - A Baikal analogue is always generated as a large northern lake with slight seeded variation in placement, size, aspect ratio, and orientation.

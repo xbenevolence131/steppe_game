@@ -72,6 +72,15 @@ struct LakeCandidate {
     double score = 0.0;
 };
 
+struct LakeRiverConnection {
+    int id = 0;
+    int river_component = 0;
+    int terminal_index = 0;
+    VertexKey vertex;
+    std::vector<Coord> lake_hexes;
+    RiverEdge river_edge;
+};
+
 struct RiverHead {
     int id = 0;
     Coord source;
@@ -951,8 +960,95 @@ std::set<Coord, decltype(coord_less)*> generate_lake_hexes(const GenerateArgs& a
     return lake_hexes;
 }
 
+std::vector<LakeRiverConnection> derive_lake_river_connections(
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const std::vector<RiverEdge>& river_edges
+) {
+    std::map<VertexKey, std::vector<Coord>> lake_hexes_by_vertex;
+    for (const Coord& lake : lake_hexes) {
+        for (const VertexKey& vertex : hex_corners(lake)) {
+            lake_hexes_by_vertex[vertex].push_back(lake);
+        }
+    }
+
+    std::map<VertexKey, std::set<VertexKey>> graph;
+    std::map<VertexKey, std::vector<RiverEdge>> incident_edges;
+    for (const RiverEdge& edge : river_edges) {
+        const BoundaryEdge boundary = make_boundary_edge(edge);
+        graph[boundary.first].insert(boundary.second);
+        graph[boundary.second].insert(boundary.first);
+        incident_edges[boundary.first].push_back(edge);
+        incident_edges[boundary.second].push_back(edge);
+    }
+
+    std::vector<LakeRiverConnection> connections;
+    std::set<VertexKey> seen;
+    int component_id = 0;
+
+    for (const auto& entry : graph) {
+        const VertexKey start = entry.first;
+        if (seen.find(start) != seen.end()) {
+            continue;
+        }
+
+        ++component_id;
+        std::vector<VertexKey> stack{start};
+        std::vector<VertexKey> component_vertices;
+        seen.insert(start);
+
+        while (!stack.empty()) {
+            const VertexKey current = stack.back();
+            stack.pop_back();
+            component_vertices.push_back(current);
+
+            for (const VertexKey& next : graph[current]) {
+                if (seen.find(next) == seen.end()) {
+                    seen.insert(next);
+                    stack.push_back(next);
+                }
+            }
+        }
+
+        std::vector<VertexKey> terminals;
+        for (const VertexKey& vertex : component_vertices) {
+            if (graph[vertex].size() == 1) {
+                terminals.push_back(vertex);
+            }
+        }
+        std::sort(terminals.begin(), terminals.end());
+
+        int terminal_index = 0;
+        for (const VertexKey& terminal : terminals) {
+            ++terminal_index;
+            const auto lake_found = lake_hexes_by_vertex.find(terminal);
+            if (lake_found == lake_hexes_by_vertex.end()) {
+                continue;
+            }
+            const auto edge_found = incident_edges.find(terminal);
+            if (edge_found == incident_edges.end() || edge_found->second.empty()) {
+                continue;
+            }
+
+            connections.push_back({
+                static_cast<int>(connections.size()) + 1,
+                component_id,
+                terminal_index,
+                terminal,
+                lake_found->second,
+                edge_found->second.front(),
+            });
+        }
+    }
+
+    return connections;
+}
+
 void print_coord(const Coord& coord) {
     std::cout << "{\"q\":" << coord.q << ",\"r\":" << coord.r << "}";
+}
+
+void print_vertex(const VertexKey& vertex) {
+    std::cout << "{\"x\":" << vertex.x << ",\"y\":" << vertex.y << "}";
 }
 
 void print_edge(const RiverEdge& edge) {
@@ -968,6 +1064,11 @@ void print_generated_map(const GenerateArgs& args) {
     const std::set<Coord, decltype(coord_less)*> lakes = generate_lake_hexes(args, rivers);
     const std::set<Coord, decltype(coord_less)*> baikal = generate_baikal_hexes(args);
     const std::set<Coord, decltype(coord_less)*> caspian = generate_caspian_hexes(args);
+    std::set<Coord, decltype(coord_less)*> all_lakes(coord_less);
+    all_lakes.insert(lakes.begin(), lakes.end());
+    all_lakes.insert(baikal.begin(), baikal.end());
+    all_lakes.insert(caspian.begin(), caspian.end());
+    const std::vector<LakeRiverConnection> lake_river_connections = derive_lake_river_connections(all_lakes, rivers.edges);
 
     std::cout << "{";
     std::cout << "\"schema\":\"steppe-terrain.v1\",";
@@ -984,7 +1085,7 @@ void print_generated_map(const GenerateArgs& args) {
             }
             first = false;
             const Coord coord{q, r};
-            const char* terrain = baikal.find(coord) != baikal.end() || caspian.find(coord) != caspian.end() || lakes.find(coord) != lakes.end()
+            const char* terrain = all_lakes.find(coord) != all_lakes.end()
                 ? "lake"
                 : (is_steppe_hex(q, r, args) ? "grassland" : "none");
             std::cout << "{\"q\":" << q << ",\"r\":" << r << ",\"terrain\":\"" << terrain << "\"}";
@@ -1044,10 +1145,35 @@ void print_generated_map(const GenerateArgs& args) {
         print_edge(rivers.edges[i]);
     }
     std::cout << "],";
+    std::cout << "\"lake_river_connections\":[";
+    for (std::size_t i = 0; i < lake_river_connections.size(); ++i) {
+        if (i > 0) {
+            std::cout << ",";
+        }
+        const LakeRiverConnection& connection = lake_river_connections[i];
+        std::cout << "{\"id\":" << connection.id
+            << ",\"kind\":\"river_terminal_to_lake_vertex\""
+            << ",\"river_component\":" << connection.river_component
+            << ",\"terminal_index\":" << connection.terminal_index
+            << ",\"vertex\":";
+        print_vertex(connection.vertex);
+        std::cout << ",\"lake_hexes\":[";
+        for (std::size_t hex_index = 0; hex_index < connection.lake_hexes.size(); ++hex_index) {
+            if (hex_index > 0) {
+                std::cout << ",";
+            }
+            print_coord(connection.lake_hexes[hex_index]);
+        }
+        std::cout << "],\"river_edge\":";
+        print_edge(connection.river_edge);
+        std::cout << "}";
+    }
+    std::cout << "],";
     std::cout << "\"roads\":[],";
     std::cout << "\"metadata\":{";
     std::cout << "\"generator\":\"prototype-steppe-blob\",";
-    std::cout << "\"terrain_types\":[\"none\",\"grassland\",\"lake\",\"hill\",\"mountain\",\"woods\",\"marsh\",\"urban\"]";
+    std::cout << "\"terrain_types\":[\"none\",\"grassland\",\"lake\",\"hill\",\"mountain\",\"woods\",\"marsh\",\"urban\"],";
+    std::cout << "\"lake_river_connection_model\":\"river-terminal-lake-vertex.v1\"";
     std::cout << "}";
     std::cout << "}\n";
 }
