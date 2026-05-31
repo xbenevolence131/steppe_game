@@ -85,6 +85,16 @@ const terrainStyles = {
   },
   marsh: terrainStyle("marsh"),
   urban: terrainStyle("urban"),
+  persian_town: {
+    fill: "#8a4fb0",
+    stroke: "#4b2468",
+    label: "#f7eefb",
+  },
+  chinese_town: {
+    fill: "#c93632",
+    stroke: "#7a1515",
+    label: "#fff0ea",
+  },
   river: {
     stroke: "#2679a6",
     source: "#60c4e8",
@@ -529,11 +539,22 @@ function stopPainting() {
   paintStrokeKeys = new Set();
 }
 
+function styleForHex(hex) {
+  const labels = hex.labels || [];
+  if (hex.terrain === "urban" && labels.includes("persian_town")) {
+    return terrainStyles.persian_town;
+  }
+  if (hex.terrain === "urban" && labels.includes("chinese_town")) {
+    return terrainStyles.chinese_town;
+  }
+  if (labels.includes("forest_blob")) {
+    return terrainStyles.forest_blob;
+  }
+  return terrainStyles[hex.terrain] || terrainStyles.none;
+}
+
 function drawHex(cx, cy, size, label, hex) {
-  const terrain = hex.terrain;
-  const style = hex.labels && hex.labels.includes("forest_blob")
-    ? terrainStyles.forest_blob
-    : (terrainStyles[terrain] || terrainStyles.none);
+  const style = styleForHex(hex);
   const points = hexPoints(cx, cy, size + 0.15);
   ctx.beginPath();
   points.forEach(([x, y], index) => {
