@@ -15,6 +15,7 @@ const meanderReachInput = document.querySelector("#meander-reach");
 const riverSlantStrengthInput = document.querySelector("#river-slant-strength");
 const meanderTimeoutInput = document.querySelector("#meander-timeout");
 const generateButton = document.querySelector("#generate-button");
+const blankMapButton = document.querySelector("#blank-map-button");
 const saveButton = document.querySelector("#save-button");
 const loadButton = document.querySelector("#load-button");
 const zoomInButton = document.querySelector("#zoom-in-button");
@@ -380,7 +381,41 @@ async function generateMap() {
   }
 }
 
+function createBlankMap() {
+  const width = clampDimension(widthInput.value, 1, 120, 120);
+  const height = clampDimension(heightInput.value, 1, 80, 80);
+  widthInput.value = width;
+  heightInput.value = height;
+
+  const hexes = [];
+  for (let r = 1; r <= height; r += 1) {
+    for (let q = 1; q <= width; q += 1) {
+      hexes.push({ q, r, terrain: "grassland" });
+    }
+  }
+
+  currentMap = {
+    schema: "steppe-terrain.v1",
+    seed: 0,
+    width,
+    height,
+    hexes,
+    river_sources: [],
+    river_destinations: [],
+    merge_points: [],
+    river_segments: [],
+    edges: [],
+    roads: [],
+    metadata: {
+      generator: "blank-editor",
+      terrain_types: ["none", "grassland", "lake", "light_forest", "heavy_forest", "hills", "mountains", "urban"],
+    },
+  };
+  fitMap();
+}
+
 generateButton.addEventListener("click", generateMap);
+blankMapButton.addEventListener("click", createBlankMap);
 saveButton.addEventListener("click", () => window.alert("Save terrain is not implemented yet."));
 loadButton.addEventListener("click", () => window.alert("Load terrain is not implemented yet."));
 zoomInButton.addEventListener("click", () => zoomFromCenter(1.25));
