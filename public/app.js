@@ -713,6 +713,9 @@ function editorLabelsForTerrain(terrain) {
   if (terrain === "hill" || terrain === "mountain" || terrain === "woods") {
     return ["wild_terrain"];
   }
+  if (terrain === "urban") {
+    return ["urban"];
+  }
   if (terrain === "none") {
     return ["base_none"];
   }
@@ -845,6 +848,7 @@ function createBlankMap() {
     merge_points: [],
     river_segments: [],
     edges: [],
+    towns: [],
     roads: [],
     metadata: {
       generator: "blank-editor",
@@ -886,6 +890,7 @@ function normalizeLoadedMap(map) {
     merge_points: Array.isArray(map.merge_points) ? map.merge_points : [],
     river_segments: Array.isArray(map.river_segments) ? map.river_segments : [],
     edges: Array.isArray(map.edges) ? map.edges : [],
+    towns: Array.isArray(map.towns) ? map.towns : [],
     roads: Array.isArray(map.roads) ? map.roads : [],
     metadata: map.metadata && typeof map.metadata === "object"
       ? map.metadata

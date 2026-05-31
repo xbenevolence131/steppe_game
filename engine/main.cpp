@@ -99,6 +99,11 @@ struct LakeNetworkOverlay {
     std::vector<RiverEdge> edges;
 };
 
+struct Town {
+    Coord coord;
+    std::string feature;
+};
+
 struct RiverHead {
     int id = 0;
     Coord source;
@@ -1414,6 +1419,180 @@ const char* wild_terrain_for_distance(const GenerateArgs& args, const Coord& coo
     return fine_roll < 0.96 ? "mountain" : "hill";
 }
 
+bool final_grassland_before_towns(
+    const GenerateArgs& args,
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes,
+    const Coord& coord
+) {
+    return in_bounds(coord, args)
+        && lake_hexes.find(coord) == lake_hexes.end()
+        && (valley_hexes.find(coord) != valley_hexes.end() || is_steppe_hex(coord.q, coord.r, args));
+}
+
+std::vector<Town> place_fixed_feature_towns_for_feature(
+    const GenerateArgs& args,
+    const std::string& feature,
+    const std::set<Coord, decltype(coord_less)*>& feature_lakes,
+    const std::set<Coord, decltype(coord_less)*>& all_lakes,
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes,
+    const std::set<Coord, decltype(coord_less)*>& occupied_towns,
+    std::uint32_t channel
+) {
+    std::vector<Town> towns;
+    if (feature_lakes.empty()) {
+        return towns;
+    }
+
+    std::vector<Coord> candidates;
+    for (const Coord& lake : feature_lakes) {
+        for (int direction = 0; direction < 6; ++direction) {
+            const Coord neighbor = neighbor_in_direction(lake, direction);
+            if (!final_grassland_before_towns(args, all_lakes, valley_hexes, neighbor)
+                || occupied_towns.find(neighbor) != occupied_towns.end()
+                || contains_coord(candidates, neighbor)) {
+                continue;
+            }
+            candidates.push_back(neighbor);
+        }
+    }
+
+    if (candidates.empty()) {
+        return towns;
+    }
+
+    std::sort(candidates.begin(), candidates.end(), [&](const Coord& first, const Coord& second) {
+        const double first_valley_bonus = valley_hexes.find(first) != valley_hexes.end() ? 0.18 : 0.0;
+        const double second_valley_bonus = valley_hexes.find(second) != valley_hexes.end() ? 0.18 : 0.0;
+        const double first_score = first_valley_bonus + unit_noise(
+            args.seed,
+            channel + static_cast<std::uint32_t>(first.q * 157 + first.r * 313)
+        );
+        const double second_score = second_valley_bonus + unit_noise(
+            args.seed,
+            channel + static_cast<std::uint32_t>(second.q * 157 + second.r * 313)
+        );
+        return first_score > second_score;
+    });
+
+    const int target_towns = unit_noise(args.seed, channel + 19U) < 0.5 ? 1 : 2;
+    for (const Coord& candidate : candidates) {
+        if (static_cast<int>(towns.size()) >= target_towns) {
+            break;
+        }
+        if (occupied_towns.find(candidate) != occupied_towns.end()) {
+            continue;
+        }
+        towns.push_back({candidate, feature});
+    }
+
+    return towns;
+}
+
+std::vector<Town> place_fixed_feature_towns(
+    const GenerateArgs& args,
+    const std::set<Coord, decltype(coord_less)*>& baikal,
+    const std::set<Coord, decltype(coord_less)*>& caspian,
+    const LakeNetworkOverlay& chinese_lake_network,
+    const std::set<Coord, decltype(coord_less)*>& all_lakes,
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes
+) {
+    std::vector<Town> towns;
+    std::set<Coord, decltype(coord_less)*> occupied_towns(coord_less);
+    const auto add_feature_towns = [&](const std::vector<Town>& feature_towns) {
+        for (const Town& town : feature_towns) {
+            if (occupied_towns.find(town.coord) != occupied_towns.end()) {
+                continue;
+            }
+            towns.push_back(town);
+            occupied_towns.insert(town.coord);
+        }
+    };
+
+    add_feature_towns(place_fixed_feature_towns_for_feature(args, "baikal", baikal, all_lakes, valley_hexes, occupied_towns, 76001));
+    add_feature_towns(place_fixed_feature_towns_for_feature(args, "caspian", caspian, all_lakes, valley_hexes, occupied_towns, 76002));
+
+    std::set<Coord, decltype(coord_less)*> chinese_lakes(coord_less);
+    for (const Coord& coord : chinese_lake_network.lake_hexes) {
+        chinese_lakes.insert(coord);
+    }
+    add_feature_towns(place_fixed_feature_towns_for_feature(args, "chinese_lake_network", chinese_lakes, all_lakes, valley_hexes, occupied_towns, 76003));
+
+    std::sort(towns.begin(), towns.end(), [](const Town& first, const Town& second) {
+        return coord_less(first.coord, second.coord);
+    });
+    return towns;
+}
+
+bool coord_adjacent_to_lake(
+    const Coord& coord,
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes
+) {
+    for (int direction = 0; direction < 6; ++direction) {
+        const Coord neighbor = neighbor_in_direction(coord, direction);
+        if (lake_hexes.find(neighbor) != lake_hexes.end()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool coord_adjacent_to_river(const Coord& coord, const std::vector<RiverEdge>& river_edges) {
+    return std::find_if(river_edges.begin(), river_edges.end(), [&coord](const RiverEdge& edge) {
+        return coord_equal(edge.a, coord) || coord_equal(edge.b, coord);
+    }) != river_edges.end();
+}
+
+std::vector<Town> place_extra_grassland_towns(
+    const GenerateArgs& args,
+    const std::set<Coord, decltype(coord_less)*>& all_lakes,
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes,
+    const std::vector<RiverEdge>& river_edges,
+    const std::vector<Town>& existing_towns
+) {
+    std::set<Coord, decltype(coord_less)*> occupied_towns(coord_less);
+    for (const Town& town : existing_towns) {
+        occupied_towns.insert(town.coord);
+    }
+
+    std::vector<Coord> candidates;
+    for (int r = 1; r <= args.height; ++r) {
+        for (int q = 1; q <= args.width; ++q) {
+            const Coord coord{q, r};
+            if (!final_grassland_before_towns(args, all_lakes, valley_hexes, coord)
+                || occupied_towns.find(coord) != occupied_towns.end()
+                || (!coord_adjacent_to_lake(coord, all_lakes) && !coord_adjacent_to_river(coord, river_edges))) {
+                continue;
+            }
+            candidates.push_back(coord);
+        }
+    }
+
+    std::sort(candidates.begin(), candidates.end(), [&](const Coord& first, const Coord& second) {
+        const double first_valley_bonus = valley_hexes.find(first) != valley_hexes.end() ? 0.12 : 0.0;
+        const double second_valley_bonus = valley_hexes.find(second) != valley_hexes.end() ? 0.12 : 0.0;
+        const double first_score = first_valley_bonus + unit_noise(
+            args.seed,
+            static_cast<std::uint32_t>(77000 + first.q * 181 + first.r * 397)
+        );
+        const double second_score = second_valley_bonus + unit_noise(
+            args.seed,
+            static_cast<std::uint32_t>(77000 + second.q * 181 + second.r * 397)
+        );
+        return first_score > second_score;
+    });
+
+    const int target_towns = 2 + static_cast<int>(std::floor(unit_noise(args.seed, 77019) * 3.0));
+    std::vector<Town> towns;
+    for (const Coord& candidate : candidates) {
+        if (static_cast<int>(towns.size()) >= target_towns) {
+            break;
+        }
+        towns.push_back({candidate, "grassland_water"});
+    }
+    return towns;
+}
+
 void print_coord(const Coord& coord) {
     std::cout << "{\"q\":" << coord.q << ",\"r\":" << coord.r << "}";
 }
@@ -1441,6 +1620,10 @@ void print_edge(const RiverEdge& edge) {
     std::cout << ",\"river\":true}";
 }
 
+void print_town(const Town& town) {
+    std::cout << "{\"q\":" << town.coord.q << ",\"r\":" << town.coord.r << ",\"feature\":\"" << town.feature << "\"}";
+}
+
 void print_generated_map(const GenerateArgs& args) {
     const RiverNetwork rivers = generate_river_network(args);
     const std::set<Coord, decltype(coord_less)*> lakes = generate_lake_hexes(args, rivers);
@@ -1460,6 +1643,12 @@ void print_generated_map(const GenerateArgs& args) {
     }
     std::sort(all_river_edges.begin(), all_river_edges.end(), edge_less);
     const std::set<Coord, decltype(coord_less)*> valley_hexes = derive_valley_hexes(args, all_lakes, all_river_edges);
+    std::vector<Town> towns = place_fixed_feature_towns(args, baikal, caspian, chinese_lake_network, all_lakes, valley_hexes);
+    const std::vector<Town> extra_towns = place_extra_grassland_towns(args, all_lakes, valley_hexes, all_river_edges, towns);
+    towns.insert(towns.end(), extra_towns.begin(), extra_towns.end());
+    std::sort(towns.begin(), towns.end(), [](const Town& first, const Town& second) {
+        return coord_less(first.coord, second.coord);
+    });
     const std::map<Coord, int, decltype(coord_less)*> grassland_distances = derive_grassland_distances(args, valley_hexes);
     const std::vector<LakeRiverConnection> lake_river_connections = derive_lake_river_connections(all_lakes, all_river_edges);
 
@@ -1481,11 +1670,23 @@ void print_generated_map(const GenerateArgs& args) {
             const bool base_steppe = is_steppe_hex(q, r, args);
             const bool lake = all_lakes.find(coord) != all_lakes.end();
             const bool valley = valley_hexes.find(coord) != valley_hexes.end();
+            const auto town = std::find_if(towns.begin(), towns.end(), [&coord](const Town& candidate) {
+                return coord_equal(candidate.coord, coord);
+            });
+            const bool urban = town != towns.end();
             std::vector<std::string> labels{
                 base_steppe ? "base_steppe" : "base_none",
             };
             const char* terrain = "none";
-            if (lake) {
+            if (urban) {
+                terrain = "urban";
+                if (valley) {
+                    labels.push_back("valley");
+                }
+                labels.push_back("urban");
+                labels.push_back(town->feature == "grassland_water" ? "water_adjacent_town" : "fixed_feature_town");
+                labels.push_back(town->feature);
+            } else if (lake) {
                 terrain = "lake";
                 labels.push_back("lake");
             } else if (valley || base_steppe) {
@@ -1508,6 +1709,14 @@ void print_generated_map(const GenerateArgs& args) {
         }
     }
 
+    std::cout << "],";
+    std::cout << "\"towns\":[";
+    for (std::size_t i = 0; i < towns.size(); ++i) {
+        if (i > 0) {
+            std::cout << ",";
+        }
+        print_town(towns[i]);
+    }
     std::cout << "],";
     std::cout << "\"river_sources\":[";
     for (std::size_t i = 0; i < rivers.sources.size(); ++i) {
