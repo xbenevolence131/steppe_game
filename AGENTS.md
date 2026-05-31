@@ -49,5 +49,6 @@ On Windows, if a clean build fails with missing standard-library includes, run t
 - Each river gets an independent seed-derived east or west slant direction, producing subtle SSE/SSW angles without overriding southward drainage.
 - Each successful browser/proxy map generation writes `latest-map.json` for inspection. This is generated output and should stay untracked.
 - The browser has a `Blank Map` mode for editor/template work. It creates a client-side all-grassland map with the current width and height, no procedural terrain, and no river edges.
+- Editor mode supports hex terrain painting and river-edge painting in the browser. The current editor terrain keys are `grassland`, `none`, `lake`, `hill`, `mountain`, `woods`, `marsh`, and `urban`.
 - Keep changes scoped to the experiment being explored; avoid broad refactors unless they directly improve generation behavior or observability.
 - Preserve deterministic seeded generation. A fixed seed should produce the same map for the same parameters.

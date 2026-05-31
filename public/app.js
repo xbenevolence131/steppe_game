@@ -21,10 +21,17 @@ const loadButton = document.querySelector("#load-button");
 const zoomInButton = document.querySelector("#zoom-in-button");
 const zoomOutButton = document.querySelector("#zoom-out-button");
 const fitButton = document.querySelector("#fit-button");
+const editModeButton = document.querySelector("#edit-mode-button");
+const editorToolSelect = document.querySelector("#editor-tool");
+const terrainPalette = document.querySelector("#terrain-palette");
 
 let currentMap = null;
 let isPanning = false;
+let isEditing = false;
+let isPainting = false;
 let lastPointer = { x: 0, y: 0 };
+let selectedTerrain = "lake";
+let lastPaintKey = "";
 
 const viewport = {
   scale: 1,
@@ -43,22 +50,30 @@ const geometry = {
   height: 0,
 };
 
+const editorTerrains = [
+  { key: "grassland", label: "Grassland", fill: "#d8c596", stroke: "#7e735f", labelColor: "#29251d" },
+  { key: "none", label: "None", fill: "#111111", stroke: "#5b5f5b", labelColor: "#eeeeee" },
+  { key: "lake", label: "Lake", fill: "#82c7e6", stroke: "#245e78", labelColor: "#082c3a" },
+  { key: "hill", label: "Hill", fill: "#b98c56", stroke: "#6f4f2f", labelColor: "#21170f" },
+  { key: "mountain", label: "Mountain", fill: "#5b3724", stroke: "#2c1a11", labelColor: "#f1e7d8" },
+  { key: "woods", label: "Woods", fill: "#246b3b", stroke: "#133c22", labelColor: "#eef7e8" },
+  { key: "marsh", label: "Marsh", fill: "#74794b", stroke: "#42462a", labelColor: "#f3eed0" },
+  { key: "urban", label: "Urban", fill: "#8e8e8e", stroke: "#4e4e4e", labelColor: "#111111" },
+];
+
 const terrainStyles = {
-  none: {
-    fill: "#383a3a",
-    stroke: "#8b8f88",
-    label: "#dedbd1",
-  },
-  grassland: {
-    fill: "#d8c596",
-    stroke: "#7e735f",
-    label: "#29251d",
-  },
-  lake: {
-    fill: "#4f9fc0",
-    stroke: "#245e78",
-    label: "#082c3a",
-  },
+  none: terrainStyle("none"),
+  grassland: terrainStyle("grassland"),
+  lake: terrainStyle("lake"),
+  hill: terrainStyle("hill"),
+  hills: terrainStyle("hill"),
+  mountain: terrainStyle("mountain"),
+  mountains: terrainStyle("mountain"),
+  woods: terrainStyle("woods"),
+  light_forest: terrainStyle("woods"),
+  heavy_forest: terrainStyle("woods"),
+  marsh: terrainStyle("marsh"),
+  urban: terrainStyle("urban"),
   river: {
     stroke: "#2679a6",
     source: "#60c4e8",
@@ -66,6 +81,15 @@ const terrainStyles = {
     destination: "#1f5f83",
   },
 };
+
+function terrainStyle(key) {
+  const terrain = editorTerrains.find((entry) => entry.key === key);
+  return {
+    fill: terrain.fill,
+    stroke: terrain.stroke,
+    label: terrain.labelColor,
+  };
+}
 
 function clampDimension(value, min, max, fallback) {
   const parsed = Number(value);
@@ -144,6 +168,115 @@ function edgeBoundaryPoints(edge) {
   return shared.length === 2 ? shared : null;
 }
 
+function coordKey(coord) {
+  return `${coord.q},${coord.r}`;
+}
+
+function coordLess(first, second) {
+  return first.r === second.r ? first.q < second.q : first.r < second.r;
+}
+
+function canonicalEdge(first, second) {
+  return coordLess(second, first)
+    ? { a: { ...second }, b: { ...first }, river: true }
+    : { a: { ...first }, b: { ...second }, river: true };
+}
+
+function edgeKey(edge) {
+  return `${coordKey(edge.a)}|${coordKey(edge.b)}`;
+}
+
+function neighborInDirection(coord, direction) {
+  const shiftedDown = (coord.q - 1) % 2 === 1;
+  switch (direction) {
+    case 0: return { q: coord.q + 1, r: coord.r };
+    case 1: return shiftedDown ? { q: coord.q + 1, r: coord.r + 1 } : { q: coord.q + 1, r: coord.r - 1 };
+    case 2: return { q: coord.q, r: coord.r - 1 };
+    case 3: return { q: coord.q - 1, r: coord.r };
+    case 4: return shiftedDown ? { q: coord.q - 1, r: coord.r + 1 } : { q: coord.q - 1, r: coord.r - 1 };
+    case 5: return { q: coord.q, r: coord.r + 1 };
+    default: return coord;
+  }
+}
+
+function inBounds(coord) {
+  return currentMap && coord.q >= 1 && coord.q <= currentMap.width && coord.r >= 1 && coord.r <= currentMap.height;
+}
+
+function panelToWorld(event) {
+  const rect = mapPanel.getBoundingClientRect();
+  return {
+    x: (event.clientX - rect.left - viewport.offsetX) / viewport.scale,
+    y: (event.clientY - rect.top - viewport.offsetY) / viewport.scale,
+  };
+}
+
+function distanceToSegment(point, first, second) {
+  const dx = second.x - first.x;
+  const dy = second.y - first.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared === 0) {
+    return Math.hypot(point.x - first.x, point.y - first.y);
+  }
+  const t = clamp(((point.x - first.x) * dx + (point.y - first.y) * dy) / lengthSquared, 0, 1);
+  const x = first.x + dx * t;
+  const y = first.y + dy * t;
+  return Math.hypot(point.x - x, point.y - y);
+}
+
+function findNearestHex(point) {
+  if (!currentMap) {
+    return null;
+  }
+
+  let best = null;
+  let bestDistance = geometry.size * 0.95;
+  for (const hex of currentMap.hexes) {
+    const center = hexCenter(hex);
+    const distance = Math.hypot(point.x - center.x, point.y - center.y);
+    if (distance < bestDistance) {
+      best = hex;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+function findNearestEditableEdge(point) {
+  if (!currentMap) {
+    return null;
+  }
+
+  const hex = findNearestHex(point);
+  if (!hex) {
+    return null;
+  }
+
+  let best = null;
+  let bestDistance = geometry.size * 0.42;
+  for (let direction = 0; direction < 6; direction += 1) {
+    const neighbor = neighborInDirection(hex, direction);
+    if (!inBounds(neighbor)) {
+      continue;
+    }
+    const edge = canonicalEdge(hex, neighbor);
+    const boundary = edgeBoundaryPoints(edge);
+    if (!boundary) {
+      continue;
+    }
+    const distance = distanceToSegment(
+      point,
+      { x: boundary[0][0], y: boundary[0][1] },
+      { x: boundary[1][0], y: boundary[1][1] },
+    );
+    if (distance < bestDistance) {
+      best = edge;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
 function updateGeometry(map) {
   const hexHeight = Math.sqrt(3) * geometry.size;
   geometry.width = geometry.margin * 2 + geometry.size * (1.5 * Math.max(1, map.width - 1) + 2);
@@ -217,6 +350,11 @@ function panBy(dx, dy) {
 function stopPanning() {
   isPanning = false;
   mapPanel.classList.remove("is-panning");
+}
+
+function stopPainting() {
+  isPainting = false;
+  lastPaintKey = "";
 }
 
 function drawHex(cx, cy, size, label, terrain) {
@@ -324,6 +462,91 @@ function drawMap() {
   ctx.restore();
 }
 
+function syncEditorControls() {
+  editModeButton.classList.toggle("is-active", isEditing);
+  editModeButton.setAttribute("aria-pressed", String(isEditing));
+  mapPanel.classList.toggle("is-editing", isEditing);
+
+  for (const button of terrainPalette.querySelectorAll(".terrain-button")) {
+    button.classList.toggle("is-selected", button.dataset.terrain === selectedTerrain);
+  }
+}
+
+function initializeTerrainPalette() {
+  for (const terrain of editorTerrains) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "terrain-button";
+    button.dataset.terrain = terrain.key;
+    button.title = terrain.label;
+    button.setAttribute("aria-label", terrain.label);
+    button.style.background = terrain.fill;
+    button.style.borderColor = terrain.stroke;
+    button.addEventListener("click", () => {
+      selectedTerrain = terrain.key;
+      editorToolSelect.value = "hex";
+      syncEditorControls();
+    });
+    terrainPalette.appendChild(button);
+  }
+  syncEditorControls();
+}
+
+function setEditMode(enabled) {
+  isEditing = enabled;
+  if (!isEditing) {
+    isPainting = false;
+    lastPaintKey = "";
+  }
+  syncEditorControls();
+}
+
+function setRiverEdge(edge, enabled) {
+  currentMap.edges = currentMap.edges || [];
+  const key = edgeKey(edge);
+  const index = currentMap.edges.findIndex((existing) => edgeKey(canonicalEdge(existing.a, existing.b)) === key);
+  if (enabled && index < 0) {
+    currentMap.edges.push(edge);
+  } else if (!enabled && index >= 0) {
+    currentMap.edges.splice(index, 1);
+  }
+}
+
+function paintAtPointer(event) {
+  if (!isEditing || !currentMap) {
+    return;
+  }
+
+  const point = panelToWorld(event);
+  if (editorToolSelect.value === "edge") {
+    const edge = findNearestEditableEdge(point);
+    if (!edge) {
+      return;
+    }
+    const key = `edge:${edgeKey(edge)}:${event.shiftKey}`;
+    if (key === lastPaintKey) {
+      return;
+    }
+    lastPaintKey = key;
+    setRiverEdge(edge, !event.shiftKey);
+    drawMap();
+    return;
+  }
+
+  const hex = findNearestHex(point);
+  if (!hex) {
+    return;
+  }
+  const terrain = event.shiftKey ? "grassland" : selectedTerrain;
+  const key = `hex:${coordKey(hex)}:${terrain}`;
+  if (key === lastPaintKey) {
+    return;
+  }
+  lastPaintKey = key;
+  hex.terrain = terrain;
+  drawMap();
+}
+
 async function generateMap() {
   const width = clampDimension(widthInput.value, 1, 120, 120);
   const height = clampDimension(heightInput.value, 1, 80, 80);
@@ -408,7 +631,7 @@ function createBlankMap() {
     roads: [],
     metadata: {
       generator: "blank-editor",
-      terrain_types: ["none", "grassland", "lake", "light_forest", "heavy_forest", "hills", "mountains", "urban"],
+      terrain_types: editorTerrains.map((terrain) => terrain.key),
     },
   };
   fitMap();
@@ -416,6 +639,8 @@ function createBlankMap() {
 
 generateButton.addEventListener("click", generateMap);
 blankMapButton.addEventListener("click", createBlankMap);
+editModeButton.addEventListener("click", () => setEditMode(!isEditing));
+editorToolSelect.addEventListener("change", syncEditorControls);
 saveButton.addEventListener("click", () => window.alert("Save terrain is not implemented yet."));
 loadButton.addEventListener("click", () => window.alert("Load terrain is not implemented yet."));
 zoomInButton.addEventListener("click", () => zoomFromCenter(1.25));
@@ -433,6 +658,14 @@ mapPanel.addEventListener("wheel", (event) => {
 
 mapPanel.addEventListener("pointerdown", (event) => {
   mapPanel.focus();
+  if (isEditing && event.button === 0) {
+    event.preventDefault();
+    isPainting = true;
+    lastPaintKey = "";
+    paintAtPointer(event);
+    mapPanel.setPointerCapture(event.pointerId);
+    return;
+  }
   if (event.button !== 1) {
     return;
   }
@@ -444,6 +677,11 @@ mapPanel.addEventListener("pointerdown", (event) => {
 });
 
 mapPanel.addEventListener("pointermove", (event) => {
+  if (isPainting) {
+    event.preventDefault();
+    paintAtPointer(event);
+    return;
+  }
   if (!isPanning) {
     return;
   }
@@ -452,6 +690,11 @@ mapPanel.addEventListener("pointermove", (event) => {
 });
 
 mapPanel.addEventListener("pointerup", (event) => {
+  if (isPainting) {
+    stopPainting();
+    mapPanel.releasePointerCapture(event.pointerId);
+    return;
+  }
   if (!isPanning) {
     return;
   }
@@ -459,8 +702,14 @@ mapPanel.addEventListener("pointerup", (event) => {
   mapPanel.releasePointerCapture(event.pointerId);
 });
 
-mapPanel.addEventListener("pointercancel", stopPanning);
-mapPanel.addEventListener("lostpointercapture", stopPanning);
+mapPanel.addEventListener("pointercancel", () => {
+  stopPainting();
+  stopPanning();
+});
+mapPanel.addEventListener("lostpointercapture", () => {
+  stopPainting();
+  stopPanning();
+});
 
 mapPanel.addEventListener("auxclick", (event) => {
   if (event.button === 1) {
@@ -496,4 +745,5 @@ new ResizeObserver(() => {
   }
 }).observe(mapPanel);
 
+initializeTerrainPalette();
 generateMap();

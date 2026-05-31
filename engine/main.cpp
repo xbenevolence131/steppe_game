@@ -1047,7 +1047,7 @@ void print_generated_map(const GenerateArgs& args) {
     std::cout << "\"roads\":[],";
     std::cout << "\"metadata\":{";
     std::cout << "\"generator\":\"prototype-steppe-blob\",";
-    std::cout << "\"terrain_types\":[\"none\",\"grassland\",\"lake\",\"light_forest\",\"heavy_forest\",\"hills\",\"mountains\",\"urban\"]";
+    std::cout << "\"terrain_types\":[\"none\",\"grassland\",\"lake\",\"hill\",\"mountain\",\"woods\",\"marsh\",\"urban\"]";
     std::cout << "}";
     std::cout << "}\n";
 }

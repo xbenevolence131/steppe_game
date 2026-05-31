@@ -78,6 +78,12 @@
 
       <section class="map-section" aria-label="Generated terrain map">
         <div class="map-toolbar" aria-label="Map view controls">
+          <button id="edit-mode-button" class="secondary" type="button" aria-pressed="false">Edit</button>
+          <select id="editor-tool" aria-label="Editor tool">
+            <option value="hex">Hex</option>
+            <option value="edge">River Edge</option>
+          </select>
+          <div id="terrain-palette" class="terrain-palette" aria-label="Terrain palette"></div>
           <button id="zoom-out-button" class="secondary icon-button" type="button" aria-label="Zoom out" title="Zoom out">-</button>
           <button id="zoom-in-button" class="secondary icon-button" type="button" aria-label="Zoom in" title="Zoom in">+</button>
           <button id="fit-button" class="secondary fit-button" type="button" aria-label="Fit map" title="Fit map">Fit</button>
