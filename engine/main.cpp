@@ -17,11 +17,11 @@ struct GenerateArgs {
     int width = 120;
     int height = 80;
     int river_count = 4;
-    double meander_forward = 14.0;
+    double meander_forward = 8.0;
     double meander_forward_jitter = 4.0;
-    double meander_lateral = 10.0;
+    double meander_lateral = 7.0;
     double meander_lateral_jitter = 4.0;
-    double meander_strength = 1.6;
+    double meander_strength = 1.0;
     double meander_reach = 2.0;
     int meander_timeout = 28;
     std::uint32_t seed = 1;
@@ -619,15 +619,24 @@ RiverNetwork generate_river_network(const GenerateArgs& args) {
 
                 const double dy = vertex_y(next_vertex) - vertex_y(head.current_vertex);
                 const double side_distance = std::min(vertex_x(next_vertex), max_x - vertex_x(next_vertex));
-                const double south_score = dy >= 0.0 ? -dy * 2.0 : 18.0 + std::abs(dy) * 8.0;
+                const double south_score = dy > 0.0
+                    ? -dy * 3.0
+                    : (dy == 0.0 ? 6.0 : 80.0 + std::abs(dy) * 30.0);
                 const double side_score = vertex_y(next_vertex) < bottom_y * 0.9
                     ? (side_distance < 1.0 ? 90.0 : (side_distance < 2.0 ? 35.0 : 0.0))
                     : 0.0;
-                const double meander_dx = vertex_x(next_vertex) - head.meander_target_x;
-                const double meander_dy = vertex_y(next_vertex) - head.meander_target_y;
-                const double meander_score = meander_active && head.has_meander_target
-                    ? std::sqrt(meander_dx * meander_dx + meander_dy * meander_dy) * args.meander_strength
+                const double current_meander_dx = vertex_x(head.current_vertex) - head.meander_target_x;
+                const double current_meander_dy = vertex_y(head.current_vertex) - head.meander_target_y;
+                const double current_meander_distance = std::sqrt(
+                    current_meander_dx * current_meander_dx + current_meander_dy * current_meander_dy
+                );
+                const double next_meander_dx = vertex_x(next_vertex) - head.meander_target_x;
+                const double next_meander_dy = vertex_y(next_vertex) - head.meander_target_y;
+                const double next_meander_distance = std::sqrt(next_meander_dx * next_meander_dx + next_meander_dy * next_meander_dy);
+                const double raw_meander_score = meander_active && head.has_meander_target
+                    ? (next_meander_distance - current_meander_distance) * args.meander_strength * 8.0
                     : 0.0;
+                const double meander_score = std::clamp(raw_meander_score, -10.0, 10.0);
                 const double merge_score = (occupied_by_other_edge || occupied_by_other_vertex) ? -30.0 : 0.0;
                 const double noise = unit_noise(
                     args.seed,

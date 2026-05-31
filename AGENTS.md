@@ -40,6 +40,9 @@ On Windows, if a clean build fails with missing standard-library includes, run t
 
 - The main east-west steppe blob generation is currently in acceptable shape.
 - River generation is a fresh baseline pass. Rivers live on hex edges, are routed on the vertex graph, grow generally north-to-south, use tunable steppe-only lateral meander steering, and should preserve clean merge topology.
+- Current map defaults are `120` width, `80` height, and `4` river sources.
+- Current meander defaults are: `Bend forward=8`, `Forward jitter=4`, `Bend lateral=7`, `Lateral jitter=4`, `Bend strength=1`, `Bend reach=2`, `Bend timeout=28`.
+- Meander scoring currently uses progress toward the active lateral target, not absolute target distance, so bend strength has a visible effect. The router also heavily penalizes northward moves, lightly penalizes flat side moves, and clamps meander influence so lateral bends do not overpower southward drainage.
 - Each successful browser/proxy map generation writes `latest-map.json` for inspection. This is generated output and should stay untracked.
 - Keep changes scoped to the experiment being explored; avoid broad refactors unless they directly improve generation behavior or observability.
 - Preserve deterministic seeded generation. A fixed seed should produce the same map for the same parameters.

@@ -319,11 +319,11 @@ async function generateMap() {
   const width = clampDimension(widthInput.value, 1, 120, 120);
   const height = clampDimension(heightInput.value, 1, 80, 80);
   const rivers = clampDimension(riversInput.value, 0, 20, 4);
-  const meanderForward = clampNumberInput(meanderForwardInput, 0, 40, 14);
+  const meanderForward = clampNumberInput(meanderForwardInput, 0, 40, 8);
   const meanderForwardJitter = clampNumberInput(meanderForwardJitterInput, 0, 40, 4);
-  const meanderLateral = clampNumberInput(meanderLateralInput, 0, 40, 10);
+  const meanderLateral = clampNumberInput(meanderLateralInput, 0, 40, 7);
   const meanderLateralJitter = clampNumberInput(meanderLateralJitterInput, 0, 40, 4);
-  const meanderStrength = clampNumberInput(meanderStrengthInput, 0, 10, 1.6);
+  const meanderStrength = clampNumberInput(meanderStrengthInput, 0, 10, 1);
   const meanderReach = clampNumberInput(meanderReachInput, 0, 40, 2);
   const meanderTimeout = clampDimension(meanderTimeoutInput.value, 1, 200, 28);
   const seed = newSeed();
