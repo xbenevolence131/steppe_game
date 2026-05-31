@@ -10,6 +10,7 @@ const meanderLateralInput = document.querySelector("#meander-lateral");
 const meanderLateralJitterInput = document.querySelector("#meander-lateral-jitter");
 const meanderStrengthInput = document.querySelector("#meander-strength");
 const meanderReachInput = document.querySelector("#meander-reach");
+const riverSlantStrengthInput = document.querySelector("#river-slant-strength");
 const meanderTimeoutInput = document.querySelector("#meander-timeout");
 const generateButton = document.querySelector("#generate-button");
 const saveButton = document.querySelector("#save-button");
@@ -325,6 +326,7 @@ async function generateMap() {
   const meanderLateralJitter = clampNumberInput(meanderLateralJitterInput, 0, 40, 4);
   const meanderStrength = clampNumberInput(meanderStrengthInput, 0, 10, 1);
   const meanderReach = clampNumberInput(meanderReachInput, 0, 40, 2);
+  const riverSlantStrength = clampNumberInput(riverSlantStrengthInput, 0, 10, 10);
   const meanderTimeout = clampDimension(meanderTimeoutInput.value, 1, 200, 28);
   const seed = newSeed();
   widthInput.value = width;
@@ -347,6 +349,7 @@ async function generateMap() {
         meanderLateralJitter,
         meanderStrength,
         meanderReach,
+        riverSlantStrength,
         meanderTimeout,
         seed,
       }),

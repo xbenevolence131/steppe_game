@@ -114,6 +114,7 @@ async function handleGenerate(req, res) {
   const meanderLateralJitter = parseBoundedNumber(payload.meanderLateralJitter, 4, 0, 40);
   const meanderStrength = parseBoundedNumber(payload.meanderStrength, 1, 0, 10);
   const meanderReach = parseBoundedNumber(payload.meanderReach, 2, 0, 40);
+  const riverSlantStrength = parseBoundedNumber(payload.riverSlantStrength, 10, 0, 10);
   const meanderTimeout = parseBoundedInteger(payload.meanderTimeout, 28, 1, 200);
   const seed = parseSeed(payload.seed);
 
@@ -128,6 +129,7 @@ async function handleGenerate(req, res) {
     "--meander-lateral-jitter", String(meanderLateralJitter),
     "--meander-strength", String(meanderStrength),
     "--meander-reach", String(meanderReach),
+    "--river-slant-strength", String(riverSlantStrength),
     "--meander-timeout", String(meanderTimeout),
     "--seed", String(seed),
   ], {

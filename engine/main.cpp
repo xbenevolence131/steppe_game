@@ -23,6 +23,7 @@ struct GenerateArgs {
     double meander_lateral_jitter = 4.0;
     double meander_strength = 1.0;
     double meander_reach = 2.0;
+    double river_slant_strength = 10.0;
     int meander_timeout = 28;
     std::uint32_t seed = 1;
 };
@@ -79,6 +80,7 @@ struct RiverHead {
     double meander_target_x = 0.0;
     double meander_target_y = 0.0;
     int meander_steps = 0;
+    int slant_direction = 1;
 };
 
 int parse_positive_int(const std::string& value, const std::string& name) {
@@ -174,6 +176,8 @@ GenerateArgs parse_generate_args(int argc, char** argv) {
             args.meander_strength = parse_non_negative_double(argv[++i], "meander strength");
         } else if (key == "--meander-reach" && i + 1 < argc) {
             args.meander_reach = parse_non_negative_double(argv[++i], "meander reach");
+        } else if ((key == "--river-slant" || key == "--river-slant-strength") && i + 1 < argc) {
+            args.river_slant_strength = parse_non_negative_double(argv[++i], "river slant strength");
         } else if (key == "--meander-timeout" && i + 1 < argc) {
             args.meander_timeout = parse_positive_int(argv[++i], "meander timeout");
         } else {
@@ -190,7 +194,7 @@ GenerateArgs parse_generate_args(int argc, char** argv) {
     if (args.meander_forward > 40.0 || args.meander_forward_jitter > 40.0 || args.meander_lateral > 40.0 || args.meander_lateral_jitter > 40.0) {
         throw std::runtime_error("meander distances are capped at 40 for the prototype");
     }
-    if (args.meander_strength > 10.0 || args.meander_reach > 40.0 || args.meander_timeout > 200) {
+    if (args.meander_strength > 10.0 || args.meander_reach > 40.0 || args.river_slant_strength > 10.0 || args.meander_timeout > 200) {
         throw std::runtime_error("meander tuning values exceed prototype limits");
     }
 
@@ -524,6 +528,7 @@ RiverNetwork generate_river_network(const GenerateArgs& args) {
         RiverHead head;
         head.id = next_id++;
         head.source = source;
+        head.slant_direction = unit_noise(args.seed, static_cast<std::uint32_t>(head.id * 37000 + 7)) < 0.5 ? -1 : 1;
         head.current_edge = *start_edge;
         head.current_vertex = downstream;
         head.edge_path.push_back(edges[*start_edge]);
@@ -618,6 +623,7 @@ RiverNetwork generate_river_network(const GenerateArgs& args) {
                 }
 
                 const double dy = vertex_y(next_vertex) - vertex_y(head.current_vertex);
+                const double dx = vertex_x(next_vertex) - vertex_x(head.current_vertex);
                 const double side_distance = std::min(vertex_x(next_vertex), max_x - vertex_x(next_vertex));
                 const double south_score = dy > 0.0
                     ? -dy * 3.0
@@ -637,12 +643,14 @@ RiverNetwork generate_river_network(const GenerateArgs& args) {
                     ? (next_meander_distance - current_meander_distance) * args.meander_strength * 8.0
                     : 0.0;
                 const double meander_score = std::clamp(raw_meander_score, -10.0, 10.0);
+                const double raw_slant_score = -dx * static_cast<double>(head.slant_direction) * args.river_slant_strength;
+                const double slant_score = std::clamp(raw_slant_score, -2.0, 2.0);
                 const double merge_score = (occupied_by_other_edge || occupied_by_other_vertex) ? -30.0 : 0.0;
                 const double noise = unit_noise(
                     args.seed,
                     static_cast<std::uint32_t>(head.id * 20000 + step * 131 + candidate * 17)
                 ) * 14.0;
-                const double score = south_score + side_score + meander_score + merge_score + noise;
+                const double score = south_score + side_score + slant_score + meander_score + merge_score + noise;
 
                 if (score < best_score) {
                     best_score = score;
@@ -816,7 +824,7 @@ void print_generated_map(const GenerateArgs& args) {
 
 void print_usage() {
     std::cerr << "Usage:\n";
-    std::cerr << "  steppe_engine generate --width <n> --height <n> [--seed <n>] [--rivers <n>] [--meander-forward <n>] [--meander-forward-jitter <n>] [--meander-lateral <n>] [--meander-lateral-jitter <n>] [--meander-strength <n>] [--meander-reach <n>] [--meander-timeout <n>]\n";
+    std::cerr << "  steppe_engine generate --width <n> --height <n> [--seed <n>] [--rivers <n>] [--meander-forward <n>] [--meander-forward-jitter <n>] [--meander-lateral <n>] [--meander-lateral-jitter <n>] [--meander-strength <n>] [--meander-reach <n>] [--river-slant-strength <n>] [--meander-timeout <n>]\n";
 }
 
 } // namespace
