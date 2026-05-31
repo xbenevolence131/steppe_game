@@ -18,6 +18,7 @@ const generateButton = document.querySelector("#generate-button");
 const blankMapButton = document.querySelector("#blank-map-button");
 const saveButton = document.querySelector("#save-button");
 const loadButton = document.querySelector("#load-button");
+const loadFileInput = document.querySelector("#load-file-input");
 const zoomInButton = document.querySelector("#zoom-in-button");
 const zoomOutButton = document.querySelector("#zoom-out-button");
 const fitButton = document.querySelector("#fit-button");
@@ -31,7 +32,8 @@ let isEditing = false;
 let isPainting = false;
 let lastPointer = { x: 0, y: 0 };
 let selectedTerrain = "lake";
-let lastPaintKey = "";
+let paintStrokeKeys = new Set();
+let terrainUndo = new Map();
 
 const viewport = {
   scale: 1,
@@ -354,7 +356,7 @@ function stopPanning() {
 
 function stopPainting() {
   isPainting = false;
-  lastPaintKey = "";
+  paintStrokeKeys = new Set();
 }
 
 function drawHex(cx, cy, size, label, terrain) {
@@ -496,7 +498,7 @@ function setEditMode(enabled) {
   isEditing = enabled;
   if (!isEditing) {
     isPainting = false;
-    lastPaintKey = "";
+    paintStrokeKeys = new Set();
   }
   syncEditorControls();
 }
@@ -512,6 +514,31 @@ function setRiverEdge(edge, enabled) {
   }
 }
 
+function toggleRiverEdge(edge) {
+  currentMap.edges = currentMap.edges || [];
+  const key = edgeKey(edge);
+  const index = currentMap.edges.findIndex((existing) => edgeKey(canonicalEdge(existing.a, existing.b)) === key);
+  if (index >= 0) {
+    currentMap.edges.splice(index, 1);
+  } else {
+    currentMap.edges.push(edge);
+  }
+}
+
+function toggleHexTerrain(hex, terrain) {
+  const key = coordKey(hex);
+  if (hex.terrain === terrain) {
+    hex.terrain = terrainUndo.get(key) || "grassland";
+    terrainUndo.delete(key);
+    return;
+  }
+
+  if (!terrainUndo.has(key)) {
+    terrainUndo.set(key, hex.terrain);
+  }
+  hex.terrain = terrain;
+}
+
 function paintAtPointer(event) {
   if (!isEditing || !currentMap) {
     return;
@@ -523,12 +550,16 @@ function paintAtPointer(event) {
     if (!edge) {
       return;
     }
-    const key = `edge:${edgeKey(edge)}:${event.shiftKey}`;
-    if (key === lastPaintKey) {
+    const key = `edge:${edgeKey(edge)}`;
+    if (paintStrokeKeys.has(key)) {
       return;
     }
-    lastPaintKey = key;
-    setRiverEdge(edge, !event.shiftKey);
+    paintStrokeKeys.add(key);
+    if (event.shiftKey) {
+      setRiverEdge(edge, false);
+    } else {
+      toggleRiverEdge(edge);
+    }
     drawMap();
     return;
   }
@@ -538,12 +569,12 @@ function paintAtPointer(event) {
     return;
   }
   const terrain = event.shiftKey ? "grassland" : selectedTerrain;
-  const key = `hex:${coordKey(hex)}:${terrain}`;
-  if (key === lastPaintKey) {
+  const key = `hex:${coordKey(hex)}`;
+  if (paintStrokeKeys.has(key)) {
     return;
   }
-  lastPaintKey = key;
-  hex.terrain = terrain;
+  paintStrokeKeys.add(key);
+  toggleHexTerrain(hex, terrain);
   drawMap();
 }
 
@@ -596,6 +627,7 @@ async function generateMap() {
       throw new Error(payload.error || "generation failed");
     }
     currentMap = payload;
+    terrainUndo = new Map();
     fitMap();
   } catch (error) {
     window.alert(error.message);
@@ -634,15 +666,150 @@ function createBlankMap() {
       terrain_types: editorTerrains.map((terrain) => terrain.key),
     },
   };
+  terrainUndo = new Map();
   fitMap();
+}
+
+function normalizeLoadedMap(map) {
+  if (!map || typeof map !== "object") {
+    throw new Error("Loaded file is not a terrain map.");
+  }
+  if (!Number.isInteger(map.width) || !Number.isInteger(map.height) || map.width < 1 || map.height < 1) {
+    throw new Error("Loaded map has invalid dimensions.");
+  }
+  if (!Array.isArray(map.hexes)) {
+    throw new Error("Loaded map is missing hex terrain.");
+  }
+
+  return {
+    schema: typeof map.schema === "string" ? map.schema : "steppe-terrain.v1",
+    seed: Number.isInteger(map.seed) ? map.seed : 0,
+    width: map.width,
+    height: map.height,
+    hexes: map.hexes.map((hex) => ({
+      q: Number(hex.q),
+      r: Number(hex.r),
+      terrain: typeof hex.terrain === "string" ? hex.terrain : "grassland",
+    })).filter((hex) => Number.isInteger(hex.q) && Number.isInteger(hex.r)),
+    river_sources: Array.isArray(map.river_sources) ? map.river_sources : [],
+    river_destinations: Array.isArray(map.river_destinations) ? map.river_destinations : [],
+    merge_points: Array.isArray(map.merge_points) ? map.merge_points : [],
+    river_segments: Array.isArray(map.river_segments) ? map.river_segments : [],
+    edges: Array.isArray(map.edges) ? map.edges : [],
+    roads: Array.isArray(map.roads) ? map.roads : [],
+    metadata: map.metadata && typeof map.metadata === "object"
+      ? map.metadata
+      : { generator: "loaded-editor", terrain_types: editorTerrains.map((terrain) => terrain.key) },
+  };
+}
+
+function defaultMapFilename() {
+  const seed = currentMap && Number.isInteger(currentMap.seed) ? currentMap.seed : 0;
+  const width = currentMap ? currentMap.width : widthInput.value;
+  const height = currentMap ? currentMap.height : heightInput.value;
+  return `steppe-terrain-${width}x${height}-${seed}.json`;
+}
+
+function mapFilePickerTypes() {
+  return [{
+    description: "Steppe terrain JSON",
+    accept: { "application/json": [".json"] },
+  }];
+}
+
+function mapBlob() {
+  return new Blob([`${JSON.stringify(currentMap, null, 2)}\n`], { type: "application/json" });
+}
+
+function downloadMapFallback() {
+  const url = URL.createObjectURL(mapBlob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = defaultMapFilename();
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function saveCurrentMap() {
+  if (!currentMap) {
+    window.alert("No terrain map is loaded.");
+    return;
+  }
+
+  if (!window.showSaveFilePicker) {
+    downloadMapFallback();
+    return;
+  }
+
+  try {
+    const handle = await window.showSaveFilePicker({
+      suggestedName: defaultMapFilename(),
+      types: mapFilePickerTypes(),
+    });
+    const writable = await handle.createWritable();
+    await writable.write(mapBlob());
+    await writable.close();
+  } catch (error) {
+    if (error.name !== "AbortError") {
+      window.alert(error.message);
+    }
+  }
+}
+
+async function loadMapText(text) {
+  try {
+    currentMap = normalizeLoadedMap(JSON.parse(text));
+    terrainUndo = new Map();
+    widthInput.value = currentMap.width;
+    heightInput.value = currentMap.height;
+    fitMap();
+  } catch (error) {
+    window.alert(error.message);
+  }
+}
+
+async function loadMapFile(file) {
+  if (!file) {
+    return;
+  }
+
+  try {
+    await loadMapText(await file.text());
+  } catch (error) {
+    window.alert(error.message);
+  } finally {
+    loadFileInput.value = "";
+  }
+}
+
+async function chooseMapFile() {
+  if (!window.showOpenFilePicker) {
+    loadFileInput.click();
+    return;
+  }
+
+  try {
+    const [handle] = await window.showOpenFilePicker({
+      multiple: false,
+      types: mapFilePickerTypes(),
+    });
+    await loadMapFile(await handle.getFile());
+  } catch (error) {
+    if (error.name !== "AbortError") {
+      window.alert(error.message);
+    }
+  }
 }
 
 generateButton.addEventListener("click", generateMap);
 blankMapButton.addEventListener("click", createBlankMap);
 editModeButton.addEventListener("click", () => setEditMode(!isEditing));
 editorToolSelect.addEventListener("change", syncEditorControls);
-saveButton.addEventListener("click", () => window.alert("Save terrain is not implemented yet."));
-loadButton.addEventListener("click", () => window.alert("Load terrain is not implemented yet."));
+saveButton.addEventListener("click", saveCurrentMap);
+loadButton.addEventListener("click", chooseMapFile);
+loadFileInput.addEventListener("change", () => loadMapFile(loadFileInput.files[0]));
 zoomInButton.addEventListener("click", () => zoomFromCenter(1.25));
 zoomOutButton.addEventListener("click", () => zoomFromCenter(0.8));
 fitButton.addEventListener("click", fitMap);
@@ -661,7 +828,7 @@ mapPanel.addEventListener("pointerdown", (event) => {
   if (isEditing && event.button === 0) {
     event.preventDefault();
     isPainting = true;
-    lastPaintKey = "";
+    paintStrokeKeys = new Set();
     paintAtPointer(event);
     mapPanel.setPointerCapture(event.pointerId);
     return;

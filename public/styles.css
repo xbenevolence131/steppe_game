@@ -73,6 +73,10 @@ input {
   padding: 7px 8px;
 }
 
+.hidden-file-input {
+  display: none;
+}
+
 .panel-actions {
   display: flex;
   flex-wrap: wrap;
