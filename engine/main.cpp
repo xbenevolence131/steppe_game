@@ -2358,6 +2358,20 @@ bool ford_too_close(const RiverEdge& edge, const std::vector<Crossing>& crossing
     }) != crossings.end();
 }
 
+bool crossing_too_close(const RiverEdge& edge, const std::vector<Crossing>& crossings, int minimum_spacing) {
+    return std::find_if(crossings.begin(), crossings.end(), [&edge, minimum_spacing](const Crossing& crossing) {
+        return distance_between_edges(edge, crossing.edge) <= minimum_spacing;
+    }) != crossings.end();
+}
+
+void promote_nearby_fords_to_bridges(std::vector<Crossing>& crossings, const RiverEdge& edge, int minimum_spacing) {
+    for (Crossing& crossing : crossings) {
+        if (crossing.kind == "ford" && distance_between_edges(edge, crossing.edge) <= minimum_spacing) {
+            crossing.kind = "bridge";
+        }
+    }
+}
+
 bool add_crossing(
     std::vector<Crossing>& crossings,
     const RiverEdge& edge,
@@ -2381,7 +2395,7 @@ bool add_crossing(
         if (edge_near_town(canonical, towns, 1)) {
             return false;
         }
-        if (enforce_ford_spacing && ford_too_close(canonical, crossings, 6)) {
+        if (enforce_ford_spacing && crossing_too_close(canonical, crossings, 6)) {
             return false;
         }
     }
@@ -2390,11 +2404,31 @@ bool add_crossing(
     return true;
 }
 
+bool crossing_exists_on_edge(const std::vector<Crossing>& crossings, const RiverEdge& edge) {
+    const RiverEdge canonical = canonical_edge(edge.a, edge.b);
+    return std::find_if(crossings.begin(), crossings.end(), [&canonical](const Crossing& crossing) {
+        return edge_equal(crossing.edge, canonical);
+    }) != crossings.end();
+}
+
+bool steppe_ford_edge(
+    const GenerateArgs& args,
+    const RiverEdge& edge,
+    const std::set<Coord, decltype(coord_less)*>& all_lakes,
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes
+) {
+    return final_grassland_before_towns(args, all_lakes, valley_hexes, edge.a)
+        && final_grassland_before_towns(args, all_lakes, valley_hexes, edge.b);
+}
+
 std::vector<Crossing> generate_crossings(
     const GenerateArgs& args,
     const std::vector<Town>& towns,
     const std::vector<Road>& roads,
-    const std::vector<RiverEdge>& river_edges
+    const std::vector<RiverEdge>& river_edges,
+    const std::vector<RiverSegment>& river_segments,
+    const std::set<Coord, decltype(coord_less)*>& all_lakes,
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes
 ) {
     std::vector<Crossing> crossings;
     int next_id = 1;
@@ -2403,53 +2437,81 @@ std::vector<Crossing> generate_crossings(
         river_edge_set.insert(edge);
     }
 
+    std::vector<std::pair<RiverEdge, bool>> road_crossings;
     for (const Road& road : roads) {
         for (std::size_t i = 1; i < road.path.size(); ++i) {
             const RiverEdge edge = canonical_edge(road.path[i - 1], road.path[i]);
             if (river_edge_set.find(edge) == river_edge_set.end()) {
                 continue;
             }
-            std::string kind = edge_has_town_endpoint(edge, towns) || edge_near_town(edge, towns, 1)
-                ? "bridge"
-                : "ford";
-            if (kind == "ford" && ford_too_close(edge, crossings, 6)) {
-                kind = "bridge";
+            const bool bridge = edge_has_town_endpoint(edge, towns) || edge_near_town(edge, towns, 1);
+            const auto existing = std::find_if(road_crossings.begin(), road_crossings.end(), [&edge](const auto& crossing) {
+                return edge_equal(crossing.first, edge);
+            });
+            if (existing != road_crossings.end()) {
+                existing->second = existing->second || bridge;
+            } else {
+                road_crossings.push_back({edge, bridge});
             }
-            add_crossing(crossings, edge, kind, next_id, towns, true);
         }
     }
 
-    const int extra_ford_target = 2 + static_cast<int>(std::floor(unit_noise(args.seed, 79519U) * 3.0));
-    std::vector<RiverEdge> ford_candidates;
-    for (const RiverEdge& edge : river_edges) {
-        const RiverEdge canonical = canonical_edge(edge.a, edge.b);
-        if (edge_near_town(canonical, towns, 1)) {
+    for (const auto& crossing : road_crossings) {
+        if (crossing.second) {
+            add_crossing(crossings, crossing.first, "bridge", next_id, towns, false);
+        }
+    }
+    for (const auto& crossing : road_crossings) {
+        if (crossing.second || crossing_exists_on_edge(crossings, crossing.first)) {
             continue;
         }
-        if (std::find_if(crossings.begin(), crossings.end(), [&canonical](const Crossing& crossing) {
-            return edge_equal(crossing.edge, canonical);
-        }) != crossings.end()) {
-            continue;
+        if (crossing_too_close(crossing.first, crossings, 6)) {
+            promote_nearby_fords_to_bridges(crossings, crossing.first, 6);
+            add_crossing(crossings, crossing.first, "bridge", next_id, towns, false);
+        } else {
+            add_crossing(crossings, crossing.first, "ford", next_id, towns, true);
         }
-        ford_candidates.push_back(canonical);
     }
 
-    std::sort(ford_candidates.begin(), ford_candidates.end(), [&args](const RiverEdge& first, const RiverEdge& second) {
-        const double first_score = unit_noise(args.seed, static_cast<std::uint32_t>(80500 + first.a.q * 131 + first.a.r * 193 + first.b.q * 307 + first.b.r * 389));
-        const double second_score = unit_noise(args.seed, static_cast<std::uint32_t>(80500 + second.a.q * 131 + second.a.r * 193 + second.b.q * 307 + second.b.r * 389));
-        if (first_score != second_score) {
-            return first_score < second_score;
+    for (const RiverSegment& segment : river_segments) {
+        std::vector<std::pair<int, RiverEdge>> ford_candidates;
+        for (std::size_t i = 0; i < segment.edge_path.size(); ++i) {
+            const RiverEdge canonical = canonical_edge(segment.edge_path[i].a, segment.edge_path[i].b);
+            if (!steppe_ford_edge(args, canonical, all_lakes, valley_hexes)
+                || edge_near_town(canonical, towns, 1)
+                || crossing_exists_on_edge(crossings, canonical)) {
+                continue;
+            }
+            ford_candidates.push_back({static_cast<int>(i), canonical});
         }
-        return edge_less(first, second);
-    });
+        if (ford_candidates.empty()) {
+            continue;
+        }
 
-    int extra_fords_added = 0;
-    for (const RiverEdge& edge : ford_candidates) {
-        if (extra_fords_added >= extra_ford_target) {
-            break;
-        }
-        if (add_crossing(crossings, edge, "ford", next_id, towns, true)) {
-            ++extra_fords_added;
+        const int extra_ford_target = 2 + static_cast<int>(std::floor(unit_noise(args.seed, static_cast<std::uint32_t>(79519 + segment.id * 97)) * 3.0));
+        for (int slot = 0; slot < extra_ford_target; ++slot) {
+            const double base_position = (static_cast<double>(slot) + 1.0) / (static_cast<double>(extra_ford_target) + 1.0);
+            const double jitter = signed_noise(args.seed, static_cast<std::uint32_t>(79600 + segment.id * 311 + slot * 37))
+                * (0.34 / static_cast<double>(extra_ford_target));
+            const double target_index = std::clamp(base_position + jitter, 0.04, 0.96)
+                * static_cast<double>(std::max(1, static_cast<int>(segment.edge_path.size()) - 1));
+
+            std::sort(ford_candidates.begin(), ford_candidates.end(), [&](const auto& first, const auto& second) {
+                const double first_score = std::abs(static_cast<double>(first.first) - target_index)
+                    + unit_noise(args.seed, static_cast<std::uint32_t>(80500 + segment.id * 997 + slot * 101 + first.second.a.q * 131 + first.second.a.r * 193 + first.second.b.q * 307 + first.second.b.r * 389)) * 0.4;
+                const double second_score = std::abs(static_cast<double>(second.first) - target_index)
+                    + unit_noise(args.seed, static_cast<std::uint32_t>(80500 + segment.id * 997 + slot * 101 + second.second.a.q * 131 + second.second.a.r * 193 + second.second.b.q * 307 + second.second.b.r * 389)) * 0.4;
+                if (first_score != second_score) {
+                    return first_score < second_score;
+                }
+                return edge_less(first.second, second.second);
+            });
+
+            for (const auto& candidate : ford_candidates) {
+                if (add_crossing(crossings, candidate.second, "ford", next_id, towns, true)) {
+                    break;
+                }
+            }
         }
     }
 
@@ -2545,7 +2607,7 @@ void print_generated_map(const GenerateArgs& args) {
         return coord_less(first.coord, second.coord);
     });
     const std::vector<Road> roads = generate_roads(args, towns, all_lakes, valley_hexes);
-    const std::vector<Crossing> crossings = generate_crossings(args, towns, roads, all_river_edges);
+    const std::vector<Crossing> crossings = generate_crossings(args, towns, roads, all_river_edges, rivers.segments, all_lakes, valley_hexes);
     const std::map<Coord, int, decltype(coord_less)*> grassland_distances = derive_grassland_distances(args, valley_hexes);
     const std::vector<LakeRiverConnection> lake_river_connections = derive_lake_river_connections(all_lakes, all_river_edges);
 
