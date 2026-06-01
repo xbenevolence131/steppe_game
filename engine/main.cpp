@@ -6,6 +6,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <queue>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -2220,6 +2221,89 @@ std::vector<Town> place_extra_grassland_towns(
     return towns;
 }
 
+struct PathQueueNode {
+    Coord coord;
+    double estimated_total = 0.0;
+    double cost_so_far = 0.0;
+    int order = 0;
+};
+
+struct PathQueueCompare {
+    bool operator()(const PathQueueNode& first, const PathQueueNode& second) const {
+        if (first.estimated_total != second.estimated_total) {
+            return first.estimated_total > second.estimated_total;
+        }
+        if (first.cost_so_far != second.cost_so_far) {
+            return first.cost_so_far > second.cost_so_far;
+        }
+        return first.order > second.order;
+    }
+};
+
+template <typename PassableFn, typename StepCostFn, typename HeuristicFn>
+std::vector<Coord> find_hex_path(
+    const GenerateArgs& args,
+    const Coord& start,
+    const Coord& end,
+    PassableFn passable,
+    StepCostFn step_cost,
+    HeuristicFn heuristic
+) {
+    if (!in_bounds(start, args) || !in_bounds(end, args) || !passable(start) || !passable(end)) {
+        return {};
+    }
+
+    std::priority_queue<PathQueueNode, std::vector<PathQueueNode>, PathQueueCompare> frontier;
+    std::map<Coord, double, decltype(coord_less)*> costs(coord_less);
+    std::map<Coord, Coord, decltype(coord_less)*> came_from(coord_less);
+    int order = 0;
+
+    costs[start] = 0.0;
+    frontier.push({start, heuristic(start), 0.0, order++});
+
+    while (!frontier.empty()) {
+        const PathQueueNode current_node = frontier.top();
+        frontier.pop();
+        const auto known_cost = costs.find(current_node.coord);
+        if (known_cost == costs.end() || current_node.cost_so_far > known_cost->second + 0.000001) {
+            continue;
+        }
+        if (coord_equal(current_node.coord, end)) {
+            std::vector<Coord> path{end};
+            Coord current = end;
+            while (!coord_equal(current, start)) {
+                const auto previous = came_from.find(current);
+                if (previous == came_from.end()) {
+                    return {};
+                }
+                current = previous->second;
+                path.push_back(current);
+            }
+            std::reverse(path.begin(), path.end());
+            return path;
+        }
+
+        for (int direction = 0; direction < 6; ++direction) {
+            const Coord neighbor = neighbor_in_direction(current_node.coord, direction);
+            if (!in_bounds(neighbor, args) || !passable(neighbor)) {
+                continue;
+            }
+
+            const double next_cost = current_node.cost_so_far + step_cost(current_node.coord, neighbor);
+            const auto existing_cost = costs.find(neighbor);
+            if (existing_cost != costs.end() && next_cost >= existing_cost->second - 0.000001) {
+                continue;
+            }
+
+            costs[neighbor] = next_cost;
+            came_from[neighbor] = current_node.coord;
+            frontier.push({neighbor, next_cost + heuristic(neighbor), next_cost, order++});
+        }
+    }
+
+    return {};
+}
+
 std::vector<Coord> route_road_path(
     const GenerateArgs& args,
     const Coord& start,
@@ -2227,51 +2311,25 @@ std::vector<Coord> route_road_path(
     const std::set<Coord, decltype(coord_less)*>& lake_hexes,
     const std::set<Coord, decltype(coord_less)*>* required_grassland = nullptr
 ) {
-    std::vector<Coord> path{start};
-    Coord current = start;
-    std::set<Coord, decltype(coord_less)*> visited(coord_less);
-    visited.insert(start);
+    const auto passable = [&](const Coord& coord) {
+        return in_bounds(coord, args)
+            && lake_hexes.find(coord) == lake_hexes.end()
+            && (required_grassland == nullptr
+                || coord_equal(coord, start)
+                || coord_equal(coord, end)
+                || final_grassland_before_towns(args, lake_hexes, *required_grassland, coord));
+    };
+    const auto step_cost = [&](const Coord& from, const Coord& to) {
+        return 1.0 + unit_noise(
+            args.seed,
+            static_cast<std::uint32_t>(79000 + from.q * 191 + from.r * 389 + to.q * 571 + to.r * 733)
+        ) * 0.025;
+    };
+    const auto heuristic = [&](const Coord& coord) {
+        return static_cast<double>(hex_grid_distance(coord, end));
+    };
 
-    const int max_steps = std::max(16, args.width + args.height);
-    for (int step = 0; step < max_steps && !coord_equal(current, end); ++step) {
-        Coord best = current;
-        int best_distance = std::numeric_limits<int>::max();
-        double best_score = std::numeric_limits<double>::max();
-
-        for (int direction = 0; direction < 6; ++direction) {
-            const Coord neighbor = neighbor_in_direction(current, direction);
-            if (!in_bounds(neighbor, args)
-                || lake_hexes.find(neighbor) != lake_hexes.end()
-                || (required_grassland != nullptr
-                    && !coord_equal(neighbor, end)
-                    && !final_grassland_before_towns(args, lake_hexes, *required_grassland, neighbor))
-                || visited.find(neighbor) != visited.end()) {
-                continue;
-            }
-
-            const int distance = hex_grid_distance(neighbor, end);
-            const double score = static_cast<double>(distance)
-                + unit_noise(args.seed, static_cast<std::uint32_t>(79000 + step * 97 + neighbor.q * 191 + neighbor.r * 389)) * 0.15;
-            if (distance < best_distance || (distance == best_distance && score < best_score)) {
-                best = neighbor;
-                best_distance = distance;
-                best_score = score;
-            }
-        }
-
-        if (coord_equal(best, current)) {
-            break;
-        }
-
-        current = best;
-        path.push_back(current);
-        visited.insert(current);
-    }
-
-    if (!coord_equal(path.back(), end)) {
-        return {};
-    }
-    return path;
+    return find_hex_path(args, start, end, passable, step_cost, heuristic);
 }
 
 bool road_cleanup_line_allowed(
