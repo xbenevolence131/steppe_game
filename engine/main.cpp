@@ -1458,6 +1458,61 @@ const char* wild_terrain_for_distance(const GenerateArgs& args, const Coord& coo
     return fine_roll < 0.96 ? "mountain" : "hill";
 }
 
+bool coord_adjacent_to_lake(
+    const Coord& coord,
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes
+) {
+    for (int direction = 0; direction < 6; ++direction) {
+        const Coord neighbor = neighbor_in_direction(coord, direction);
+        if (lake_hexes.find(neighbor) != lake_hexes.end()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool coord_adjacent_to_river(const Coord& coord, const std::vector<RiverEdge>& river_edges) {
+    return std::find_if(river_edges.begin(), river_edges.end(), [&coord](const RiverEdge& edge) {
+        return coord_equal(edge.a, coord) || coord_equal(edge.b, coord);
+    }) != river_edges.end();
+}
+
+std::map<Coord, std::string, decltype(coord_less)*> derive_steppe_texture_hexes(
+    const GenerateArgs& args,
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes,
+    const std::set<Coord, decltype(coord_less)*>& forest_blob_hexes,
+    const std::vector<RiverEdge>& river_edges
+) {
+    std::map<Coord, std::string, decltype(coord_less)*> texture(coord_less);
+    for (int r = 1; r <= args.height; ++r) {
+        for (int q = 1; q <= args.width; ++q) {
+            const Coord coord{q, r};
+            if (!is_steppe_hex(q, r, args)
+                || lake_hexes.find(coord) != lake_hexes.end()
+                || valley_hexes.find(coord) != valley_hexes.end()
+                || forest_blob_hexes.find(coord) != forest_blob_hexes.end()) {
+                continue;
+            }
+
+            const bool water_adjacent = coord_adjacent_to_lake(coord, lake_hexes) || coord_adjacent_to_river(coord, river_edges);
+            const double coarse = signed_noise(
+                args.seed,
+                static_cast<std::uint32_t>(79200 + (q / 4) * 157 + (r / 4) * 311)
+            );
+            const double roll = unit_noise(args.seed, static_cast<std::uint32_t>(79300 + q * 197 + r * 431));
+            if (water_adjacent && roll < 0.038 + std::max(0.0, coarse) * 0.018) {
+                texture[coord] = "steppe_marsh";
+            } else if (roll > 0.9895 - std::max(0.0, coarse) * 0.006) {
+                texture[coord] = "steppe_hill";
+            } else if (roll < 0.004 + std::max(0.0, coarse) * 0.003) {
+                texture[coord] = "steppe_forest";
+            }
+        }
+    }
+    return texture;
+}
+
 bool base_grassland_after_valleys(
     const GenerateArgs& args,
     const std::set<Coord, decltype(coord_less)*>& lake_hexes,
@@ -1999,25 +2054,6 @@ std::vector<Town> place_fixed_feature_towns(
     return towns;
 }
 
-bool coord_adjacent_to_lake(
-    const Coord& coord,
-    const std::set<Coord, decltype(coord_less)*>& lake_hexes
-) {
-    for (int direction = 0; direction < 6; ++direction) {
-        const Coord neighbor = neighbor_in_direction(coord, direction);
-        if (lake_hexes.find(neighbor) != lake_hexes.end()) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool coord_adjacent_to_river(const Coord& coord, const std::vector<RiverEdge>& river_edges) {
-    return std::find_if(river_edges.begin(), river_edges.end(), [&coord](const RiverEdge& edge) {
-        return coord_equal(edge.a, coord) || coord_equal(edge.b, coord);
-    }) != river_edges.end();
-}
-
 std::vector<Town> place_extra_grassland_towns(
     const GenerateArgs& args,
     const std::set<Coord, decltype(coord_less)*>& all_lakes,
@@ -2296,6 +2332,7 @@ void print_generated_map(const GenerateArgs& args) {
     std::sort(all_river_edges.begin(), all_river_edges.end(), edge_less);
     const std::set<Coord, decltype(coord_less)*> valley_hexes = derive_valley_hexes(args, all_lakes, all_river_edges);
     const std::set<Coord, decltype(coord_less)*> forest_blob_hexes = derive_forest_blob_hexes(args, all_lakes, valley_hexes);
+    const std::map<Coord, std::string, decltype(coord_less)*> steppe_texture_hexes = derive_steppe_texture_hexes(args, all_lakes, valley_hexes, forest_blob_hexes, all_river_edges);
     std::vector<Town> towns = place_fixed_feature_towns(args, baikal, caspian, chinese_lake_network, all_lakes, valley_hexes, rivers);
     const std::vector<Town> extra_towns = place_extra_grassland_towns(args, all_lakes, valley_hexes, all_river_edges, towns);
     towns.insert(towns.end(), extra_towns.begin(), extra_towns.end());
@@ -2329,6 +2366,7 @@ void print_generated_map(const GenerateArgs& args) {
             const bool chinese_lake = coord_in_vector(chinese_lake_network.lake_hexes, coord);
             const bool valley = valley_hexes.find(coord) != valley_hexes.end();
             const bool forest_blob = forest_blob_hexes.find(coord) != forest_blob_hexes.end();
+            const auto steppe_texture = steppe_texture_hexes.find(coord);
             const auto town = std::find_if(towns.begin(), towns.end(), [&coord](const Town& candidate) {
                 return coord_equal(candidate.coord, coord);
             });
@@ -2346,6 +2384,16 @@ void print_generated_map(const GenerateArgs& args) {
                 terrain = "lake";
             } else if (forest_blob) {
                 terrain = "forest";
+            } else if (steppe_texture != steppe_texture_hexes.end()) {
+                if (steppe_texture->second == "steppe_hill") {
+                    terrain = "hill";
+                } else if (steppe_texture->second == "steppe_forest") {
+                    terrain = "forest";
+                } else if (steppe_texture->second == "steppe_marsh") {
+                    terrain = "marsh";
+                } else {
+                    terrain = "grassland";
+                }
             } else if (valley || base_steppe) {
                 terrain = "grassland";
             } else {
@@ -2368,6 +2416,9 @@ void print_generated_map(const GenerateArgs& args) {
             }
             if (forest_blob) {
                 labels.push_back("forest_blob");
+            }
+            if (steppe_texture != steppe_texture_hexes.end()) {
+                labels.push_back(steppe_texture->second);
             }
             if (lake) {
                 if (random_lake) {
