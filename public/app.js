@@ -105,6 +105,7 @@ const terrainStyles = {
     stroke: "#8b5a2b",
     persian: "#7a4a92",
     chinese: "#aa3f2c",
+    silk: "#c28a2c",
   },
 };
 
@@ -624,15 +625,20 @@ function drawRoads(roads) {
   ctx.save();
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.lineWidth = 2.5 / viewport.scale;
 
   for (const road of roads) {
     if (!Array.isArray(road.path) || road.path.length < 2) {
       continue;
     }
-    ctx.strokeStyle = road.feature === "persian_town"
-      ? terrainStyles.road.persian
-      : (road.feature === "chinese_town" ? terrainStyles.road.chinese : terrainStyles.road.stroke);
+    if (road.feature === "silk_road") {
+      ctx.strokeStyle = terrainStyles.road.silk;
+      ctx.lineWidth = 4 / viewport.scale;
+    } else {
+      ctx.strokeStyle = road.feature === "persian_town"
+        ? terrainStyles.road.persian
+        : (road.feature === "chinese_town" ? terrainStyles.road.chinese : terrainStyles.road.stroke);
+      ctx.lineWidth = 2.5 / viewport.scale;
+    }
     const start = hexCenter(road.path[0]);
     ctx.beginPath();
     ctx.moveTo(start.x, start.y);

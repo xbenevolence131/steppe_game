@@ -2161,6 +2161,55 @@ std::vector<Road> build_region_roads(
     return roads;
 }
 
+std::optional<Coord> westernmost_town_for_feature(const std::vector<Town>& towns, const std::string& feature) {
+    std::optional<Coord> result;
+    for (const Town& town : towns) {
+        if (town.feature != feature) {
+            continue;
+        }
+        if (!result.has_value()
+            || town.coord.q < result->q
+            || (town.coord.q == result->q && town.coord.r < result->r)) {
+            result = town.coord;
+        }
+    }
+    return result;
+}
+
+std::optional<Coord> easternmost_town_for_feature(const std::vector<Town>& towns, const std::string& feature) {
+    std::optional<Coord> result;
+    for (const Town& town : towns) {
+        if (town.feature != feature) {
+            continue;
+        }
+        if (!result.has_value()
+            || town.coord.q > result->q
+            || (town.coord.q == result->q && town.coord.r > result->r)) {
+            result = town.coord;
+        }
+    }
+    return result;
+}
+
+std::optional<Road> build_silk_road(
+    const GenerateArgs& args,
+    const std::vector<Town>& towns,
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    int& next_id
+) {
+    const std::optional<Coord> western_anchor = westernmost_town_for_feature(towns, "persian_town");
+    const std::optional<Coord> eastern_anchor = easternmost_town_for_feature(towns, "chinese_town");
+    if (!western_anchor.has_value() || !eastern_anchor.has_value()) {
+        return std::nullopt;
+    }
+
+    const std::vector<Coord> path = route_road_path(args, western_anchor.value(), eastern_anchor.value(), lake_hexes);
+    if (path.empty()) {
+        return std::nullopt;
+    }
+    return Road{next_id++, "silk_road", path};
+}
+
 std::vector<Road> generate_roads(
     const GenerateArgs& args,
     const std::vector<Town>& towns,
@@ -2172,6 +2221,10 @@ std::vector<Road> generate_roads(
     roads.insert(roads.end(), persian_roads.begin(), persian_roads.end());
     const std::vector<Road> chinese_roads = build_region_roads(args, towns, lake_hexes, "chinese_town", next_id);
     roads.insert(roads.end(), chinese_roads.begin(), chinese_roads.end());
+    const std::optional<Road> silk_road = build_silk_road(args, towns, lake_hexes, next_id);
+    if (silk_road.has_value()) {
+        roads.push_back(silk_road.value());
+    }
     return roads;
 }
 
