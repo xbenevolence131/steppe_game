@@ -569,6 +569,7 @@ RiverNetwork generate_river_network(const GenerateArgs& args) {
     }
 
     std::set<RiverEdge, decltype(edge_less)*> occupied_edges(edge_less);
+    std::map<RiverEdge, int, decltype(edge_less)*> occupied_edge_owners(edge_less);
     std::map<VertexKey, int> occupied_vertices;
     std::vector<RiverHead> heads;
 
@@ -593,6 +594,7 @@ RiverNetwork generate_river_network(const GenerateArgs& args) {
         head.visited_vertices.insert(upstream);
         head.visited_vertices.insert(downstream);
         occupied_edges.insert(edges[*start_edge]);
+        occupied_edge_owners[edges[*start_edge]] = head.id;
         occupied_vertices[upstream] = head.id;
         occupied_vertices[downstream] = head.id;
         heads.push_back(head);
@@ -619,6 +621,11 @@ RiverNetwork generate_river_network(const GenerateArgs& args) {
         head.next_meander_side *= -1;
         head.has_meander_target = true;
         head.meander_steps = 0;
+    };
+    const auto head_is_active = [&](int id) {
+        return std::find_if(heads.begin(), heads.end(), [id](const RiverHead& candidate) {
+            return candidate.id == id && candidate.active;
+        }) != heads.end();
     };
 
     for (int step = 0; step < max_steps; ++step) {
@@ -673,7 +680,9 @@ RiverNetwork generate_river_network(const GenerateArgs& args) {
                     continue;
                 }
 
-                const bool occupied_by_other_edge = occupied_edges.find(edges[candidate]) != occupied_edges.end();
+                const auto occupied_edge_owner = occupied_edge_owners.find(edges[candidate]);
+                const bool occupied_by_other_edge = occupied_edge_owner != occupied_edge_owners.end()
+                    && occupied_edge_owner->second != head.id;
                 const auto occupied_vertex = occupied_vertices.find(next_vertex);
                 const bool occupied_by_other_vertex = occupied_vertex != occupied_vertices.end() && occupied_vertex->second != head.id;
                 if ((occupied_by_other_edge || occupied_by_other_vertex) && !can_merge) {
@@ -737,19 +746,37 @@ RiverNetwork generate_river_network(const GenerateArgs& args) {
                     ++head.meander_steps;
                 }
                 occupied_edges.insert(edges[best_edge]);
+                occupied_edge_owners[edges[best_edge]] = head.id;
                 occupied_vertices[best_next] = head.id;
                 add_unique_edge(network.edges, edges[best_edge]);
                 continue;
             }
 
+            const auto best_edge_owner = occupied_edge_owners.find(edges[best_edge]);
+            const int merge_owner = occupied_vertex != occupied_vertices.end() && occupied_vertex->second != head.id
+                ? occupied_vertex->second
+                : (best_edge_owner != occupied_edge_owners.end() && best_edge_owner->second != head.id ? best_edge_owner->second : 0);
+            const bool merge_owner_active = merge_owner != 0 && head_is_active(merge_owner);
+
             head.edge_path.push_back(edges[best_edge]);
             head.current_edge = best_edge;
             head.current_vertex = best_next;
             head.endpoint = representative_coord_for_edge_vertex(best_next, boundaries[best_edge]);
-            head.active = false;
-            head.merged = true;
             network.merge_points.push_back(head.endpoint);
+            occupied_edges.insert(edges[best_edge]);
             add_unique_edge(network.edges, edges[best_edge]);
+            if (merge_owner_active) {
+                head.active = false;
+                head.merged = true;
+                continue;
+            }
+
+            head.visited_vertices.insert(best_next);
+            if (meander_active && head.has_meander_target) {
+                ++head.meander_steps;
+            }
+            occupied_edge_owners[edges[best_edge]] = head.id;
+            occupied_vertices[best_next] = head.id;
         }
 
         if (!any_active) {
@@ -1677,6 +1704,7 @@ std::vector<Town> generate_persian_region(
     const std::set<Coord, decltype(coord_less)*>& caspian,
     const std::set<Coord, decltype(coord_less)*>& all_lakes,
     const std::set<Coord, decltype(coord_less)*>& valley_hexes,
+    const RiverNetwork& rivers,
     const std::set<Coord, decltype(coord_less)*>& occupied_towns
 ) {
     std::vector<Town> towns;
@@ -1685,6 +1713,16 @@ std::vector<Town> generate_persian_region(
     }
 
     std::set<Coord, decltype(coord_less)*> local_occupied = occupied_towns;
+    const auto add_persian_town = [&](const Coord& coord) {
+        if (local_occupied.find(coord) != local_occupied.end()
+            || !final_grassland_before_towns(args, all_lakes, valley_hexes, coord)) {
+            return false;
+        }
+        towns.push_back({coord, "persian_town"});
+        local_occupied.insert(coord);
+        return true;
+    };
+
     const Coord north_east_lake = north_east_most_coord(caspian);
     std::vector<Coord> north_east_candidates;
     for (int direction = 0; direction < 6; ++direction) {
@@ -1703,17 +1741,24 @@ std::vector<Town> generate_persian_region(
         return first_score > second_score;
     });
 
+    std::optional<Coord> first_caspian_town;
     if (!north_east_candidates.empty()) {
-        towns.push_back({north_east_candidates.front(), "persian_town"});
-        local_occupied.insert(north_east_candidates.front());
+        if (add_persian_town(north_east_candidates.front())) {
+            first_caspian_town = north_east_candidates.front();
+        }
     }
 
-    if (unit_noise(args.seed, 76119) >= 0.5) {
-        return towns;
+    std::vector<Coord> caspian_candidates = collect_feature_town_candidates(args, caspian, all_lakes, valley_hexes, local_occupied);
+    if (first_caspian_town.has_value()) {
+        caspian_candidates.erase(std::remove_if(
+            caspian_candidates.begin(),
+            caspian_candidates.end(),
+            [&](const Coord& candidate) {
+                return hex_grid_distance(first_caspian_town.value(), candidate) <= 3;
+            }
+        ), caspian_candidates.end());
     }
-
-    std::vector<Coord> candidates = collect_feature_town_candidates(args, caspian, all_lakes, valley_hexes, local_occupied);
-    std::sort(candidates.begin(), candidates.end(), [&](const Coord& first, const Coord& second) {
+    std::sort(caspian_candidates.begin(), caspian_candidates.end(), [&](const Coord& first, const Coord& second) {
         const double first_valley_bonus = valley_hexes.find(first) != valley_hexes.end() ? 0.18 : 0.0;
         const double second_valley_bonus = valley_hexes.find(second) != valley_hexes.end() ? 0.18 : 0.0;
         const double first_score = first_valley_bonus + unit_noise(
@@ -1726,10 +1771,72 @@ std::vector<Town> generate_persian_region(
         );
         return first_score > second_score;
     });
-
-    if (!candidates.empty()) {
-        towns.push_back({candidates.front(), "persian_town"});
+    if (!caspian_candidates.empty()) {
+        add_persian_town(caspian_candidates.front());
     }
+
+    const RiverSegment* western_river = nullptr;
+    for (const RiverSegment& segment : rivers.segments) {
+        if (western_river == nullptr
+            || segment.from.q < western_river->from.q
+            || (segment.from.q == western_river->from.q && segment.from.r < western_river->from.r)) {
+            western_river = &segment;
+        }
+    }
+    if (western_river != nullptr) {
+        std::vector<Coord> river_candidates;
+        for (const RiverEdge& edge : western_river->edge_path) {
+            const Coord edge_coords[] = {edge.a, edge.b};
+            for (const Coord& coord : edge_coords) {
+                if (!final_grassland_before_towns(args, all_lakes, valley_hexes, coord)
+                    || local_occupied.find(coord) != local_occupied.end()
+                    || contains_coord(river_candidates, coord)) {
+                    continue;
+                }
+                river_candidates.push_back(coord);
+            }
+        }
+        const double river_preferred_row = static_cast<double>(args.height + 1) * 0.5
+            + (unit_noise(args.seed, 76319) * 2.0 - 1.0) * 4.0;
+        std::sort(river_candidates.begin(), river_candidates.end(), [&](const Coord& first, const Coord& second) {
+            const double first_score = -std::abs(static_cast<double>(first.r) - river_preferred_row)
+                + unit_noise(args.seed, static_cast<std::uint32_t>(76300 + first.q * 149 + first.r * 293)) * 0.08;
+            const double second_score = -std::abs(static_cast<double>(second.r) - river_preferred_row)
+                + unit_noise(args.seed, static_cast<std::uint32_t>(76300 + second.q * 149 + second.r * 293)) * 0.08;
+            return first_score > second_score;
+        });
+        if (!river_candidates.empty()) {
+            add_persian_town(river_candidates.front());
+        }
+    }
+
+    std::vector<Coord> western_steppe_candidates;
+    const int western_band = std::max(1, static_cast<int>(std::ceil(static_cast<double>(args.width) * 0.08)));
+    const double preferred_row = static_cast<double>(args.height) * 0.58;
+    for (int r = 1; r <= args.height; ++r) {
+        for (int q = 1; q <= western_band; ++q) {
+            const Coord coord{q, r};
+            if (!is_steppe_hex(q, r, args)
+                || !final_grassland_before_towns(args, all_lakes, valley_hexes, coord)
+                || local_occupied.find(coord) != local_occupied.end()) {
+                continue;
+            }
+            western_steppe_candidates.push_back(coord);
+        }
+    }
+    std::sort(western_steppe_candidates.begin(), western_steppe_candidates.end(), [&](const Coord& first, const Coord& second) {
+        const double first_score = -static_cast<double>(first.q) * 4.0
+            - std::abs(static_cast<double>(first.r) - preferred_row) * 0.08
+            + unit_noise(args.seed, static_cast<std::uint32_t>(76400 + first.q * 181 + first.r * 337)) * 0.35;
+        const double second_score = -static_cast<double>(second.q) * 4.0
+            - std::abs(static_cast<double>(second.r) - preferred_row) * 0.08
+            + unit_noise(args.seed, static_cast<std::uint32_t>(76400 + second.q * 181 + second.r * 337)) * 0.35;
+        return first_score > second_score;
+    });
+    if (!western_steppe_candidates.empty()) {
+        add_persian_town(western_steppe_candidates.front());
+    }
+
     return towns;
 }
 
@@ -1761,7 +1868,8 @@ std::vector<Town> place_fixed_feature_towns(
     const std::set<Coord, decltype(coord_less)*>& caspian,
     const LakeNetworkOverlay& chinese_lake_network,
     const std::set<Coord, decltype(coord_less)*>& all_lakes,
-    const std::set<Coord, decltype(coord_less)*>& valley_hexes
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes,
+    const RiverNetwork& rivers
 ) {
     std::vector<Town> towns;
     std::set<Coord, decltype(coord_less)*> occupied_towns(coord_less);
@@ -1776,7 +1884,7 @@ std::vector<Town> place_fixed_feature_towns(
     };
 
     add_feature_towns(place_generic_lake_feature_towns(args, "baikal", baikal, all_lakes, valley_hexes, occupied_towns, 76001));
-    add_feature_towns(generate_persian_region(args, caspian, all_lakes, valley_hexes, occupied_towns));
+    add_feature_towns(generate_persian_region(args, caspian, all_lakes, valley_hexes, rivers, occupied_towns));
     add_feature_towns(generate_chinese_region(args, chinese_lake_network, all_lakes, valley_hexes, occupied_towns));
 
     std::sort(towns.begin(), towns.end(), [](const Town& first, const Town& second) {
@@ -1911,7 +2019,7 @@ void print_generated_map(const GenerateArgs& args) {
     std::sort(all_river_edges.begin(), all_river_edges.end(), edge_less);
     const std::set<Coord, decltype(coord_less)*> valley_hexes = derive_valley_hexes(args, all_lakes, all_river_edges);
     const std::set<Coord, decltype(coord_less)*> forest_blob_hexes = derive_forest_blob_hexes(args, all_lakes, valley_hexes);
-    std::vector<Town> towns = place_fixed_feature_towns(args, baikal, caspian, chinese_lake_network, all_lakes, valley_hexes);
+    std::vector<Town> towns = place_fixed_feature_towns(args, baikal, caspian, chinese_lake_network, all_lakes, valley_hexes, rivers);
     const std::vector<Town> extra_towns = place_extra_grassland_towns(args, all_lakes, valley_hexes, all_river_edges, towns);
     towns.insert(towns.end(), extra_towns.begin(), extra_towns.end());
     std::sort(towns.begin(), towns.end(), [](const Town& first, const Town& second) {
