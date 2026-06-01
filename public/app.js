@@ -101,6 +101,11 @@ const terrainStyles = {
     merge: "#f4e48a",
     destination: "#1f5f83",
   },
+  road: {
+    stroke: "#8b5a2b",
+    persian: "#7a4a92",
+    chinese: "#aa3f2c",
+  },
 };
 
 function terrainStyle(key) {
@@ -611,6 +616,36 @@ function drawRiverEdges(edges) {
   ctx.restore();
 }
 
+function drawRoads(roads) {
+  if (!roads || roads.length === 0) {
+    return;
+  }
+
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 2.5 / viewport.scale;
+
+  for (const road of roads) {
+    if (!Array.isArray(road.path) || road.path.length < 2) {
+      continue;
+    }
+    ctx.strokeStyle = road.feature === "persian_town"
+      ? terrainStyles.road.persian
+      : (road.feature === "chinese_town" ? terrainStyles.road.chinese : terrainStyles.road.stroke);
+    const start = hexCenter(road.path[0]);
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    for (const coord of road.path.slice(1)) {
+      const center = hexCenter(coord);
+      ctx.lineTo(center.x, center.y);
+    }
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
 function drawMapMarkers(coords, fillStyle, radius) {
   if (!coords || coords.length === 0) {
     return;
@@ -650,6 +685,7 @@ function drawMap() {
     drawHex(center.x, center.y, geometry.size, `${hex.q},${hex.r}`, hex);
   }
 
+  drawRoads(currentMap.roads);
   drawRiverEdges(currentMap.edges);
   drawMapMarkers(currentMap.river_sources, terrainStyles.river.source, 5);
   drawMapMarkers(currentMap.merge_points, terrainStyles.river.merge, 5);
