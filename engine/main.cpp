@@ -1571,6 +1571,67 @@ int hex_grid_distance(const Coord& first, const Coord& second) {
     });
 }
 
+struct CubeCoord {
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+};
+
+CubeCoord coord_to_cube(const Coord& coord) {
+    const int col = coord.q - 1;
+    const int row = coord.r - 1;
+    const int x = col;
+    const int z = row - (col - (col & 1)) / 2;
+    const int y = -x - z;
+    return {static_cast<double>(x), static_cast<double>(y), static_cast<double>(z)};
+}
+
+Coord cube_to_coord(int x, int z) {
+    const int row = z + (x - (x & 1)) / 2;
+    return {x + 1, row + 1};
+}
+
+Coord cube_lerp_round(const CubeCoord& first, const CubeCoord& second, double t) {
+    const double x = first.x + (second.x - first.x) * t;
+    const double y = first.y + (second.y - first.y) * t;
+    const double z = first.z + (second.z - first.z) * t;
+
+    int rx = static_cast<int>(std::round(x));
+    int ry = static_cast<int>(std::round(y));
+    int rz = static_cast<int>(std::round(z));
+    const double x_diff = std::abs(static_cast<double>(rx) - x);
+    const double y_diff = std::abs(static_cast<double>(ry) - y);
+    const double z_diff = std::abs(static_cast<double>(rz) - z);
+
+    if (x_diff > y_diff && x_diff > z_diff) {
+        rx = -ry - rz;
+    } else if (y_diff > z_diff) {
+        ry = -rx - rz;
+    } else {
+        rz = -rx - ry;
+    }
+
+    return cube_to_coord(rx, rz);
+}
+
+std::vector<Coord> straight_hex_line(const Coord& start, const Coord& end) {
+    const int distance = hex_grid_distance(start, end);
+    std::vector<Coord> line;
+    line.reserve(static_cast<std::size_t>(distance + 1));
+    const CubeCoord first = coord_to_cube(start);
+    const CubeCoord second = coord_to_cube(end);
+
+    for (int step = 0; step <= distance; ++step) {
+        const double t = distance == 0 ? 0.0 : static_cast<double>(step) / static_cast<double>(distance);
+        const Coord coord = cube_lerp_round(first, second, t);
+        if (line.empty() || !coord_equal(line.back(), coord)) {
+            line.push_back(coord);
+        }
+    }
+
+    return line;
+}
+
 std::set<Coord, decltype(coord_less)*> derive_forest_blob_hexes(
     const GenerateArgs& args,
     const std::set<Coord, decltype(coord_less)*>& lake_hexes,
@@ -2213,6 +2274,72 @@ std::vector<Coord> route_road_path(
     return path;
 }
 
+bool road_cleanup_line_allowed(
+    const GenerateArgs& args,
+    const std::vector<Coord>& line,
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const std::set<Coord, decltype(coord_less)*>* required_grassland
+) {
+    if (line.empty()) {
+        return false;
+    }
+
+    for (std::size_t i = 0; i < line.size(); ++i) {
+        if (!in_bounds(line[i], args) || lake_hexes.find(line[i]) != lake_hexes.end()) {
+            return false;
+        }
+        if (i > 0 && hex_grid_distance(line[i - 1], line[i]) != 1) {
+            return false;
+        }
+        if (required_grassland != nullptr
+            && i > 0
+            && i + 1 < line.size()
+            && !final_grassland_before_towns(args, lake_hexes, *required_grassland, line[i])) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+std::vector<Coord> clean_road_path(
+    const GenerateArgs& args,
+    const std::vector<Coord>& path,
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const std::set<Coord, decltype(coord_less)*>* required_grassland = nullptr
+) {
+    if (path.size() < 3) {
+        return path;
+    }
+
+    std::vector<Coord> cleaned{path.front()};
+    std::size_t current = 0;
+    constexpr std::size_t max_cleanup_span = 10;
+    while (current + 1 < path.size()) {
+        std::size_t best_next = current + 1;
+        std::vector<Coord> best_line{path[current], path[current + 1]};
+        const std::size_t furthest = std::min(path.size() - 1, current + max_cleanup_span);
+
+        for (std::size_t next = furthest; next > current + 1; --next) {
+            std::vector<Coord> line = straight_hex_line(path[current], path[next]);
+            if (line.size() < 2 || line.size() - 1 > next - current) {
+                continue;
+            }
+            if (!road_cleanup_line_allowed(args, line, lake_hexes, required_grassland)) {
+                continue;
+            }
+            best_next = next;
+            best_line = std::move(line);
+            break;
+        }
+
+        cleaned.insert(cleaned.end(), best_line.begin() + 1, best_line.end());
+        current = best_next;
+    }
+
+    return cleaned;
+}
+
 std::vector<Road> build_region_roads(
     const GenerateArgs& args,
     const std::vector<Town>& towns,
@@ -2311,6 +2438,53 @@ std::optional<Road> build_silk_road(
     return Road{next_id++, "silk_road", west_path};
 }
 
+std::vector<Coord> clean_silk_road_path(
+    const GenerateArgs& args,
+    const std::vector<Coord>& path,
+    const Coord& oasis,
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes
+) {
+    const auto oasis_iter = std::find_if(path.begin(), path.end(), [&oasis](const Coord& coord) {
+        return coord_equal(coord, oasis);
+    });
+    if (oasis_iter == path.end()) {
+        return clean_road_path(args, path, lake_hexes, &valley_hexes);
+    }
+
+    const std::vector<Coord> west(path.begin(), oasis_iter + 1);
+    const std::vector<Coord> east(oasis_iter, path.end());
+    std::vector<Coord> cleaned = clean_road_path(args, west, lake_hexes, &valley_hexes);
+    const std::vector<Coord> east_cleaned = clean_road_path(args, east, lake_hexes, &valley_hexes);
+    if (!east_cleaned.empty()) {
+        cleaned.insert(cleaned.end(), east_cleaned.begin() + 1, east_cleaned.end());
+    }
+    return cleaned;
+}
+
+std::vector<Road> clean_roads(
+    const GenerateArgs& args,
+    const std::vector<Road>& roads,
+    const std::vector<Town>& towns,
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes
+) {
+    std::vector<Road> cleaned_roads = roads;
+    const auto oasis = std::find_if(towns.begin(), towns.end(), [](const Town& town) {
+        return town.feature == "oasis";
+    });
+
+    for (Road& road : cleaned_roads) {
+        if (road.feature == "silk_road" && oasis != towns.end()) {
+            road.path = clean_silk_road_path(args, road.path, oasis->coord, lake_hexes, valley_hexes);
+        } else {
+            road.path = clean_road_path(args, road.path, lake_hexes);
+        }
+    }
+
+    return cleaned_roads;
+}
+
 std::vector<Road> generate_roads(
     const GenerateArgs& args,
     const std::vector<Town>& towns,
@@ -2327,7 +2501,7 @@ std::vector<Road> generate_roads(
     if (silk_road.has_value()) {
         roads.push_back(silk_road.value());
     }
-    return roads;
+    return clean_roads(args, roads, towns, lake_hexes, valley_hexes);
 }
 
 int distance_between_edges(const RiverEdge& first, const RiverEdge& second) {
