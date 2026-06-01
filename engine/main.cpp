@@ -1845,21 +1845,121 @@ std::vector<Town> generate_chinese_region(
     const LakeNetworkOverlay& chinese_lake_network,
     const std::set<Coord, decltype(coord_less)*>& all_lakes,
     const std::set<Coord, decltype(coord_less)*>& valley_hexes,
+    const RiverNetwork& rivers,
     const std::set<Coord, decltype(coord_less)*>& occupied_towns
 ) {
+    std::vector<Town> towns;
     std::set<Coord, decltype(coord_less)*> chinese_lakes(coord_less);
     for (const Coord& coord : chinese_lake_network.lake_hexes) {
         chinese_lakes.insert(coord);
     }
-    return place_generic_lake_feature_towns(
-        args,
-        "chinese_town",
-        chinese_lakes,
-        all_lakes,
-        valley_hexes,
-        occupied_towns,
-        76003
-    );
+    if (chinese_lakes.empty()) {
+        return towns;
+    }
+
+    std::set<Coord, decltype(coord_less)*> local_occupied = occupied_towns;
+    const auto add_chinese_town = [&](const Coord& coord) {
+        if (local_occupied.find(coord) != local_occupied.end()
+            || !final_grassland_before_towns(args, all_lakes, valley_hexes, coord)) {
+            return false;
+        }
+        towns.push_back({coord, "chinese_town"});
+        local_occupied.insert(coord);
+        return true;
+    };
+
+    std::vector<Coord> lake_candidates = collect_feature_town_candidates(args, chinese_lakes, all_lakes, valley_hexes, local_occupied);
+    std::sort(lake_candidates.begin(), lake_candidates.end(), [&](const Coord& first, const Coord& second) {
+        const double first_valley_bonus = valley_hexes.find(first) != valley_hexes.end() ? 0.18 : 0.0;
+        const double second_valley_bonus = valley_hexes.find(second) != valley_hexes.end() ? 0.18 : 0.0;
+        const double first_score = first_valley_bonus + unit_noise(
+            args.seed,
+            static_cast<std::uint32_t>(76500 + first.q * 157 + first.r * 313)
+        );
+        const double second_score = second_valley_bonus + unit_noise(
+            args.seed,
+            static_cast<std::uint32_t>(76500 + second.q * 157 + second.r * 313)
+        );
+        return first_score > second_score;
+    });
+    for (const Coord& candidate : lake_candidates) {
+        if (static_cast<int>(towns.size()) >= 2) {
+            break;
+        }
+        const bool adjacent_to_existing = std::find_if(towns.begin(), towns.end(), [&](const Town& existing) {
+            return hex_grid_distance(existing.coord, candidate) <= 1;
+        }) != towns.end();
+        if (adjacent_to_existing) {
+            continue;
+        }
+        add_chinese_town(candidate);
+    }
+
+    const RiverSegment* eastern_river = nullptr;
+    for (const RiverSegment& segment : rivers.segments) {
+        if (eastern_river == nullptr
+            || segment.from.q > eastern_river->from.q
+            || (segment.from.q == eastern_river->from.q && segment.from.r < eastern_river->from.r)) {
+            eastern_river = &segment;
+        }
+    }
+    if (eastern_river != nullptr) {
+        std::vector<Coord> river_candidates;
+        for (const RiverEdge& edge : eastern_river->edge_path) {
+            const Coord edge_coords[] = {edge.a, edge.b};
+            for (const Coord& coord : edge_coords) {
+                if (!final_grassland_before_towns(args, all_lakes, valley_hexes, coord)
+                    || local_occupied.find(coord) != local_occupied.end()
+                    || contains_coord(river_candidates, coord)) {
+                    continue;
+                }
+                river_candidates.push_back(coord);
+            }
+        }
+        const double river_preferred_row = static_cast<double>(args.height + 1) * 0.5
+            + (unit_noise(args.seed, 76519) * 2.0 - 1.0) * 4.0;
+        std::sort(river_candidates.begin(), river_candidates.end(), [&](const Coord& first, const Coord& second) {
+            const double first_score = -std::abs(static_cast<double>(first.r) - river_preferred_row)
+                + unit_noise(args.seed, static_cast<std::uint32_t>(76600 + first.q * 149 + first.r * 293)) * 0.08;
+            const double second_score = -std::abs(static_cast<double>(second.r) - river_preferred_row)
+                + unit_noise(args.seed, static_cast<std::uint32_t>(76600 + second.q * 149 + second.r * 293)) * 0.08;
+            return first_score > second_score;
+        });
+        if (!river_candidates.empty()) {
+            add_chinese_town(river_candidates.front());
+        }
+    }
+
+    std::vector<Coord> eastern_steppe_candidates;
+    const int eastern_band = std::max(1, static_cast<int>(std::ceil(static_cast<double>(args.width) * 0.08)));
+    const int min_eastern_q = std::max(1, args.width - eastern_band + 1);
+    const double edge_preferred_row = static_cast<double>(args.height) * 0.68
+        + (unit_noise(args.seed, 76719) * 2.0 - 1.0) * 4.0;
+    for (int r = 1; r <= args.height; ++r) {
+        for (int q = min_eastern_q; q <= args.width; ++q) {
+            const Coord coord{q, r};
+            if (!is_steppe_hex(q, r, args)
+                || !final_grassland_before_towns(args, all_lakes, valley_hexes, coord)
+                || local_occupied.find(coord) != local_occupied.end()) {
+                continue;
+            }
+            eastern_steppe_candidates.push_back(coord);
+        }
+    }
+    std::sort(eastern_steppe_candidates.begin(), eastern_steppe_candidates.end(), [&](const Coord& first, const Coord& second) {
+        const double first_score = static_cast<double>(first.q) * 4.0
+            - std::abs(static_cast<double>(first.r) - edge_preferred_row) * 0.10
+            + unit_noise(args.seed, static_cast<std::uint32_t>(76700 + first.q * 181 + first.r * 337)) * 0.35;
+        const double second_score = static_cast<double>(second.q) * 4.0
+            - std::abs(static_cast<double>(second.r) - edge_preferred_row) * 0.10
+            + unit_noise(args.seed, static_cast<std::uint32_t>(76700 + second.q * 181 + second.r * 337)) * 0.35;
+        return first_score > second_score;
+    });
+    if (!eastern_steppe_candidates.empty()) {
+        add_chinese_town(eastern_steppe_candidates.front());
+    }
+
+    return towns;
 }
 
 std::vector<Town> place_fixed_feature_towns(
@@ -1885,7 +1985,7 @@ std::vector<Town> place_fixed_feature_towns(
 
     add_feature_towns(place_generic_lake_feature_towns(args, "baikal", baikal, all_lakes, valley_hexes, occupied_towns, 76001));
     add_feature_towns(generate_persian_region(args, caspian, all_lakes, valley_hexes, rivers, occupied_towns));
-    add_feature_towns(generate_chinese_region(args, chinese_lake_network, all_lakes, valley_hexes, occupied_towns));
+    add_feature_towns(generate_chinese_region(args, chinese_lake_network, all_lakes, valley_hexes, rivers, occupied_towns));
 
     std::sort(towns.begin(), towns.end(), [](const Town& first, const Town& second) {
         return coord_less(first.coord, second.coord);
