@@ -2060,6 +2060,55 @@ std::vector<Town> place_fixed_feature_towns(
     return towns;
 }
 
+std::optional<Town> place_oasis_town(
+    const GenerateArgs& args,
+    const std::set<Coord, decltype(coord_less)*>& all_lakes,
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes,
+    const std::vector<RiverEdge>& river_edges,
+    const std::vector<Town>& existing_towns
+) {
+    std::set<Coord, decltype(coord_less)*> occupied_towns(coord_less);
+    for (const Town& town : existing_towns) {
+        occupied_towns.insert(town.coord);
+    }
+
+    std::vector<Coord> candidates;
+    for (const RiverEdge& edge : river_edges) {
+        const Coord edge_coords[] = {edge.a, edge.b};
+        for (const Coord& coord : edge_coords) {
+            if (!final_grassland_before_towns(args, all_lakes, valley_hexes, coord)
+                || occupied_towns.find(coord) != occupied_towns.end()
+                || contains_coord(candidates, coord)) {
+                continue;
+            }
+            candidates.push_back(coord);
+        }
+    }
+
+    if (candidates.empty()) {
+        return std::nullopt;
+    }
+
+    const Coord center{
+        std::max(1, static_cast<int>(std::round(static_cast<double>(args.width) * 0.5))),
+        std::max(1, static_cast<int>(std::round(static_cast<double>(args.height) * 0.5))),
+    };
+    std::sort(candidates.begin(), candidates.end(), [&](const Coord& first, const Coord& second) {
+        const double first_valley_bonus = valley_hexes.find(first) != valley_hexes.end() ? 0.65 : 0.0;
+        const double second_valley_bonus = valley_hexes.find(second) != valley_hexes.end() ? 0.65 : 0.0;
+        const double first_score = static_cast<double>(hex_grid_distance(first, center)) - first_valley_bonus
+            + unit_noise(args.seed, static_cast<std::uint32_t>(76800 + first.q * 173 + first.r * 359)) * 0.18;
+        const double second_score = static_cast<double>(hex_grid_distance(second, center)) - second_valley_bonus
+            + unit_noise(args.seed, static_cast<std::uint32_t>(76800 + second.q * 173 + second.r * 359)) * 0.18;
+        if (first_score != second_score) {
+            return first_score < second_score;
+        }
+        return coord_less(first, second);
+    });
+
+    return Town{candidates.front(), "oasis"};
+}
+
 std::vector<Town> place_extra_grassland_towns(
     const GenerateArgs& args,
     const std::set<Coord, decltype(coord_less)*>& all_lakes,
@@ -2114,7 +2163,8 @@ std::vector<Coord> route_road_path(
     const GenerateArgs& args,
     const Coord& start,
     const Coord& end,
-    const std::set<Coord, decltype(coord_less)*>& lake_hexes
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const std::set<Coord, decltype(coord_less)*>* required_grassland = nullptr
 ) {
     std::vector<Coord> path{start};
     Coord current = start;
@@ -2131,6 +2181,9 @@ std::vector<Coord> route_road_path(
             const Coord neighbor = neighbor_in_direction(current, direction);
             if (!in_bounds(neighbor, args)
                 || lake_hexes.find(neighbor) != lake_hexes.end()
+                || (required_grassland != nullptr
+                    && !coord_equal(neighbor, end)
+                    && !final_grassland_before_towns(args, lake_hexes, *required_grassland, neighbor))
                 || visited.find(neighbor) != visited.end()) {
                 continue;
             }
@@ -2237,25 +2290,32 @@ std::optional<Road> build_silk_road(
     const GenerateArgs& args,
     const std::vector<Town>& towns,
     const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes,
     int& next_id
 ) {
-    const std::optional<Coord> persian_anchor = easternmost_town_for_feature(towns, "persian_town");
     const std::optional<Coord> chinese_anchor = westernmost_town_for_feature(towns, "chinese_town");
-    if (!persian_anchor.has_value() || !chinese_anchor.has_value()) {
+    const std::optional<Coord> persian_anchor = easternmost_town_for_feature(towns, "persian_town");
+    const auto oasis = std::find_if(towns.begin(), towns.end(), [](const Town& town) {
+        return town.feature == "oasis";
+    });
+    if (!chinese_anchor.has_value() || !persian_anchor.has_value() || oasis == towns.end()) {
         return std::nullopt;
     }
 
-    const std::vector<Coord> path = route_road_path(args, persian_anchor.value(), chinese_anchor.value(), lake_hexes);
-    if (path.empty()) {
+    std::vector<Coord> west_path = route_road_path(args, chinese_anchor.value(), oasis->coord, lake_hexes, &valley_hexes);
+    const std::vector<Coord> east_path = route_road_path(args, oasis->coord, persian_anchor.value(), lake_hexes, &valley_hexes);
+    if (west_path.empty() || east_path.empty()) {
         return std::nullopt;
     }
-    return Road{next_id++, "silk_road", path};
+    west_path.insert(west_path.end(), east_path.begin() + 1, east_path.end());
+    return Road{next_id++, "silk_road", west_path};
 }
 
 std::vector<Road> generate_roads(
     const GenerateArgs& args,
     const std::vector<Town>& towns,
-    const std::set<Coord, decltype(coord_less)*>& lake_hexes
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes
 ) {
     std::vector<Road> roads;
     int next_id = 1;
@@ -2263,7 +2323,7 @@ std::vector<Road> generate_roads(
     roads.insert(roads.end(), persian_roads.begin(), persian_roads.end());
     const std::vector<Road> chinese_roads = build_region_roads(args, towns, lake_hexes, "chinese_town", next_id);
     roads.insert(roads.end(), chinese_roads.begin(), chinese_roads.end());
-    const std::optional<Road> silk_road = build_silk_road(args, towns, lake_hexes, next_id);
+    const std::optional<Road> silk_road = build_silk_road(args, towns, lake_hexes, valley_hexes, next_id);
     if (silk_road.has_value()) {
         roads.push_back(silk_road.value());
     }
@@ -2475,12 +2535,16 @@ void print_generated_map(const GenerateArgs& args) {
     const std::set<Coord, decltype(coord_less)*> forest_blob_hexes = derive_forest_blob_hexes(args, all_lakes, valley_hexes);
     const std::map<Coord, std::string, decltype(coord_less)*> steppe_texture_hexes = derive_steppe_texture_hexes(args, all_lakes, valley_hexes, forest_blob_hexes, all_river_edges);
     std::vector<Town> towns = place_fixed_feature_towns(args, baikal, caspian, chinese_lake_network, all_lakes, valley_hexes, rivers);
+    const std::optional<Town> oasis = place_oasis_town(args, all_lakes, valley_hexes, all_river_edges, towns);
+    if (oasis.has_value()) {
+        towns.push_back(oasis.value());
+    }
     const std::vector<Town> extra_towns = place_extra_grassland_towns(args, all_lakes, valley_hexes, all_river_edges, towns);
     towns.insert(towns.end(), extra_towns.begin(), extra_towns.end());
     std::sort(towns.begin(), towns.end(), [](const Town& first, const Town& second) {
         return coord_less(first.coord, second.coord);
     });
-    const std::vector<Road> roads = generate_roads(args, towns, all_lakes);
+    const std::vector<Road> roads = generate_roads(args, towns, all_lakes, valley_hexes);
     const std::vector<Crossing> crossings = generate_crossings(args, towns, roads, all_river_edges);
     const std::map<Coord, int, decltype(coord_less)*> grassland_distances = derive_grassland_distances(args, valley_hexes);
     const std::vector<LakeRiverConnection> lake_river_connections = derive_lake_river_connections(all_lakes, all_river_edges);

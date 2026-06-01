@@ -95,6 +95,11 @@ const terrainStyles = {
     stroke: "#7a1515",
     label: "#fff0ea",
   },
+  oasis: {
+    fill: "#3f9f8a",
+    stroke: "#1e5f55",
+    label: "#ecfff9",
+  },
   river: {
     stroke: "#2679a6",
     source: "#60c4e8",
@@ -557,6 +562,9 @@ function styleForHex(hex) {
   }
   if (hex.terrain === "urban" && labels.includes("chinese_town")) {
     return terrainStyles.chinese_town;
+  }
+  if (hex.terrain === "urban" && labels.includes("oasis")) {
+    return terrainStyles.oasis;
   }
   if (labels.includes("forest_blob")) {
     return terrainStyles.forest_blob;
