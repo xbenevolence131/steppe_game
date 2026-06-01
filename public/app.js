@@ -107,6 +107,11 @@ const terrainStyles = {
     chinese: "#aa3f2c",
     silk: "#c28a2c",
   },
+  crossing: {
+    bridge: "#b8b8b8",
+    ford: "#f4f4f4",
+    outline: "#2a2118",
+  },
 };
 
 function terrainStyle(key) {
@@ -652,6 +657,41 @@ function drawRoads(roads) {
   ctx.restore();
 }
 
+function drawCrossings(crossings) {
+  if (!crossings || crossings.length === 0) {
+    return;
+  }
+
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  for (const crossing of crossings) {
+    if (!crossing.edge || !crossing.edge.a || !crossing.edge.b) {
+      continue;
+    }
+    const start = hexCenter(crossing.edge.a);
+    const end = hexCenter(crossing.edge.b);
+    ctx.strokeStyle = terrainStyles.crossing.outline;
+    ctx.lineWidth = 5.5 / viewport.scale;
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(end.x, end.y);
+    ctx.stroke();
+
+    ctx.strokeStyle = crossing.kind === "bridge"
+      ? terrainStyles.crossing.bridge
+      : terrainStyles.crossing.ford;
+    ctx.lineWidth = 3.25 / viewport.scale;
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(end.x, end.y);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
 function drawMapMarkers(coords, fillStyle, radius) {
   if (!coords || coords.length === 0) {
     return;
@@ -693,6 +733,7 @@ function drawMap() {
 
   drawRoads(currentMap.roads);
   drawRiverEdges(currentMap.edges);
+  drawCrossings(currentMap.crossings);
   drawMapMarkers(currentMap.river_sources, terrainStyles.river.source, 5);
   drawMapMarkers(currentMap.merge_points, terrainStyles.river.merge, 5);
   drawMapMarkers(currentMap.river_destinations, terrainStyles.river.destination, 5);
@@ -929,6 +970,7 @@ function createBlankMap() {
     edges: [],
     towns: [],
     roads: [],
+    crossings: [],
     metadata: {
       generator: "blank-editor",
       terrain_types: editorTerrains.map((terrain) => terrain.key),
@@ -971,6 +1013,7 @@ function normalizeLoadedMap(map) {
     edges: Array.isArray(map.edges) ? map.edges : [],
     towns: Array.isArray(map.towns) ? map.towns : [],
     roads: Array.isArray(map.roads) ? map.roads : [],
+    crossings: Array.isArray(map.crossings) ? map.crossings : [],
     metadata: map.metadata && typeof map.metadata === "object"
       ? map.metadata
       : { generator: "loaded-editor", terrain_types: editorTerrains.map((terrain) => terrain.key) },
