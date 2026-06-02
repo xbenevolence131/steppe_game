@@ -140,7 +140,7 @@
         </div>
         <div class="sidebar-section">
           <h2>Selection</h2>
-          <div class="selection-readout">None</div>
+          <div class="selection-readout sidebar-selection-readout">None</div>
         </div>
       </aside>
 
@@ -152,6 +152,31 @@
         </div>
         <div id="map-panel" class="map-panel" tabindex="0">
           <canvas id="map-canvas"></canvas>
+        </div>
+        <div id="play-details-bar" class="play-details-bar" aria-label="Play details">
+          <section class="unit-inspector" aria-label="Unit inspector">
+            <h2>Unit</h2>
+            <dl class="status-list">
+              <div>
+                <dt>Name</dt>
+                <dd id="unit-name">None</dd>
+              </div>
+              <div>
+                <dt>HP</dt>
+                <dd id="unit-hp">-</dd>
+              </div>
+              <div>
+                <dt>Move</dt>
+                <dd id="unit-move">-</dd>
+              </div>
+            </dl>
+          </section>
+          <section class="play-detail-region" aria-label="Orders">
+            <h2>Orders</h2>
+          </section>
+          <section class="play-detail-region" aria-label="Log">
+            <h2>Log</h2>
+          </section>
         </div>
       </section>
     </main>

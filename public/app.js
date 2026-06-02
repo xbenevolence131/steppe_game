@@ -36,6 +36,10 @@ const turnCounter = document.querySelector(".turn-counter");
 const campCount = document.querySelector("#camp-count");
 const herdCount = document.querySelector("#herd-count");
 const cavalryCount = document.querySelector("#cavalry-count");
+const sidebarSelectionReadout = document.querySelector(".sidebar-selection-readout");
+const unitName = document.querySelector("#unit-name");
+const unitHp = document.querySelector("#unit-hp");
+const unitMove = document.querySelector("#unit-move");
 
 let currentMap = null;
 let appMode = "intro";
@@ -47,6 +51,7 @@ let selectedTerrain = "lake";
 let paintStrokeKeys = new Set();
 let terrainUndo = new Map();
 let currentTurn = 1;
+let selectedUnitId = null;
 
 const viewport = {
   scale: 1,
@@ -592,11 +597,39 @@ function countUnits(kind) {
     : 0;
 }
 
+function selectedUnit() {
+  return currentMap && Array.isArray(currentMap.units)
+    ? currentMap.units.find((unit) => unit.id === selectedUnitId) || null
+    : null;
+}
+
+function unitDisplayName(unit) {
+  const faction = factions[unit.faction] || factions.mongol;
+  const kind = unit.kind === "cavalry" ? "Cavalry" : unit.kind;
+  return `${faction.name} ${kind}`;
+}
+
+function syncUnitInspector() {
+  const unit = selectedUnit();
+  if (!unit) {
+    sidebarSelectionReadout.textContent = "None";
+    unitName.textContent = "None";
+    unitHp.textContent = "-";
+    unitMove.textContent = "-";
+    return;
+  }
+  sidebarSelectionReadout.textContent = unitDisplayName(unit);
+  unitName.textContent = unitDisplayName(unit);
+  unitHp.textContent = `${unit.hp}/${unit.maxHp}`;
+  unitMove.textContent = `${unit.remainingMove}/${unit.move}`;
+}
+
 function syncPlayControls() {
   turnCounter.textContent = `Turn ${currentTurn}`;
   campCount.textContent = String(countUnits("camp"));
   herdCount.textContent = String(countUnits("herd"));
   cavalryCount.textContent = String(countUnits("cavalry"));
+  syncUnitInspector();
 }
 
 function syncModeControls() {
@@ -822,8 +855,14 @@ function drawUnitCounters(units) {
     ctx.fillStyle = "#fffdf8";
     ctx.fill();
     ctx.strokeStyle = faction.color;
-    ctx.lineWidth = 2.5 / viewport.scale;
+    ctx.lineWidth = (unit.id === selectedUnitId ? 4.5 : 2.5) / viewport.scale;
     ctx.stroke();
+    if (unit.id === selectedUnitId) {
+      roundedRectPath(x - 3 / viewport.scale, y - 3 / viewport.scale, counterWidth + 6 / viewport.scale, counterHeight + 6 / viewport.scale, 6 / viewport.scale);
+      ctx.strokeStyle = "#f4e48a";
+      ctx.lineWidth = 2 / viewport.scale;
+      ctx.stroke();
+    }
 
     ctx.beginPath();
     ctx.moveTo(dividerX, y + 3 / viewport.scale);
@@ -844,6 +883,33 @@ function drawUnitCounters(units) {
     ctx.fillText(String(unit.hp), x + 28.5 / viewport.scale, y + counterHeight / 2 + 0.5 / viewport.scale);
   }
   ctx.restore();
+}
+
+function findUnitAtPoint(point) {
+  if (!currentMap || !Array.isArray(currentMap.units)) {
+    return null;
+  }
+  const counterWidth = 38 / viewport.scale;
+  const counterHeight = 23 / viewport.scale;
+  for (let index = currentMap.units.length - 1; index >= 0; index -= 1) {
+    const unit = currentMap.units[index];
+    const center = hexCenter(unit);
+    if (
+      point.x >= center.x - counterWidth / 2
+      && point.x <= center.x + counterWidth / 2
+      && point.y >= center.y - counterHeight / 2
+      && point.y <= center.y + counterHeight / 2
+    ) {
+      return unit;
+    }
+  }
+  return null;
+}
+
+function selectUnit(unit) {
+  selectedUnitId = unit ? unit.id : null;
+  syncModeControls();
+  drawMap();
 }
 
 function drawMap() {
@@ -1071,6 +1137,7 @@ async function generateMap() {
     }
     currentMap = payload;
     currentMap.units = Array.isArray(currentMap.units) ? currentMap.units : [];
+    selectedUnitId = null;
     terrainUndo = new Map();
     refreshDerivedTopology();
     syncModeControls();
@@ -1118,6 +1185,7 @@ function createBlankMap(options = {}) {
       hex_label_model: "base-plus-generation-role.v1",
     },
   };
+  selectedUnitId = null;
   terrainUndo = new Map();
   refreshDerivedTopology();
   syncModeControls();
@@ -1150,6 +1218,7 @@ function createDefaultPlayScenario() {
       remainingMove: unitDefaults.cavalry.move,
     },
   ];
+  selectedUnitId = null;
   currentTurn = 1;
   syncModeControls();
   fitMap();
@@ -1255,6 +1324,7 @@ async function saveCurrentMap() {
 async function loadMapText(text) {
   try {
     currentMap = normalizeLoadedMap(JSON.parse(text));
+    selectedUnitId = null;
     terrainUndo = new Map();
     widthInput.value = currentMap.width;
     heightInput.value = currentMap.height;
@@ -1326,6 +1396,15 @@ mapPanel.addEventListener("wheel", (event) => {
 
 mapPanel.addEventListener("pointerdown", (event) => {
   mapPanel.focus();
+  const point = panelToWorld(event);
+  if (appMode === "play" && event.button === 0) {
+    const unit = findUnitAtPoint(point);
+    if (unit) {
+      event.preventDefault();
+      selectUnit(unit);
+      return;
+    }
+  }
   if (appMode === "scenario" && isEditing && event.button === 0) {
     event.preventDefault();
     isPainting = true;
