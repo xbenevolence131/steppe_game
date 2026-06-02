@@ -64,12 +64,30 @@ int main(int argc, char** argv) {
             );
             return EXIT_SUCCESS;
         }
+        if (command == "game-attackable") {
+            const steppe::game::GameState state = steppe::game::parse_game_state_json(read_stdin());
+            steppe::game::print_attackable_json(
+                steppe::game::attackable_units(state, int_arg(argc, argv, "--unit", 0)),
+                std::cout
+            );
+            return EXIT_SUCCESS;
+        }
         if (command == "game-move") {
             steppe::game::GameState state = steppe::game::parse_game_state_json(read_stdin());
             const bool ok = steppe::game::move_unit(
                 state,
                 int_arg(argc, argv, "--unit", 0),
                 {int_arg(argc, argv, "--q", 0), int_arg(argc, argv, "--r", 0)}
+            );
+            steppe::game::print_game_patch_json(state, ok, std::cout);
+            return ok ? EXIT_SUCCESS : EXIT_FAILURE;
+        }
+        if (command == "game-attack") {
+            steppe::game::GameState state = steppe::game::parse_game_state_json(read_stdin());
+            const bool ok = steppe::game::attack_unit(
+                state,
+                int_arg(argc, argv, "--attacker", 0),
+                int_arg(argc, argv, "--defender", 0)
             );
             steppe::game::print_game_patch_json(state, ok, std::cout);
             return ok ? EXIT_SUCCESS : EXIT_FAILURE;

@@ -100,11 +100,18 @@ struct Unit {
     int max_hp = 10;
     int move = 4;
     int remaining_move = 4;
+    bool move_done = false;
+    bool combat_done = false;
 };
 
 struct ReachableHex {
     Coord coord;
     int cost = 0;
+};
+
+struct AttackableUnit {
+    int unit_id = 0;
+    Coord coord;
 };
 
 struct GameState {
@@ -141,11 +148,14 @@ GameState create_default_play_sandbox(int width = 10, int height = 10, int facti
 
 OwnerId active_faction(const GameState& state);
 std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id);
+std::vector<AttackableUnit> attackable_units(const GameState& state, int unit_id);
 bool move_unit(GameState& state, int unit_id, Coord destination);
+bool attack_unit(GameState& state, int attacker_id, int defender_id);
 void end_turn(GameState& state);
 
 void print_game_state_json(const GameState& state, std::ostream& out);
 void print_reachable_json(const std::vector<ReachableHex>& reachable, std::ostream& out);
+void print_attackable_json(const std::vector<AttackableUnit>& attackable, std::ostream& out);
 void print_game_patch_json(const GameState& state, bool ok, std::ostream& out);
 GameState parse_game_state_json(const std::string& json);
 

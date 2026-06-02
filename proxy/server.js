@@ -243,6 +243,16 @@ async function handleGameReachable(req, res) {
   }
 }
 
+async function handleGameAttackable(req, res) {
+  try {
+    const payload = await readRequestJson(req);
+    const unitId = parseBoundedInteger(payload.unitId, 0, 0, 1000000);
+    sendJson(res, 200, await runEngineJson(["game-attackable", "--unit", String(unitId)], JSON.stringify(payload.state || {})));
+  } catch (error) {
+    sendJson(res, 500, { error: error.message });
+  }
+}
+
 async function handleGameMove(req, res) {
   try {
     const payload = await readRequestJson(req);
@@ -254,6 +264,22 @@ async function handleGameMove(req, res) {
       "--unit", String(unitId),
       "--q", String(q),
       "--r", String(r),
+    ], JSON.stringify(payload.state || {}));
+    sendJson(res, result.ok ? 200 : 400, result);
+  } catch (error) {
+    sendJson(res, 500, { error: error.message });
+  }
+}
+
+async function handleGameAttack(req, res) {
+  try {
+    const payload = await readRequestJson(req);
+    const attackerId = parseBoundedInteger(payload.attackerId, 0, 0, 1000000);
+    const defenderId = parseBoundedInteger(payload.defenderId, 0, 0, 1000000);
+    const result = await runEngineJson([
+      "game-attack",
+      "--attacker", String(attackerId),
+      "--defender", String(defenderId),
     ], JSON.stringify(payload.state || {}));
     sendJson(res, result.ok ? 200 : 400, result);
   } catch (error) {
@@ -309,8 +335,16 @@ const server = http.createServer((req, res) => {
     handleGameReachable(req, res);
     return;
   }
+  if (req.method === "POST" && req.url === "/api/game/attackable") {
+    handleGameAttackable(req, res);
+    return;
+  }
   if (req.method === "POST" && req.url === "/api/game/move") {
     handleGameMove(req, res);
+    return;
+  }
+  if (req.method === "POST" && req.url === "/api/game/attack") {
+    handleGameAttack(req, res);
     return;
   }
   if (req.method === "POST" && req.url === "/api/game/end-turn") {

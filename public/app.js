@@ -58,7 +58,9 @@ let currentTurn = 1;
 let activeFactionIndex = 0;
 let selectedUnitId = null;
 let reachableHexes = new Map();
+let attackableUnits = new Map();
 let reachableRequestId = 0;
+let attackableRequestId = 0;
 
 const viewport = {
   scale: 1,
@@ -706,6 +708,8 @@ function normalizeUnit(unit, index) {
     maxHp: Number.isFinite(unit.maxHp) ? unit.maxHp : hp,
     move,
     remainingMove: Number.isFinite(unit.remainingMove) ? unit.remainingMove : move,
+    moveDone: Boolean(unit.moveDone),
+    combatDone: Boolean(unit.combatDone),
   };
 }
 
@@ -776,6 +780,41 @@ async function refreshReachableHexes() {
       drawMap();
     }
   }
+}
+
+async function refreshAttackableUnits() {
+  const requestId = ++attackableRequestId;
+  const unit = selectedUnit();
+  if (appMode !== "play" || !canActWithUnit(unit)) {
+    attackableUnits = new Map();
+    drawMap();
+    return;
+  }
+  try {
+    const payload = await postGameCommand("/api/game/attackable", {
+      state: gameCommandState(),
+      unitId: unit.id,
+    });
+    if (requestId !== attackableRequestId) {
+      return;
+    }
+    attackableUnits = new Map((payload.attackable || []).map((target) => [
+      target.unitId,
+      { coord: { q: target.q, r: target.r } },
+    ]));
+    drawMap();
+  } catch (error) {
+    if (requestId === attackableRequestId) {
+      attackableUnits = new Map();
+      window.alert(error.message);
+      drawMap();
+    }
+  }
+}
+
+function refreshSelectedUnitActions() {
+  refreshReachableHexes();
+  refreshAttackableUnits();
 }
 
 function unitDisplayName(unit) {
@@ -1036,6 +1075,10 @@ function drawUnitCounters(units) {
     roundedRectPath(x, y, counterWidth, counterHeight, 4 / viewport.scale);
     ctx.fillStyle = "#fffdf8";
     ctx.fill();
+    if (attackableUnits.has(unit.id)) {
+      ctx.fillStyle = "rgba(201, 54, 50, 0.24)";
+      ctx.fill();
+    }
     ctx.strokeStyle = faction.color;
     ctx.lineWidth = (unit.id === selectedUnitId ? 4.5 : 2.5) / viewport.scale;
     ctx.stroke();
@@ -1117,7 +1160,7 @@ function findUnitAtPoint(point) {
 
 function selectUnit(unit) {
   selectedUnitId = canActWithUnit(unit) ? unit.id : null;
-  refreshReachableHexes();
+  refreshSelectedUnitActions();
   syncModeControls();
   drawMap();
 }
@@ -1141,7 +1184,30 @@ async function moveSelectedUnitTo(coord) {
     return false;
   }
   applyGamePatch(payload);
-  await refreshReachableHexes();
+  await Promise.all([refreshReachableHexes(), refreshAttackableUnits()]);
+  syncModeControls();
+  drawMap();
+  return true;
+}
+
+async function attackSelectedUnit(defender) {
+  const attacker = selectedUnit();
+  if (!canActWithUnit(attacker) || !defender || !attackableUnits.has(defender.id)) {
+    return false;
+  }
+  const payload = await postGameCommand("/api/game/attack", {
+    state: gameCommandState(),
+    attackerId: attacker.id,
+    defenderId: defender.id,
+  });
+  if (!payload.ok) {
+    return false;
+  }
+  applyGamePatch(payload);
+  if (!selectedUnit()) {
+    selectedUnitId = null;
+  }
+  await Promise.all([refreshReachableHexes(), refreshAttackableUnits()]);
   syncModeControls();
   drawMap();
   return true;
@@ -1150,6 +1216,7 @@ async function moveSelectedUnitTo(coord) {
 async function advanceTurn() {
   selectedUnitId = null;
   reachableHexes = new Map();
+  attackableUnits = new Map();
   try {
     applyGamePatch(await postGameCommand("/api/game/end-turn", {
       state: gameCommandState(),
@@ -1390,6 +1457,7 @@ async function generateMap() {
     currentMap.game = defaultGameMeta();
     selectedUnitId = null;
     reachableHexes = new Map();
+    attackableUnits = new Map();
     terrainUndo = new Map();
     ensureGameMeta();
     refreshDerivedTopology();
@@ -1440,6 +1508,7 @@ function createBlankMap(options = {}) {
   };
   selectedUnitId = null;
   reachableHexes = new Map();
+  attackableUnits = new Map();
   terrainUndo = new Map();
   currentMap.game = defaultGameMeta();
   ensureGameMeta();
@@ -1458,6 +1527,7 @@ async function createDefaultPlayScenario() {
     currentMap.units = Array.isArray(currentMap.units) ? currentMap.units.map(normalizeUnit) : [];
     selectedUnitId = null;
     reachableHexes = new Map();
+    attackableUnits = new Map();
     terrainUndo = new Map();
     ensureGameMeta();
     refreshDerivedTopology();
@@ -1573,6 +1643,7 @@ async function loadMapText(text) {
     currentMap = normalizeLoadedMap(JSON.parse(text));
     selectedUnitId = null;
     reachableHexes = new Map();
+    attackableUnits = new Map();
     terrainUndo = new Map();
     ensureGameMeta();
     widthInput.value = currentMap.width;
@@ -1648,6 +1719,9 @@ mapPanel.addEventListener("pointerdown", async (event) => {
     const unit = findUnitAtPoint(point);
     if (unit) {
       event.preventDefault();
+      if (await attackSelectedUnit(unit)) {
+        return;
+      }
       selectUnit(unit);
       return;
     }

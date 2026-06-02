@@ -167,6 +167,15 @@ int movement_cost(Terrain terrain) {
     return terrain == Terrain::Grassland ? 1 : std::numeric_limits<int>::max();
 }
 
+bool adjacent(const Coord& first, const Coord& second) {
+    for (int direction = 0; direction < 6; ++direction) {
+        if (coord_equal(neighbor_in_direction(first, direction), second)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::string escape_json(const std::string& text) {
     std::string escaped;
     for (const char ch : text) {
@@ -258,6 +267,17 @@ int int_field(const std::string& json, const std::string& key, int fallback) {
     } catch (...) {
         return fallback;
     }
+}
+
+bool bool_field(const std::string& json, const std::string& key, bool fallback) {
+    const std::string field = object_field(json, key);
+    if (field == "true") {
+        return true;
+    }
+    if (field == "false") {
+        return false;
+    }
+    return fallback;
 }
 
 std::uint32_t uint_field(const std::string& json, const std::string& key, std::uint32_t fallback) {
@@ -512,7 +532,7 @@ bool occupied_by_other_unit(const GameState& state, const Coord& coord, int movi
 std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id) {
     std::vector<ReachableHex> reachable;
     const Unit* unit = find_unit(state, unit_id);
-    if (unit == nullptr || unit->owner != active_faction(state) || unit->remaining_move <= 0) {
+    if (unit == nullptr || unit->owner != active_faction(state) || unit->move_done || unit->remaining_move <= 0) {
         return reachable;
     }
 
@@ -561,9 +581,35 @@ std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id) {
     return reachable;
 }
 
+std::vector<AttackableUnit> attackable_units(const GameState& state, int unit_id) {
+    std::vector<AttackableUnit> attackable;
+    const Unit* attacker = find_unit(state, unit_id);
+    if (attacker == nullptr || attacker->owner != active_faction(state) || attacker->combat_done) {
+        return attackable;
+    }
+
+    for (const Unit& defender : state.units) {
+        if (defender.id == attacker->id
+            || defender.owner == attacker->owner
+            || defender.hp <= 0
+            || !adjacent(attacker->coord, defender.coord)) {
+            continue;
+        }
+        attackable.push_back({defender.id, defender.coord});
+    }
+
+    std::sort(attackable.begin(), attackable.end(), [](const AttackableUnit& first, const AttackableUnit& second) {
+        if (first.unit_id != second.unit_id) {
+            return first.unit_id < second.unit_id;
+        }
+        return coord_less(first.coord, second.coord);
+    });
+    return attackable;
+}
+
 bool move_unit(GameState& state, int unit_id, Coord destination) {
     Unit* unit = find_unit(state, unit_id);
-    if (unit == nullptr || unit->owner != active_faction(state)) {
+    if (unit == nullptr || unit->owner != active_faction(state) || unit->move_done) {
         return false;
     }
     const std::vector<ReachableHex> reachable = reachable_hexes(state, unit_id);
@@ -575,6 +621,35 @@ bool move_unit(GameState& state, int unit_id, Coord destination) {
     }
     unit->coord = destination;
     unit->remaining_move = std::max(0, unit->remaining_move - found->cost);
+    if (unit->remaining_move == 0) {
+        unit->move_done = true;
+    }
+    return true;
+}
+
+bool attack_unit(GameState& state, int attacker_id, int defender_id) {
+    Unit* attacker = find_unit(state, attacker_id);
+    Unit* defender = find_unit(state, defender_id);
+    if (attacker == nullptr
+        || defender == nullptr
+        || attacker->owner != active_faction(state)
+        || attacker->combat_done
+        || attacker->owner == defender->owner
+        || !adjacent(attacker->coord, defender->coord)) {
+        return false;
+    }
+
+    constexpr int cavalry_attack_damage = 3;
+    defender->hp = std::max(0, defender->hp - cavalry_attack_damage);
+    attacker = find_unit(state, attacker_id);
+    if (attacker != nullptr) {
+        attacker->remaining_move = 0;
+        attacker->move_done = true;
+        attacker->combat_done = true;
+    }
+    state.units.erase(std::remove_if(state.units.begin(), state.units.end(), [](const Unit& unit) {
+        return unit.hp <= 0;
+    }), state.units.end());
     return true;
 }
 
@@ -590,6 +665,8 @@ void end_turn(GameState& state) {
     for (Unit& unit : state.units) {
         if (unit.owner == owner) {
             unit.remaining_move = unit.move;
+            unit.move_done = false;
+            unit.combat_done = false;
         }
     }
 }
@@ -621,6 +698,8 @@ void print_unit_json(const Unit& unit, std::ostream& out) {
         << ",\"maxHp\":" << unit.max_hp
         << ",\"move\":" << unit.move
         << ",\"remainingMove\":" << unit.remaining_move
+        << ",\"moveDone\":" << (unit.move_done ? "true" : "false")
+        << ",\"combatDone\":" << (unit.combat_done ? "true" : "false")
         << "}";
 }
 
@@ -700,6 +779,20 @@ void print_reachable_json(const std::vector<ReachableHex>& reachable, std::ostre
     out << "]}\n";
 }
 
+void print_attackable_json(const std::vector<AttackableUnit>& attackable, std::ostream& out) {
+    out << "{\"attackable\":[";
+    for (std::size_t i = 0; i < attackable.size(); ++i) {
+        if (i > 0) {
+            out << ",";
+        }
+        out << "{\"unitId\":" << attackable[i].unit_id
+            << ",\"q\":" << attackable[i].coord.q
+            << ",\"r\":" << attackable[i].coord.r
+            << "}";
+    }
+    out << "]}\n";
+}
+
 void print_game_patch_json(const GameState& state, bool ok, std::ostream& out) {
     out << "{";
     out << "\"ok\":" << (ok ? "true" : "false") << ",";
@@ -754,6 +847,9 @@ GameState parse_game_state_json(const std::string& json) {
         hex.terrain = terrain_from_string(string_field(hex_json, "terrain", "none"));
         hex.tags = hex.terrain == Terrain::Grassland ? tag_mask(HexTag::BaseSteppe) : 0;
         hex.pasture = initial_pasture_for_terrain(hex.terrain);
+        if (hex.terrain == Terrain::Grassland) {
+            hex.source_labels = {"base_steppe"};
+        }
         state.hexes.push_back(std::move(hex));
     }
 
@@ -777,6 +873,8 @@ GameState parse_game_state_json(const std::string& json) {
         unit.max_hp = int_field(unit_json, "maxHp", unit.hp);
         unit.move = int_field(unit_json, "move", default_move(unit.kind));
         unit.remaining_move = int_field(unit_json, "remainingMove", unit.move);
+        unit.move_done = bool_field(unit_json, "moveDone", false);
+        unit.combat_done = bool_field(unit_json, "combatDone", false);
         state.units.push_back(unit);
     }
 
