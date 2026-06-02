@@ -687,7 +687,8 @@ function ensureGameMeta() {
 }
 
 function normalizeUnit(unit, index) {
-  const defaults = unitDefaults[unit.kind] || unitDefaults.cavalry;
+  const kind = typeof unit.kind === "string" ? unit.kind : "cavalry";
+  const defaults = unitDefaults[kind] || unitDefaults.cavalry;
   const move = Number.isFinite(unit.move) ? unit.move : defaults.move;
   const hp = Number.isFinite(unit.hp) ? unit.hp : defaults.hp;
   const owner = Number.isInteger(unit.owner) ? unit.owner : (
@@ -701,7 +702,7 @@ function normalizeUnit(unit, index) {
     id: Number.isInteger(unit.id) ? unit.id : index + 1,
     owner,
     faction,
-    kind: typeof unit.kind === "string" ? unit.kind : "cavalry",
+    kind,
     q: unit.q,
     r: unit.r,
     hp,
@@ -710,6 +711,8 @@ function normalizeUnit(unit, index) {
     remainingMove: Number.isFinite(unit.remainingMove) ? unit.remainingMove : move,
     moveDone: Boolean(unit.moveDone),
     combatDone: Boolean(unit.combatDone),
+    projectsZoc: unit.projectsZoc !== undefined ? Boolean(unit.projectsZoc) : kind === "cavalry",
+    respectsZoc: Boolean(unit.respectsZoc),
   };
 }
 

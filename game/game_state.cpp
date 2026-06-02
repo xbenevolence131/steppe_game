@@ -482,6 +482,8 @@ GameState create_default_play_sandbox(int width, int height, int faction_count) 
         unit.max_hp = unit.hp;
         unit.move = default_move(unit.kind);
         unit.remaining_move = unit.move;
+        unit.projects_zoc = true;
+        unit.respects_zoc = false;
         return unit;
     };
 
@@ -529,6 +531,15 @@ bool occupied_by_other_unit(const GameState& state, const Coord& coord, int movi
     }) != state.units.end();
 }
 
+bool enemy_zoc_at(const GameState& state, const Coord& coord, const Unit& moving_unit) {
+    return std::find_if(state.units.begin(), state.units.end(), [&](const Unit& unit) {
+        return unit.id != moving_unit.id
+            && unit.owner != moving_unit.owner
+            && unit.projects_zoc
+            && adjacent(unit.coord, coord);
+    }) != state.units.end();
+}
+
 std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id) {
     std::vector<ReachableHex> reachable;
     const Unit* unit = find_unit(state, unit_id);
@@ -568,7 +579,9 @@ std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id) {
             }
             best_costs[next] = next_cost;
             reachable.push_back({next, next_cost});
-            queue.push_back(next);
+            if (!unit->respects_zoc || !enemy_zoc_at(state, next, *unit)) {
+                queue.push_back(next);
+            }
         }
     }
 
@@ -621,6 +634,9 @@ bool move_unit(GameState& state, int unit_id, Coord destination) {
     }
     unit->coord = destination;
     unit->remaining_move = std::max(0, unit->remaining_move - found->cost);
+    if (unit->respects_zoc && enemy_zoc_at(state, destination, *unit)) {
+        unit->remaining_move = 0;
+    }
     if (unit->remaining_move == 0) {
         unit->move_done = true;
     }
@@ -700,6 +716,8 @@ void print_unit_json(const Unit& unit, std::ostream& out) {
         << ",\"remainingMove\":" << unit.remaining_move
         << ",\"moveDone\":" << (unit.move_done ? "true" : "false")
         << ",\"combatDone\":" << (unit.combat_done ? "true" : "false")
+        << ",\"projectsZoc\":" << (unit.projects_zoc ? "true" : "false")
+        << ",\"respectsZoc\":" << (unit.respects_zoc ? "true" : "false")
         << "}";
 }
 
@@ -875,6 +893,8 @@ GameState parse_game_state_json(const std::string& json) {
         unit.remaining_move = int_field(unit_json, "remainingMove", unit.move);
         unit.move_done = bool_field(unit_json, "moveDone", false);
         unit.combat_done = bool_field(unit_json, "combatDone", false);
+        unit.projects_zoc = bool_field(unit_json, "projectsZoc", unit.kind == UnitKind::Cavalry);
+        unit.respects_zoc = bool_field(unit_json, "respectsZoc", false);
         state.units.push_back(unit);
     }
 

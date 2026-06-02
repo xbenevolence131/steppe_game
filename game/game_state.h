@@ -102,6 +102,8 @@ struct Unit {
     int remaining_move = 4;
     bool move_done = false;
     bool combat_done = false;
+    bool projects_zoc = false;
+    bool respects_zoc = false;
 };
 
 struct ReachableHex {
