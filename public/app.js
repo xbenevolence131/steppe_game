@@ -33,6 +33,9 @@ const editorToolSelect = document.querySelector("#editor-tool");
 const terrainPalette = document.querySelector("#terrain-palette");
 const endTurnButton = document.querySelector("#end-turn-button");
 const turnCounter = document.querySelector(".turn-counter");
+const campCount = document.querySelector("#camp-count");
+const herdCount = document.querySelector("#herd-count");
+const cavalryCount = document.querySelector("#cavalry-count");
 
 let currentMap = null;
 let appMode = "intro";
@@ -130,6 +133,20 @@ const terrainStyles = {
     bridge: "#b8b8b8",
     ford: "#f4f4f4",
     outline: "#2a2118",
+  },
+};
+
+const factions = {
+  mongol: {
+    name: "Mongol",
+    color: "#202020",
+  },
+};
+
+const unitDefaults = {
+  cavalry: {
+    hp: 10,
+    move: 4,
   },
 };
 
@@ -569,6 +586,19 @@ function stopPainting() {
   paintStrokeKeys = new Set();
 }
 
+function countUnits(kind) {
+  return currentMap && Array.isArray(currentMap.units)
+    ? currentMap.units.filter((unit) => unit.kind === kind).length
+    : 0;
+}
+
+function syncPlayControls() {
+  turnCounter.textContent = `Turn ${currentTurn}`;
+  campCount.textContent = String(countUnits("camp"));
+  herdCount.textContent = String(countUnits("herd"));
+  cavalryCount.textContent = String(countUnits("cavalry"));
+}
+
 function syncModeControls() {
   appShell.classList.toggle("is-intro", appMode === "intro");
   appShell.classList.toggle("is-scenario", appMode === "scenario");
@@ -577,7 +607,7 @@ function syncModeControls() {
   playModeButton.classList.toggle("is-active", appMode === "play");
   scenarioModeButton.setAttribute("aria-pressed", String(appMode === "scenario"));
   playModeButton.setAttribute("aria-pressed", String(appMode === "play"));
-  turnCounter.textContent = `Turn ${currentTurn}`;
+  syncPlayControls();
 }
 
 function setAppMode(mode) {
@@ -758,6 +788,64 @@ function drawMapMarkers(coords, fillStyle, radius) {
   ctx.restore();
 }
 
+function roundedRectPath(x, y, width, height, radius) {
+  const corner = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + corner, y);
+  ctx.lineTo(x + width - corner, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + corner);
+  ctx.lineTo(x + width, y + height - corner);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - corner, y + height);
+  ctx.lineTo(x + corner, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - corner);
+  ctx.lineTo(x, y + corner);
+  ctx.quadraticCurveTo(x, y, x + corner, y);
+  ctx.closePath();
+}
+
+function drawUnitCounters(units) {
+  if (!units || units.length === 0) {
+    return;
+  }
+
+  ctx.save();
+  for (const unit of units) {
+    const faction = factions[unit.faction] || factions.mongol;
+    const center = hexCenter(unit);
+    const counterWidth = 38 / viewport.scale;
+    const counterHeight = 23 / viewport.scale;
+    const x = center.x - counterWidth / 2;
+    const y = center.y - counterHeight / 2;
+    const dividerX = x + 19 / viewport.scale;
+
+    roundedRectPath(x, y, counterWidth, counterHeight, 4 / viewport.scale);
+    ctx.fillStyle = "#fffdf8";
+    ctx.fill();
+    ctx.strokeStyle = faction.color;
+    ctx.lineWidth = 2.5 / viewport.scale;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(dividerX, y + 3 / viewport.scale);
+    ctx.lineTo(dividerX, y + counterHeight - 3 / viewport.scale);
+    ctx.strokeStyle = "#b9ad96";
+    ctx.lineWidth = 1 / viewport.scale;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.ellipse(x + 9.5 / viewport.scale, y + counterHeight / 2, 5.5 / viewport.scale, 3.1 / viewport.scale, 0, 0, Math.PI * 2);
+    ctx.fillStyle = faction.color;
+    ctx.fill();
+
+    ctx.fillStyle = "#22201b";
+    ctx.font = `${12 / viewport.scale}px Segoe UI, Arial, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(unit.hp), x + 28.5 / viewport.scale, y + counterHeight / 2 + 0.5 / viewport.scale);
+  }
+  ctx.restore();
+}
+
 function drawMap() {
   if (!currentMap) {
     return;
@@ -784,6 +872,7 @@ function drawMap() {
   drawMapMarkers(currentMap.river_sources, terrainStyles.river.source, 5);
   drawMapMarkers(currentMap.merge_points, terrainStyles.river.merge, 5);
   drawMapMarkers(currentMap.river_destinations, terrainStyles.river.destination, 5);
+  drawUnitCounters(currentMap.units);
 
   ctx.restore();
 }
@@ -981,8 +1070,10 @@ async function generateMap() {
       throw new Error(payload.error || "generation failed");
     }
     currentMap = payload;
+    currentMap.units = Array.isArray(currentMap.units) ? currentMap.units : [];
     terrainUndo = new Map();
     refreshDerivedTopology();
+    syncModeControls();
     fitMap();
   } catch (error) {
     window.alert(error.message);
@@ -991,9 +1082,11 @@ async function generateMap() {
   }
 }
 
-function createBlankMap() {
-  const width = clampDimension(widthInput.value, 1, 120, 120);
-  const height = clampDimension(heightInput.value, 1, 80, 80);
+function createBlankMap(options = {}) {
+  const requestedWidth = Number.isInteger(options.width) ? options.width : widthInput.value;
+  const requestedHeight = Number.isInteger(options.height) ? options.height : heightInput.value;
+  const width = clampDimension(requestedWidth, 1, 120, 120);
+  const height = clampDimension(requestedHeight, 1, 80, 80);
   widthInput.value = width;
   heightInput.value = height;
 
@@ -1018,14 +1111,47 @@ function createBlankMap() {
     towns: [],
     roads: [],
     crossings: [],
+    units: [],
     metadata: {
-      generator: "blank-editor",
+      generator: typeof options.generator === "string" ? options.generator : "blank-editor",
       terrain_types: editorTerrains.map((terrain) => terrain.key),
       hex_label_model: "base-plus-generation-role.v1",
     },
   };
   terrainUndo = new Map();
   refreshDerivedTopology();
+  syncModeControls();
+  fitMap();
+}
+
+function createDefaultPlayScenario() {
+  createBlankMap({ width: 10, height: 10, generator: "default-play-sandbox" });
+  currentMap.units = [
+    {
+      id: 1,
+      faction: "mongol",
+      kind: "cavalry",
+      q: 4,
+      r: 5,
+      hp: unitDefaults.cavalry.hp,
+      maxHp: unitDefaults.cavalry.hp,
+      move: unitDefaults.cavalry.move,
+      remainingMove: unitDefaults.cavalry.move,
+    },
+    {
+      id: 2,
+      faction: "mongol",
+      kind: "cavalry",
+      q: 6,
+      r: 5,
+      hp: unitDefaults.cavalry.hp,
+      maxHp: unitDefaults.cavalry.hp,
+      move: unitDefaults.cavalry.move,
+      remainingMove: unitDefaults.cavalry.move,
+    },
+  ];
+  currentTurn = 1;
+  syncModeControls();
   fitMap();
 }
 
@@ -1061,6 +1187,9 @@ function normalizeLoadedMap(map) {
     towns: Array.isArray(map.towns) ? map.towns : [],
     roads: Array.isArray(map.roads) ? map.roads : [],
     crossings: Array.isArray(map.crossings) ? map.crossings : [],
+    units: Array.isArray(map.units)
+      ? map.units.filter((unit) => Number.isInteger(unit.q) && Number.isInteger(unit.r))
+      : [],
     metadata: map.metadata && typeof map.metadata === "object"
       ? map.metadata
       : { generator: "loaded-editor", terrain_types: editorTerrains.map((terrain) => terrain.key) },
@@ -1129,6 +1258,7 @@ async function loadMapText(text) {
     terrainUndo = new Map();
     widthInput.value = currentMap.width;
     heightInput.value = currentMap.height;
+    syncModeControls();
     fitMap();
   } catch (error) {
     window.alert(error.message);
@@ -1285,4 +1415,4 @@ new ResizeObserver(() => {
 
 initializeTerrainPalette();
 syncModeControls();
-generateMap();
+createDefaultPlayScenario();
