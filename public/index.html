@@ -3,100 +3,149 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Steppe Terrain Generator</title>
+    <title>Secret History of the Mongols</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <header class="app-header">
-      <h1>Steppe Terrain Generator</h1>
+      <h1>Secret History of the Mongols</h1>
+      <nav class="mode-chooser" aria-label="Mode chooser">
+        <button id="scenario-mode-button" class="mode-button" type="button" aria-pressed="false">Scenario Edit</button>
+        <button id="play-mode-button" class="mode-button" type="button" aria-pressed="false">Play</button>
+      </nav>
     </header>
 
-    <main class="app-shell">
-      <section class="parameter-panel" aria-label="Scenario generation parameters">
-        <div class="field-grid">
-          <label>
-            <span>Map width</span>
-            <input id="map-width" type="number" min="1" max="120" value="120">
-          </label>
-          <label>
-            <span>Map height</span>
-            <input id="map-height" type="number" min="1" max="80" value="80">
-          </label>
-          <label>
-            <span>River sources</span>
-            <input id="river-sources" type="number" min="0" max="20" value="4">
-          </label>
-          <label>
-            <span>Lakes</span>
-            <input id="lake-count" type="number" min="0" max="20" value="4">
-          </label>
-          <label>
-            <span>Lake size</span>
-            <input id="lake-size" type="number" min="1" max="40" value="6">
-          </label>
-          <label>
-            <span>Bend forward</span>
-            <input id="meander-forward" type="number" min="0" max="40" step="0.5" value="8">
-          </label>
-          <label>
-            <span>Forward jitter</span>
-            <input id="meander-forward-jitter" type="number" min="0" max="40" step="0.5" value="4">
-          </label>
-          <label>
-            <span>Bend lateral</span>
-            <input id="meander-lateral" type="number" min="0" max="40" step="0.5" value="7">
-          </label>
-          <label>
-            <span>Lateral jitter</span>
-            <input id="meander-lateral-jitter" type="number" min="0" max="40" step="0.5" value="4">
-          </label>
-          <label>
-            <span>Bend strength</span>
-            <input id="meander-strength" type="number" min="0" max="10" step="0.05" value="1">
-          </label>
-          <label>
-            <span>Bend reach</span>
-            <input id="meander-reach" type="number" min="0" max="40" step="0.5" value="2">
-          </label>
-          <label>
-            <span>River slant</span>
-            <input id="river-slant-strength" type="number" min="0" max="10" step="0.05" value="10">
-          </label>
-          <label>
-            <span>Valley thickness</span>
-            <input id="valley-thickness" type="number" min="0" max="5" step="0.25" value="2">
-          </label>
-          <label>
-            <span>Forest blobs</span>
-            <input id="forest-blobs" type="number" min="0" max="10" step="1" value="4">
-          </label>
-          <label>
-            <span>Forest radius</span>
-            <input id="forest-blob-radius" type="number" min="0" max="20" step="1" value="4">
-          </label>
-          <label>
-            <span>Bend timeout</span>
-            <input id="meander-timeout" type="number" min="1" max="200" value="28">
-          </label>
+    <main id="app-shell" class="app-shell is-intro">
+      <aside id="scenario-controls" class="mode-sidebar scenario-sidebar" aria-label="Scenario edit controls">
+        <div class="sidebar-section">
+          <h2>Scenario Edit</h2>
+          <div class="panel-actions">
+            <button id="generate-button" type="button">Generate</button>
+            <button id="blank-map-button" class="secondary" type="button">Blank Map</button>
+            <button id="save-button" class="secondary" type="button">Save Terrain</button>
+            <button id="load-button" class="secondary" type="button">Load Terrain</button>
+            <input id="load-file-input" class="hidden-file-input" type="file" accept="application/json,.json">
+          </div>
         </div>
 
-        <div class="panel-actions">
-          <button id="generate-button" type="button">Generate</button>
-          <button id="blank-map-button" type="button">Blank Map</button>
-          <button id="save-button" type="button">Save Terrain</button>
-          <button id="load-button" type="button">Load Terrain</button>
-          <input id="load-file-input" class="hidden-file-input" type="file" accept="application/json,.json">
+        <div class="sidebar-section">
+          <h2>Map</h2>
+          <div class="field-grid">
+            <label>
+              <span>Width</span>
+              <input id="map-width" type="number" min="1" max="120" value="120">
+            </label>
+            <label>
+              <span>Height</span>
+              <input id="map-height" type="number" min="1" max="80" value="80">
+            </label>
+            <label>
+              <span>Rivers</span>
+              <input id="river-sources" type="number" min="0" max="20" value="4">
+            </label>
+            <label>
+              <span>Lakes</span>
+              <input id="lake-count" type="number" min="0" max="20" value="4">
+            </label>
+            <label>
+              <span>Lake size</span>
+              <input id="lake-size" type="number" min="1" max="40" value="6">
+            </label>
+            <label>
+              <span>Valleys</span>
+              <input id="valley-thickness" type="number" min="0" max="5" step="0.25" value="2">
+            </label>
+            <label>
+              <span>Forests</span>
+              <input id="forest-blobs" type="number" min="0" max="10" step="1" value="4">
+            </label>
+            <label>
+              <span>Forest radius</span>
+              <input id="forest-blob-radius" type="number" min="0" max="20" step="1" value="4">
+            </label>
+          </div>
         </div>
-      </section>
 
-      <section class="map-section" aria-label="Generated terrain map">
-        <div class="map-toolbar" aria-label="Map view controls">
+        <div class="sidebar-section">
+          <h2>Rivers</h2>
+          <div class="field-grid">
+            <label>
+              <span>Forward</span>
+              <input id="meander-forward" type="number" min="0" max="40" step="0.5" value="8">
+            </label>
+            <label>
+              <span>F jitter</span>
+              <input id="meander-forward-jitter" type="number" min="0" max="40" step="0.5" value="4">
+            </label>
+            <label>
+              <span>Lateral</span>
+              <input id="meander-lateral" type="number" min="0" max="40" step="0.5" value="7">
+            </label>
+            <label>
+              <span>L jitter</span>
+              <input id="meander-lateral-jitter" type="number" min="0" max="40" step="0.5" value="4">
+            </label>
+            <label>
+              <span>Strength</span>
+              <input id="meander-strength" type="number" min="0" max="10" step="0.05" value="1">
+            </label>
+            <label>
+              <span>Reach</span>
+              <input id="meander-reach" type="number" min="0" max="40" step="0.5" value="2">
+            </label>
+            <label>
+              <span>Slant</span>
+              <input id="river-slant-strength" type="number" min="0" max="10" step="0.05" value="10">
+            </label>
+            <label>
+              <span>Timeout</span>
+              <input id="meander-timeout" type="number" min="1" max="200" value="28">
+            </label>
+          </div>
+        </div>
+
+        <div class="sidebar-section">
+          <h2>Paint</h2>
           <button id="edit-mode-button" class="secondary" type="button" aria-pressed="false">Edit</button>
           <select id="editor-tool" aria-label="Editor tool">
             <option value="hex">Hex</option>
             <option value="edge">River Edge</option>
           </select>
           <div id="terrain-palette" class="terrain-palette" aria-label="Terrain palette"></div>
+        </div>
+      </aside>
+
+      <aside id="play-controls" class="mode-sidebar play-sidebar" aria-label="Play controls">
+        <div class="sidebar-section">
+          <h2>Play</h2>
+          <div class="turn-counter">Turn 1</div>
+          <button id="end-turn-button" type="button">End Turn</button>
+        </div>
+        <div class="sidebar-section">
+          <h2>Clan</h2>
+          <dl class="status-list">
+            <div>
+              <dt>Camps</dt>
+              <dd>0</dd>
+            </div>
+            <div>
+              <dt>Herds</dt>
+              <dd>0</dd>
+            </div>
+            <div>
+              <dt>Cavalry</dt>
+              <dd>0</dd>
+            </div>
+          </dl>
+        </div>
+        <div class="sidebar-section">
+          <h2>Selection</h2>
+          <div class="selection-readout">None</div>
+        </div>
+      </aside>
+
+      <section class="map-section" aria-label="Shared map view">
+        <div class="map-toolbar" aria-label="Map view controls">
           <button id="zoom-out-button" class="secondary icon-button" type="button" aria-label="Zoom out" title="Zoom out">-</button>
           <button id="zoom-in-button" class="secondary icon-button" type="button" aria-label="Zoom in" title="Zoom in">+</button>
           <button id="fit-button" class="secondary fit-button" type="button" aria-label="Fit map" title="Fit map">Fit</button>

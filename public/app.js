@@ -1,6 +1,9 @@
 const canvas = document.querySelector("#map-canvas");
 const ctx = canvas.getContext("2d");
+const appShell = document.querySelector("#app-shell");
 const mapPanel = document.querySelector("#map-panel");
+const scenarioModeButton = document.querySelector("#scenario-mode-button");
+const playModeButton = document.querySelector("#play-mode-button");
 const widthInput = document.querySelector("#map-width");
 const heightInput = document.querySelector("#map-height");
 const riversInput = document.querySelector("#river-sources");
@@ -28,8 +31,11 @@ const fitButton = document.querySelector("#fit-button");
 const editModeButton = document.querySelector("#edit-mode-button");
 const editorToolSelect = document.querySelector("#editor-tool");
 const terrainPalette = document.querySelector("#terrain-palette");
+const endTurnButton = document.querySelector("#end-turn-button");
+const turnCounter = document.querySelector(".turn-counter");
 
 let currentMap = null;
+let appMode = "intro";
 let isPanning = false;
 let isEditing = false;
 let isPainting = false;
@@ -37,6 +43,7 @@ let lastPointer = { x: 0, y: 0 };
 let selectedTerrain = "lake";
 let paintStrokeKeys = new Set();
 let terrainUndo = new Map();
+let currentTurn = 1;
 
 const viewport = {
   scale: 1,
@@ -562,6 +569,28 @@ function stopPainting() {
   paintStrokeKeys = new Set();
 }
 
+function syncModeControls() {
+  appShell.classList.toggle("is-intro", appMode === "intro");
+  appShell.classList.toggle("is-scenario", appMode === "scenario");
+  appShell.classList.toggle("is-play", appMode === "play");
+  scenarioModeButton.classList.toggle("is-active", appMode === "scenario");
+  playModeButton.classList.toggle("is-active", appMode === "play");
+  scenarioModeButton.setAttribute("aria-pressed", String(appMode === "scenario"));
+  playModeButton.setAttribute("aria-pressed", String(appMode === "play"));
+  turnCounter.textContent = `Turn ${currentTurn}`;
+}
+
+function setAppMode(mode) {
+  appMode = mode;
+  if (mode !== "scenario") {
+    setEditMode(false);
+  }
+  syncModeControls();
+  if (currentMap) {
+    requestAnimationFrame(drawMap);
+  }
+}
+
 function styleForHex(hex) {
   const labels = hex.labels || [];
   if (hex.terrain === "urban" && labels.includes("persian_town")) {
@@ -790,7 +819,7 @@ function initializeTerrainPalette() {
 }
 
 function setEditMode(enabled) {
-  isEditing = enabled;
+  isEditing = enabled && appMode === "scenario";
   if (!isEditing) {
     isPainting = false;
     paintStrokeKeys = new Set();
@@ -856,7 +885,7 @@ function editorLabelsForTerrain(terrain) {
 }
 
 function paintAtPointer(event) {
-  if (!isEditing || !currentMap) {
+  if (appMode !== "scenario" || !isEditing || !currentMap) {
     return;
   }
 
@@ -1139,6 +1168,8 @@ async function chooseMapFile() {
   }
 }
 
+scenarioModeButton.addEventListener("click", () => setAppMode("scenario"));
+playModeButton.addEventListener("click", () => setAppMode("play"));
 generateButton.addEventListener("click", generateMap);
 blankMapButton.addEventListener("click", createBlankMap);
 editModeButton.addEventListener("click", () => setEditMode(!isEditing));
@@ -1146,6 +1177,10 @@ editorToolSelect.addEventListener("change", syncEditorControls);
 saveButton.addEventListener("click", saveCurrentMap);
 loadButton.addEventListener("click", chooseMapFile);
 loadFileInput.addEventListener("change", () => loadMapFile(loadFileInput.files[0]));
+endTurnButton.addEventListener("click", () => {
+  currentTurn += 1;
+  syncModeControls();
+});
 zoomInButton.addEventListener("click", () => zoomFromCenter(1.25));
 zoomOutButton.addEventListener("click", () => zoomFromCenter(0.8));
 fitButton.addEventListener("click", fitMap);
@@ -1161,7 +1196,7 @@ mapPanel.addEventListener("wheel", (event) => {
 
 mapPanel.addEventListener("pointerdown", (event) => {
   mapPanel.focus();
-  if (isEditing && event.button === 0) {
+  if (appMode === "scenario" && isEditing && event.button === 0) {
     event.preventDefault();
     isPainting = true;
     paintStrokeKeys = new Set();
@@ -1169,7 +1204,7 @@ mapPanel.addEventListener("pointerdown", (event) => {
     mapPanel.setPointerCapture(event.pointerId);
     return;
   }
-  if (event.button !== 1) {
+  if (event.button !== 0 && event.button !== 1) {
     return;
   }
   event.preventDefault();
@@ -1249,4 +1284,5 @@ new ResizeObserver(() => {
 }).observe(mapPanel);
 
 initializeTerrainPalette();
+syncModeControls();
 generateMap();

@@ -23,38 +23,88 @@ body {
 }
 
 .app-header {
+  display: grid;
+  gap: 10px;
   border-bottom: 1px solid var(--line);
   background: #f3efe5;
-  padding: 16px 24px;
+  padding: 12px 18px;
 }
 
 .app-header h1 {
   margin: 0;
-  font-size: 24px;
+  font-size: 26px;
   font-weight: 650;
 }
 
-.app-shell {
+.mode-chooser {
   display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 16px;
+  align-items: center;
+  gap: 8px;
 }
 
-.parameter-panel {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-  border: 1px solid var(--line);
+.mode-button {
+  border-color: var(--line);
+  background: #fffdf8;
+  color: var(--text);
+}
+
+.mode-button.is-active {
+  border-color: #226064;
+  background: var(--accent);
+  color: white;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  min-height: calc(100vh - 97px);
+}
+
+.mode-sidebar {
+  display: none;
+  align-content: start;
+  gap: 14px;
+  border-right: 1px solid var(--line);
   background: var(--surface);
   padding: 14px;
+  overflow: auto;
+}
+
+.app-shell.is-scenario .scenario-sidebar,
+.app-shell.is-play .play-sidebar {
+  display: grid;
+}
+
+.app-shell.is-intro {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-shell.is-intro .mode-sidebar {
+  display: none;
+}
+
+.sidebar-section {
+  display: grid;
+  gap: 10px;
+  border-bottom: 1px solid rgba(185, 173, 150, 0.7);
+  padding-bottom: 14px;
+}
+
+.sidebar-section:last-child {
+  border-bottom: 0;
+}
+
+.sidebar-section h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 650;
 }
 
 .field-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 label {
@@ -65,7 +115,7 @@ label {
 }
 
 input {
-  width: 120px;
+  width: 100%;
   border: 1px solid var(--line);
   background: #fffdf8;
   color: var(--text);
@@ -78,9 +128,8 @@ input {
 }
 
 .panel-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -97,7 +146,8 @@ button {
 
 button.secondary,
 #save-button,
-#load-button {
+#load-button,
+#blank-map-button {
   border-color: var(--line);
   background: #fffdf8;
   color: var(--text);
@@ -112,6 +162,35 @@ select {
   padding: 6px 8px;
 }
 
+.turn-counter,
+.selection-readout {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  background: #fffdf8;
+  padding: 7px 8px;
+}
+
+.status-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+
+.status-list div {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+}
+
+.status-list dt {
+  color: var(--muted);
+}
+
+.status-list dd {
+  margin: 0;
+  font-weight: 650;
+}
+
 button:disabled {
   cursor: wait;
   opacity: 0.7;
@@ -123,7 +202,7 @@ button.is-active {
 }
 
 .map-section {
-  border: 1px solid var(--line);
+  min-width: 0;
   background: var(--empty);
 }
 
@@ -139,10 +218,9 @@ button.is-active {
 }
 
 .terrain-palette {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(6, 34px);
   gap: 4px;
-  margin-right: auto;
 }
 
 .terrain-button {
@@ -170,7 +248,8 @@ button.is-active {
 
 .map-panel {
   position: relative;
-  min-height: 360px;
+  height: calc(100vh - 140px);
+  min-height: 420px;
   background: var(--empty);
   overflow: hidden;
   outline: none;
@@ -192,20 +271,34 @@ button.is-active {
 #map-canvas {
   display: block;
   width: 100%;
-  min-height: 360px;
+  min-height: 420px;
 }
 
-@media (max-width: 680px) {
-  .parameter-panel {
-    align-items: stretch;
-    flex-direction: column;
+@media (max-width: 820px) {
+  .mode-chooser {
+    width: 100%;
+  }
+
+  .mode-button {
+    flex: 1;
+  }
+
+  .app-shell,
+  .app-shell.is-intro {
+    grid-template-columns: 1fr;
+  }
+
+  .mode-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    max-height: 46vh;
   }
 
   .panel-actions {
-    justify-content: flex-start;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  input {
-    width: min(180px, 100%);
+  .map-panel {
+    height: calc(100vh - 180px);
   }
 }
