@@ -41,6 +41,7 @@ const campCount = document.querySelector("#camp-count");
 const herdCount = document.querySelector("#herd-count");
 const cavalryCount = document.querySelector("#cavalry-count");
 const sidebarSelectionReadout = document.querySelector(".sidebar-selection-readout");
+const unitRoster = document.querySelector("#unit-roster");
 const unitName = document.querySelector("#unit-name");
 const unitHp = document.querySelector("#unit-hp");
 const unitMove = document.querySelector("#unit-move");
@@ -749,6 +750,56 @@ function unitDisplayName(unit) {
   return `${faction.name} ${kind}`;
 }
 
+function unitKindLabel(unit) {
+  const kindNames = {
+    camp: "Camp",
+    herd: "Herd",
+    cavalry: "Cavalry",
+    infantry: "Infantry",
+  };
+  return kindNames[unit.kind] || unit.kind || "Unit";
+}
+
+function syncUnitRoster() {
+  if (!unitRoster) {
+    return;
+  }
+  unitRoster.replaceChildren();
+  const units = currentMap && Array.isArray(currentMap.units) ? currentMap.units : [];
+  const selected = selectedUnit();
+  if (units.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "unit-roster-empty";
+    empty.textContent = "No deployed units";
+    unitRoster.appendChild(empty);
+    return;
+  }
+
+  for (const unit of units) {
+    const faction = factions[unit.faction] || factions.neutral;
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "unit-roster-item";
+    item.classList.toggle("is-selected", Boolean(selected && selected.id === unit.id));
+    item.style.setProperty("--unit-color", faction.color);
+    item.addEventListener("click", () => {
+      selectUnit(unit).catch((error) => window.alert(error.message));
+    });
+
+    const name = document.createElement("span");
+    name.className = "unit-roster-name";
+    name.textContent = unitDisplayName(unit);
+
+    const meta = document.createElement("span");
+    meta.className = "unit-roster-meta";
+    const hp = Number.isFinite(unit.hp) && Number.isFinite(unit.maxHp) ? `${unit.hp}/${unit.maxHp}` : "-";
+    meta.textContent = `${unitKindLabel(unit)} - HP ${hp}`;
+
+    item.append(name, meta);
+    unitRoster.appendChild(item);
+  }
+}
+
 function syncUnitInspector() {
   const unit = selectedUnit();
   if (!unit) {
@@ -775,6 +826,7 @@ function syncPlayControls() {
   campCount.textContent = String(countUnits("camp", owner));
   herdCount.textContent = String(countUnits("herd", owner));
   cavalryCount.textContent = String(countUnits("cavalry", owner));
+  syncUnitRoster();
   syncUnitInspector();
 }
 

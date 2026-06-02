@@ -143,22 +143,9 @@
             <h2>Selection</h2>
             <div class="selection-readout sidebar-selection-readout">None</div>
           </div>
-          <div class="sidebar-section sidebar-unit-inspector" aria-label="Unit inspector">
-            <h2>Unit</h2>
-            <dl class="status-list">
-              <div>
-                <dt>Name</dt>
-                <dd id="unit-name">None</dd>
-              </div>
-              <div>
-                <dt>HP</dt>
-                <dd id="unit-hp">-</dd>
-              </div>
-              <div>
-                <dt>Move</dt>
-                <dd id="unit-move">-</dd>
-              </div>
-            </dl>
+          <div class="sidebar-section">
+            <h2>Units</h2>
+            <div id="unit-roster" class="unit-roster" aria-label="Deployed units"></div>
           </div>
         </aside>
 
@@ -172,6 +159,23 @@
             <canvas id="map-canvas"></canvas>
           </div>
           <div id="play-details-bar" class="play-details-bar" aria-label="Play details">
+            <section class="unit-inspector" aria-label="Unit inspector">
+              <h2>Unit</h2>
+              <dl class="status-list">
+                <div>
+                  <dt>Name</dt>
+                  <dd id="unit-name">None</dd>
+                </div>
+                <div>
+                  <dt>HP</dt>
+                  <dd id="unit-hp">-</dd>
+                </div>
+                <div>
+                  <dt>Move</dt>
+                  <dd id="unit-move">-</dd>
+                </div>
+              </dl>
+            </section>
             <section class="play-detail-region turn-control-region" aria-label="Turn controls">
               <h2>Control</h2>
               <dl class="status-list">
