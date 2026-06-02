@@ -52,6 +52,7 @@ let paintStrokeKeys = new Set();
 let terrainUndo = new Map();
 let currentTurn = 1;
 let selectedUnitId = null;
+let reachableHexes = new Map();
 
 const viewport = {
   scale: 1,
@@ -437,6 +438,24 @@ function inBounds(coord) {
   return currentMap && coord.q >= 1 && coord.q <= currentMap.width && coord.r >= 1 && coord.r <= currentMap.height;
 }
 
+function hexAtCoord(coord) {
+  if (!currentMap || !Array.isArray(currentMap.hexes)) {
+    return null;
+  }
+  return currentMap.hexes.find((hex) => hex.q === coord.q && hex.r === coord.r) || null;
+}
+
+function unitAtCoord(coord, exceptUnitId = null) {
+  if (!currentMap || !Array.isArray(currentMap.units)) {
+    return null;
+  }
+  return currentMap.units.find((unit) => unit.id !== exceptUnitId && unit.q === coord.q && unit.r === coord.r) || null;
+}
+
+function movementCostForHex(hex) {
+  return hex && hex.terrain === "grassland" ? 1 : Infinity;
+}
+
 function panelToWorld(event) {
   const rect = mapPanel.getBoundingClientRect();
   return {
@@ -603,6 +622,46 @@ function selectedUnit() {
     : null;
 }
 
+function calculateReachableHexes(unit) {
+  const reachable = new Map();
+  if (!unit || !Number.isFinite(unit.remainingMove) || unit.remainingMove <= 0) {
+    return reachable;
+  }
+
+  const startKey = coordKey(unit);
+  const bestCosts = new Map([[startKey, 0]]);
+  const queue = [{ q: unit.q, r: unit.r, cost: 0 }];
+
+  for (let index = 0; index < queue.length; index += 1) {
+    const current = queue[index];
+    for (let direction = 0; direction < 6; direction += 1) {
+      const next = neighborInDirection(current, direction);
+      if (!inBounds(next) || unitAtCoord(next, unit.id)) {
+        continue;
+      }
+      const hex = hexAtCoord(next);
+      const stepCost = movementCostForHex(hex);
+      const nextCost = current.cost + stepCost;
+      if (!Number.isFinite(stepCost) || nextCost > unit.remainingMove) {
+        continue;
+      }
+      const key = coordKey(next);
+      if (bestCosts.has(key) && bestCosts.get(key) <= nextCost) {
+        continue;
+      }
+      bestCosts.set(key, nextCost);
+      reachable.set(key, { coord: next, cost: nextCost });
+      queue.push({ q: next.q, r: next.r, cost: nextCost });
+    }
+  }
+
+  return reachable;
+}
+
+function refreshReachableHexes() {
+  reachableHexes = appMode === "play" ? calculateReachableHexes(selectedUnit()) : new Map();
+}
+
 function unitDisplayName(unit) {
   const faction = factions[unit.faction] || factions.mongol;
   const kind = unit.kind === "cavalry" ? "Cavalry" : unit.kind;
@@ -648,6 +707,7 @@ function setAppMode(mode) {
   if (mode !== "scenario") {
     setEditMode(false);
   }
+  refreshReachableHexes();
   syncModeControls();
   if (currentMap) {
     requestAnimationFrame(drawMap);
@@ -885,6 +945,33 @@ function drawUnitCounters(units) {
   ctx.restore();
 }
 
+function drawReachableHexes() {
+  if (reachableHexes.size === 0) {
+    return;
+  }
+
+  ctx.save();
+  for (const { coord } of reachableHexes.values()) {
+    const center = hexCenter(coord);
+    const points = hexPoints(center.x, center.y, geometry.size * 0.78);
+    ctx.beginPath();
+    points.forEach(([x, y], index) => {
+      if (index === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    });
+    ctx.closePath();
+    ctx.fillStyle = "rgba(244, 228, 138, 0.38)";
+    ctx.fill();
+    ctx.strokeStyle = "#8a6f24";
+    ctx.lineWidth = 1.5 / viewport.scale;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function findUnitAtPoint(point) {
   if (!currentMap || !Array.isArray(currentMap.units)) {
     return null;
@@ -908,8 +995,27 @@ function findUnitAtPoint(point) {
 
 function selectUnit(unit) {
   selectedUnitId = unit ? unit.id : null;
+  refreshReachableHexes();
   syncModeControls();
   drawMap();
+}
+
+function moveSelectedUnitTo(coord) {
+  const unit = selectedUnit();
+  if (!unit) {
+    return false;
+  }
+  const move = reachableHexes.get(coordKey(coord));
+  if (!move) {
+    return false;
+  }
+  unit.q = coord.q;
+  unit.r = coord.r;
+  unit.remainingMove = Math.max(0, unit.remainingMove - move.cost);
+  refreshReachableHexes();
+  syncModeControls();
+  drawMap();
+  return true;
 }
 
 function drawMap() {
@@ -938,6 +1044,7 @@ function drawMap() {
   drawMapMarkers(currentMap.river_sources, terrainStyles.river.source, 5);
   drawMapMarkers(currentMap.merge_points, terrainStyles.river.merge, 5);
   drawMapMarkers(currentMap.river_destinations, terrainStyles.river.destination, 5);
+  drawReachableHexes();
   drawUnitCounters(currentMap.units);
 
   ctx.restore();
@@ -1138,6 +1245,7 @@ async function generateMap() {
     currentMap = payload;
     currentMap.units = Array.isArray(currentMap.units) ? currentMap.units : [];
     selectedUnitId = null;
+    reachableHexes = new Map();
     terrainUndo = new Map();
     refreshDerivedTopology();
     syncModeControls();
@@ -1186,6 +1294,7 @@ function createBlankMap(options = {}) {
     },
   };
   selectedUnitId = null;
+  reachableHexes = new Map();
   terrainUndo = new Map();
   refreshDerivedTopology();
   syncModeControls();
@@ -1219,6 +1328,7 @@ function createDefaultPlayScenario() {
     },
   ];
   selectedUnitId = null;
+  reachableHexes = new Map();
   currentTurn = 1;
   syncModeControls();
   fitMap();
@@ -1325,6 +1435,7 @@ async function loadMapText(text) {
   try {
     currentMap = normalizeLoadedMap(JSON.parse(text));
     selectedUnitId = null;
+    reachableHexes = new Map();
     terrainUndo = new Map();
     widthInput.value = currentMap.width;
     heightInput.value = currentMap.height;
@@ -1402,6 +1513,11 @@ mapPanel.addEventListener("pointerdown", (event) => {
     if (unit) {
       event.preventDefault();
       selectUnit(unit);
+      return;
+    }
+    const hex = findNearestHex(point);
+    if (hex && moveSelectedUnitTo(hex)) {
+      event.preventDefault();
       return;
     }
   }
