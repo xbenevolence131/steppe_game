@@ -15,8 +15,16 @@
   box-sizing: border-box;
 }
 
+html {
+  height: 100%;
+}
+
 body {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   margin: 0;
+  height: 100%;
+  overflow: hidden;
   background: var(--bg);
   color: var(--text);
   font-family: "Segoe UI", Arial, sans-serif;
@@ -56,8 +64,38 @@ body {
 
 .app-shell {
   display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-shell.is-scenario {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.scenario-topbar {
+  display: none;
+  grid-template-columns: minmax(170px, 220px) minmax(300px, 1.35fr) minmax(300px, 1.35fr) minmax(220px, 260px);
+  gap: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  overflow: auto;
+}
+
+.app-shell.is-scenario .scenario-topbar {
+  display: grid;
+}
+
+.main-workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+.app-shell.is-play .main-workbench {
   grid-template-columns: 300px minmax(0, 1fr);
-  min-height: calc(100vh - 97px);
 }
 
 .mode-sidebar {
@@ -70,15 +108,11 @@ body {
   overflow: auto;
 }
 
-.app-shell.is-scenario .scenario-sidebar,
 .app-shell.is-play .play-sidebar {
   display: grid;
 }
 
-.app-shell.is-intro {
-  grid-template-columns: minmax(0, 1fr);
-}
-
+.app-shell.is-intro .scenario-topbar,
 .app-shell.is-intro .mode-sidebar {
   display: none;
 }
@@ -105,10 +139,47 @@ body {
   font-weight: 650;
 }
 
+.control-section {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  border-right: 1px solid rgba(185, 173, 150, 0.7);
+  padding: 10px;
+}
+
+.control-section:last-child {
+  border-right: 0;
+}
+
+.control-section h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.scenario-actions {
+  min-width: 0;
+}
+
+.paint-fields {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.paint-fields h2,
+.paint-fields .terrain-palette {
+  grid-column: 1 / -1;
+}
+
 .field-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.scenario-topbar .field-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
 }
 
 label {
@@ -124,7 +195,7 @@ input {
   background: #fffdf8;
   color: var(--text);
   font: inherit;
-  padding: 7px 8px;
+  padding: 6px 7px;
 }
 
 .hidden-file-input {
@@ -209,6 +280,7 @@ button.is-active {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
+  min-height: 0;
   background: var(--empty);
 }
 
@@ -254,17 +326,20 @@ button.is-active {
 
 .map-panel {
   position: relative;
-  height: calc(100vh - 140px);
-  min-height: 420px;
+  height: auto;
+  min-height: 0;
   background: var(--empty);
   overflow: hidden;
   outline: none;
   cursor: default;
 }
 
+.app-shell.is-scenario .map-panel {
+  min-height: 0;
+}
+
 .app-shell.is-play .map-panel {
-  height: calc(100vh - 244px);
-  min-height: 320px;
+  min-height: 0;
 }
 
 .map-panel:focus {
@@ -282,19 +357,19 @@ button.is-active {
 #map-canvas {
   display: block;
   width: 100%;
-  min-height: 420px;
+  height: 100%;
+  min-height: 0;
 }
 
 .play-details-bar {
   display: none;
-  grid-template-columns: minmax(220px, 280px) minmax(180px, 1fr) minmax(180px, 1fr);
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr);
   gap: 0;
   border-top: 1px solid var(--line);
   background: var(--surface);
   min-height: 104px;
 }
 
-.unit-inspector,
 .play-detail-region {
   display: grid;
   align-content: start;
@@ -307,7 +382,6 @@ button.is-active {
   border-right: 0;
 }
 
-.unit-inspector h2,
 .play-detail-region h2 {
   margin: 0;
   font-size: 14px;
@@ -334,6 +408,27 @@ button.is-active {
 
   .app-shell,
   .app-shell.is-intro {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .scenario-topbar,
+  .app-shell.is-scenario .scenario-topbar {
+    grid-template-columns: 1fr;
+    max-height: 42vh;
+    overflow: auto;
+  }
+
+  .control-section {
+    border-right: 0;
+    border-bottom: 1px solid rgba(185, 173, 150, 0.7);
+  }
+
+  .control-section:last-child {
+    border-bottom: 0;
+  }
+
+  .main-workbench,
+  .app-shell.is-play .main-workbench {
     grid-template-columns: 1fr;
   }
 
@@ -348,14 +443,17 @@ button.is-active {
   }
 
   .map-panel {
-    height: calc(100vh - 180px);
+    min-height: 260px;
   }
 
   .play-details-bar {
     grid-template-columns: 1fr;
   }
 
-  .unit-inspector,
+  .app-shell.is-play .play-details-bar {
+    display: none;
+  }
+
   .play-detail-region {
     border-right: 0;
     border-bottom: 1px solid var(--line);

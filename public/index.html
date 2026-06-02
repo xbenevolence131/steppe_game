@@ -16,8 +16,8 @@
     </header>
 
     <main id="app-shell" class="app-shell is-intro">
-      <aside id="scenario-controls" class="mode-sidebar scenario-sidebar" aria-label="Scenario edit controls">
-        <div class="sidebar-section">
+      <section id="scenario-controls" class="scenario-topbar" aria-label="Scenario edit controls">
+        <div class="control-section scenario-actions">
           <h2>Scenario Edit</h2>
           <div class="panel-actions">
             <button id="generate-button" type="button">Generate</button>
@@ -28,7 +28,7 @@
           </div>
         </div>
 
-        <div class="sidebar-section">
+        <div class="control-section map-fields">
           <h2>Map</h2>
           <div class="field-grid">
             <label>
@@ -66,7 +66,7 @@
           </div>
         </div>
 
-        <div class="sidebar-section">
+        <div class="control-section river-fields">
           <h2>Rivers</h2>
           <div class="field-grid">
             <label>
@@ -104,7 +104,7 @@
           </div>
         </div>
 
-        <div class="sidebar-section">
+        <div class="control-section paint-fields">
           <h2>Paint</h2>
           <button id="edit-mode-button" class="secondary" type="button" aria-pressed="false">Edit</button>
           <select id="editor-tool" aria-label="Editor tool">
@@ -113,48 +113,37 @@
           </select>
           <div id="terrain-palette" class="terrain-palette" aria-label="Terrain palette"></div>
         </div>
-      </aside>
+      </section>
 
-      <aside id="play-controls" class="mode-sidebar play-sidebar" aria-label="Play controls">
-        <div class="sidebar-section">
-          <h2>Play</h2>
-          <div class="turn-counter">Turn 1</div>
-          <button id="end-turn-button" type="button">End Turn</button>
-        </div>
-        <div class="sidebar-section">
-          <h2>Clan</h2>
-          <dl class="status-list">
-            <div>
-              <dt>Camps</dt>
-              <dd id="camp-count">0</dd>
-            </div>
-            <div>
-              <dt>Herds</dt>
-              <dd id="herd-count">0</dd>
-            </div>
-            <div>
-              <dt>Cavalry</dt>
-              <dd id="cavalry-count">0</dd>
-            </div>
-          </dl>
-        </div>
-        <div class="sidebar-section">
-          <h2>Selection</h2>
-          <div class="selection-readout sidebar-selection-readout">None</div>
-        </div>
-      </aside>
-
-      <section class="map-section" aria-label="Shared map view">
-        <div class="map-toolbar" aria-label="Map view controls">
-          <button id="zoom-out-button" class="secondary icon-button" type="button" aria-label="Zoom out" title="Zoom out">-</button>
-          <button id="zoom-in-button" class="secondary icon-button" type="button" aria-label="Zoom in" title="Zoom in">+</button>
-          <button id="fit-button" class="secondary fit-button" type="button" aria-label="Fit map" title="Fit map">Fit</button>
-        </div>
-        <div id="map-panel" class="map-panel" tabindex="0">
-          <canvas id="map-canvas"></canvas>
-        </div>
-        <div id="play-details-bar" class="play-details-bar" aria-label="Play details">
-          <section class="unit-inspector" aria-label="Unit inspector">
+      <div class="main-workbench">
+        <aside id="play-controls" class="mode-sidebar play-sidebar" aria-label="Unit controls">
+          <div class="sidebar-section">
+            <h2>Play</h2>
+            <div class="turn-counter">Turn 1</div>
+            <button id="end-turn-button" type="button">End Turn</button>
+          </div>
+          <div class="sidebar-section">
+            <h2>Clan</h2>
+            <dl class="status-list">
+              <div>
+                <dt>Camps</dt>
+                <dd id="camp-count">0</dd>
+              </div>
+              <div>
+                <dt>Herds</dt>
+                <dd id="herd-count">0</dd>
+              </div>
+              <div>
+                <dt>Cavalry</dt>
+                <dd id="cavalry-count">0</dd>
+              </div>
+            </dl>
+          </div>
+          <div class="sidebar-section">
+            <h2>Selection</h2>
+            <div class="selection-readout sidebar-selection-readout">None</div>
+          </div>
+          <div class="sidebar-section sidebar-unit-inspector" aria-label="Unit inspector">
             <h2>Unit</h2>
             <dl class="status-list">
               <div>
@@ -170,27 +159,40 @@
                 <dd id="unit-move">-</dd>
               </div>
             </dl>
-          </section>
-          <section class="play-detail-region turn-control-region" aria-label="Turn controls">
-            <h2>Control</h2>
-            <dl class="status-list">
-              <div>
-                <dt>Faction</dt>
-                <dd id="active-faction-name">Mongol</dd>
-              </div>
-              <div>
-                <dt>Round</dt>
-                <dd id="round-count">1</dd>
-              </div>
-            </dl>
-            <button id="control-end-turn-button" type="button">End Turn</button>
-          </section>
-          <section class="play-detail-region" aria-label="Status">
-            <h2>Status</h2>
-            <div id="turn-status-readout" class="selection-readout">Mongol turn</div>
-          </section>
-        </div>
-      </section>
+          </div>
+        </aside>
+
+        <section class="map-section" aria-label="Shared map view">
+          <div class="map-toolbar" aria-label="Map view controls">
+            <button id="zoom-out-button" class="secondary icon-button" type="button" aria-label="Zoom out" title="Zoom out">-</button>
+            <button id="zoom-in-button" class="secondary icon-button" type="button" aria-label="Zoom in" title="Zoom in">+</button>
+            <button id="fit-button" class="secondary fit-button" type="button" aria-label="Fit map" title="Fit map">Fit</button>
+          </div>
+          <div id="map-panel" class="map-panel" tabindex="0">
+            <canvas id="map-canvas"></canvas>
+          </div>
+          <div id="play-details-bar" class="play-details-bar" aria-label="Play details">
+            <section class="play-detail-region turn-control-region" aria-label="Turn controls">
+              <h2>Control</h2>
+              <dl class="status-list">
+                <div>
+                  <dt>Faction</dt>
+                  <dd id="active-faction-name">Mongol</dd>
+                </div>
+                <div>
+                  <dt>Round</dt>
+                  <dd id="round-count">1</dd>
+                </div>
+              </dl>
+              <button id="control-end-turn-button" type="button">End Turn</button>
+            </section>
+            <section class="play-detail-region" aria-label="Status">
+              <h2>Status</h2>
+              <div id="turn-status-readout" class="selection-readout">Mongol turn</div>
+            </section>
+          </div>
+        </section>
+      </div>
     </main>
 
     <script src="/app.js"></script>
