@@ -680,19 +680,6 @@ function normalizeUnit(unit, index) {
   return normalized;
 }
 
-function gameCommandState() {
-  ensureGameMeta();
-  return {
-    schema: currentMap.schema || "steppe-game.v1",
-    seed: currentMap.seed || 0,
-    width: currentMap.width,
-    height: currentMap.height,
-    hexes: currentMap.hexes,
-    units: currentMap.units,
-    game: currentMap.game,
-  };
-}
-
 function applyGamePatch(payload) {
   if (!currentMap || !payload) {
     return;
@@ -706,17 +693,20 @@ function applyGamePatch(payload) {
   ensureGameMeta();
 }
 
-async function postGameCommand(path, body) {
-  const response = await fetch(path, {
+async function postAppCommand(command, gameId = "local-dev") {
+  const response = await fetch("/api/command", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ gameId, command }),
   });
   const payload = await response.json();
   if (!response.ok) {
-    throw new Error(payload.error || "game command failed");
+    throw new Error(payload.error || "app command failed");
   }
-  return payload;
+  if (!payload.ok) {
+    throw new Error(payload.error || "engine command failed");
+  }
+  return payload.view;
 }
 
 function legalMoves() {
@@ -1104,13 +1094,10 @@ async function selectUnit(unit) {
   if (!unit) {
     return false;
   }
-  const payload = await postGameCommand("/api/game/select", {
-    state: gameCommandState(),
+  const payload = await postAppCommand({
+    type: "select_unit",
     unitId: unit.id,
   });
-  if (!payload.ok) {
-    return false;
-  }
   applyGamePatch(payload);
   syncModeControls();
   drawMap();
@@ -1123,15 +1110,11 @@ async function moveSelectedUnitTo(coord) {
   if (!move) {
     return false;
   }
-  const payload = await postGameCommand("/api/game/move", {
-    state: gameCommandState(),
+  const payload = await postAppCommand({
+    type: "move_unit",
     unitId: unit.id,
-    q: coord.q,
-    r: coord.r,
+    to: { q: coord.q, r: coord.r },
   });
-  if (!payload.ok) {
-    return false;
-  }
   applyGamePatch(payload);
   syncModeControls();
   drawMap();
@@ -1143,14 +1126,11 @@ async function attackSelectedUnit(defender) {
   if (!attacker || !defender || !legalAttackForUnit(defender)) {
     return false;
   }
-  const payload = await postGameCommand("/api/game/attack", {
-    state: gameCommandState(),
+  const payload = await postAppCommand({
+    type: "attack_unit",
     attackerId: attacker.id,
     defenderId: defender.id,
   });
-  if (!payload.ok) {
-    return false;
-  }
   applyGamePatch(payload);
   syncModeControls();
   drawMap();
@@ -1159,9 +1139,7 @@ async function attackSelectedUnit(defender) {
 
 async function advanceTurn() {
   try {
-    applyGamePatch(await postGameCommand("/api/game/end-turn", {
-      state: gameCommandState(),
-    }));
+    applyGamePatch(await postAppCommand({ type: "end_turn" }));
   } catch (error) {
     window.alert(error.message);
   }
@@ -1454,7 +1432,8 @@ function createBlankMap(options = {}) {
 
 async function createDefaultPlayScenario() {
   try {
-    currentMap = await postGameCommand("/api/game/new", {
+    currentMap = await postAppCommand({
+      type: "new_game",
       width: 10,
       height: 10,
       factions: factionCount,

@@ -16,7 +16,8 @@ This is an experimental procedural territory-generation app for a hex-based turn
 - The library API exposes typed `GeneratedMap` data through `generate_map(const GenerateArgs&)`; JSON output should serialize that map via `print_generated_map_json` instead of interleaving generation and printing.
 - `game/` contains the first game-facing state layer, built as the `steppe_game` static library. It adapts `steppe::GeneratedMap` into `steppe::game::GameState`, stable hex tag bitmasks, settlements, owners, pasture placeholders, and mode-controller interfaces.
 - All gameplay rules must be authored in the C++ engine/game layer. A complete game state should be playable by engine commands and data structures with no dependency on the Node proxy or browser UI.
-- `proxy/` contains a raw Node.js HTTP server that invokes the engine.
+- `engine/steppe_daemon.cpp` is the long-running local engine daemon. It owns game instances in memory and exposes application-level command envelopes over localhost HTTP.
+- `proxy/` contains a raw Node.js HTTP server that serves the browser and forwards application commands to the C++ daemon. It should not spawn the CLI per game action or own gameplay rules.
 - `public/` contains the browser UI for inspecting generated maps and controlling play. It should render state and submit commands, not own gameplay rules.
 - Terrain and hydrology decisions should generally live in C++, with the browser focused on visualization.
 
@@ -34,10 +35,11 @@ On Windows, if a clean build fails with missing standard-library includes, run t
 
 ## Verification
 
-- At minimum, rebuild the C++ engine after changing `engine/steppe_generator.cpp`, `engine/steppe_generator.h`, or `engine/main.cpp`.
-- Run deterministic CLI samples with fixed seeds and confirm the output parses as JSON.
+- At minimum, rebuild the C++ engine after changing `engine/`, `game/`, or CMake files.
+- Run deterministic generation samples with fixed seeds and confirm the output parses as JSON.
+- When changing gameplay command flow, test through the Node proxy to the long-running daemon using `POST /api/command`; do not validate by adding browser-owned rule logic.
 - When rivers are reintroduced, check that each segment starts and ends at its declared endpoints, that edge paths are continuous, and that collected river edges are deduplicated.
-- If changing proxy behavior, test `POST /api/generate` through the local server.
+- If changing proxy behavior, test `POST /api/generate` and a basic `new_game -> select_unit -> move_unit` command flow through the local server.
 
 ## Working Notes
 

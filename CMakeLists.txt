@@ -40,3 +40,19 @@ target_link_libraries(steppe_engine
     PRIVATE
         steppe_game
 )
+
+add_executable(steppe_daemon
+    engine/steppe_daemon.cpp
+)
+
+target_link_libraries(steppe_daemon
+    PRIVATE
+        steppe_game
+)
+
+if(WIN32)
+    target_link_libraries(steppe_daemon
+        PRIVATE
+            ws2_32
+    )
+endif()
