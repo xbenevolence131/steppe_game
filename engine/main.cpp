@@ -105,6 +105,7 @@ struct LakeNetworkOverlay {
 struct Town {
     Coord coord;
     std::string feature;
+    std::vector<std::string> labels;
 };
 
 struct Road {
@@ -1565,7 +1566,6 @@ std::set<Coord, decltype(coord_less)*> derive_eastern_desert_hexes(
     const GenerateArgs& args,
     const std::set<Coord, decltype(coord_less)*>& lake_hexes,
     const std::set<Coord, decltype(coord_less)*>& valley_hexes,
-    const std::set<Coord, decltype(coord_less)*>& forest_blob_hexes,
     const std::vector<Town>& towns,
     const std::vector<Road>& roads
 ) {
@@ -1599,8 +1599,7 @@ std::set<Coord, decltype(coord_less)*> derive_eastern_desert_hexes(
         for (int q = 1; q <= args.width; ++q) {
             const Coord coord{q, r};
             if (lake_hexes.find(coord) != lake_hexes.end()
-                || valley_hexes.find(coord) != valley_hexes.end()
-                || forest_blob_hexes.find(coord) != forest_blob_hexes.end()) {
+                || valley_hexes.find(coord) != valley_hexes.end()) {
                 continue;
             }
             if (protected_hexes.find(coord) != protected_hexes.end()) {
@@ -1635,6 +1634,80 @@ std::set<Coord, decltype(coord_less)*> derive_eastern_desert_hexes(
     }
 
     return desert_hexes;
+}
+
+int hex_grid_distance(const Coord& first, const Coord& second);
+
+std::map<Coord, std::string, decltype(coord_less)*> derive_desert_river_corridor_hexes(
+    const GenerateArgs& args,
+    const std::set<Coord, decltype(coord_less)*>& desert_hexes,
+    const std::vector<RiverEdge>& river_edges
+) {
+    std::map<Coord, std::string, decltype(coord_less)*> corridor_hexes(coord_less);
+    std::map<Coord, int, decltype(coord_less)*> corridor_distances(coord_less);
+    const int primary_distance = std::max(1, static_cast<int>(std::ceil(args.valley_thickness)) + 1);
+    const int max_distance = primary_distance + 2;
+
+    const auto corridor_terrain = [&](const Coord& coord, int river_distance) {
+        const double roll = unit_noise(args.seed, static_cast<std::uint32_t>(81400 + coord.q * 197 + coord.r * 431));
+        const bool directly_river_adjacent = river_distance == 0;
+        if (river_distance <= primary_distance) {
+            if (directly_river_adjacent && roll < 0.035) {
+                return std::string("marsh");
+            }
+            if (roll < 0.047) {
+                return std::string("forest");
+            }
+            return std::string("grassland");
+        }
+
+        if (directly_river_adjacent && roll < 0.070) {
+            return std::string("marsh");
+        }
+        if (roll < 0.092) {
+            return std::string("forest");
+        }
+        return std::string("grassland");
+    };
+
+    for (const RiverEdge& edge : river_edges) {
+        const Coord anchors[] = {edge.a, edge.b};
+        for (const Coord& anchor : anchors) {
+            for (int r = std::max(1, anchor.r - max_distance); r <= std::min(args.height, anchor.r + max_distance); ++r) {
+                for (int q = std::max(1, anchor.q - max_distance); q <= std::min(args.width, anchor.q + max_distance); ++q) {
+                    const Coord coord{q, r};
+                    if (desert_hexes.find(coord) == desert_hexes.end()) {
+                        continue;
+                    }
+
+                    const int river_distance = hex_grid_distance(coord, anchor);
+                    if (river_distance > max_distance) {
+                        continue;
+                    }
+
+                    if (river_distance > primary_distance) {
+                        const double include_roll = unit_noise(
+                            args.seed,
+                            static_cast<std::uint32_t>(81500 + coord.q * 211 + coord.r * 389 + river_distance * 997)
+                        );
+                        const double threshold = river_distance == primary_distance + 1 ? 0.48 : 0.18;
+                        if (include_roll >= threshold) {
+                            continue;
+                        }
+                    }
+
+                    const auto existing_distance = corridor_distances.find(coord);
+                    if (existing_distance != corridor_distances.end() && existing_distance->second <= river_distance) {
+                        continue;
+                    }
+                    corridor_distances[coord] = river_distance;
+                    corridor_hexes[coord] = corridor_terrain(coord, river_distance);
+                }
+            }
+        }
+    }
+
+    return corridor_hexes;
 }
 
 const char* wild_terrain_for_distance(const GenerateArgs& args, const Coord& coord, int grassland_distance) {
@@ -1674,6 +1747,18 @@ bool coord_adjacent_to_river(const Coord& coord, const std::vector<RiverEdge>& r
     return std::find_if(river_edges.begin(), river_edges.end(), [&coord](const RiverEdge& edge) {
         return coord_equal(edge.a, coord) || coord_equal(edge.b, coord);
     }) != river_edges.end();
+}
+
+std::optional<Coord> easternmost_river_destination(const RiverNetwork& rivers) {
+    std::optional<Coord> result;
+    for (const Coord& destination : rivers.destinations) {
+        if (!result.has_value()
+            || destination.q > result->q
+            || (destination.q == result->q && destination.r > result->r)) {
+            result = destination;
+        }
+    }
+    return result;
 }
 
 std::map<Coord, std::string, decltype(coord_less)*> derive_steppe_texture_hexes(
@@ -1741,9 +1826,12 @@ bool adjacent_to_base_grassland(
 bool forest_blob_can_grow(
     const GenerateArgs& args,
     const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const std::set<Coord, decltype(coord_less)*>& blocked_hexes,
     const Coord& coord
 ) {
-    return in_bounds(coord, args) && lake_hexes.find(coord) == lake_hexes.end();
+    return in_bounds(coord, args)
+        && lake_hexes.find(coord) == lake_hexes.end()
+        && blocked_hexes.find(coord) == blocked_hexes.end();
 }
 
 int hex_grid_distance(const Coord& first, const Coord& second) {
@@ -1828,7 +1916,8 @@ std::vector<Coord> straight_hex_line(const Coord& start, const Coord& end) {
 std::set<Coord, decltype(coord_less)*> derive_forest_blob_hexes(
     const GenerateArgs& args,
     const std::set<Coord, decltype(coord_less)*>& lake_hexes,
-    const std::set<Coord, decltype(coord_less)*>& valley_hexes
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes,
+    const std::set<Coord, decltype(coord_less)*>& blocked_hexes
 ) {
     std::set<Coord, decltype(coord_less)*> forest_hexes(coord_less);
     std::vector<Coord> seeds;
@@ -1840,6 +1929,7 @@ std::set<Coord, decltype(coord_less)*> derive_forest_blob_hexes(
         for (int q = 1; q <= args.width; ++q) {
             const Coord coord{q, r};
             if (lake_hexes.find(coord) != lake_hexes.end()
+                || blocked_hexes.find(coord) != blocked_hexes.end()
                 || base_grassland_after_valleys(args, lake_hexes, valley_hexes, coord)
                 || !adjacent_to_base_grassland(args, lake_hexes, valley_hexes, coord)) {
                 continue;
@@ -1881,7 +1971,7 @@ std::set<Coord, decltype(coord_less)*> derive_forest_blob_hexes(
             for (const Coord& frontier_coord : frontier) {
                 for (int direction = 0; direction < 6; ++direction) {
                     const Coord neighbor = neighbor_in_direction(frontier_coord, direction);
-                    if (!forest_blob_can_grow(args, lake_hexes, neighbor)
+                    if (!forest_blob_can_grow(args, lake_hexes, blocked_hexes, neighbor)
                         || hex_grid_distance(seed, neighbor) > radius
                         || forest_hexes.find(neighbor) != forest_hexes.end()
                         || contains_coord(blob, neighbor)
@@ -2179,12 +2269,22 @@ std::vector<Town> generate_chinese_region(
     }
 
     std::set<Coord, decltype(coord_less)*> local_occupied = occupied_towns;
-    const auto add_chinese_town = [&](const Coord& coord) {
+    const auto add_chinese_town = [&](const Coord& coord, std::vector<std::string> labels = {}) {
         if (local_occupied.find(coord) != local_occupied.end()
             || !final_grassland_before_towns(args, all_lakes, valley_hexes, coord)) {
             return false;
         }
-        towns.push_back({coord, "chinese_town"});
+        towns.push_back({coord, "chinese_town", labels});
+        local_occupied.insert(coord);
+        return true;
+    };
+    const auto force_chinese_town = [&](const Coord& coord, std::vector<std::string> labels = {}) {
+        if (!in_bounds(coord, args)
+            || all_lakes.find(coord) != all_lakes.end()
+            || local_occupied.find(coord) != local_occupied.end()) {
+            return false;
+        }
+        towns.push_back({coord, "chinese_town", labels});
         local_occupied.insert(coord);
         return true;
     };
@@ -2248,6 +2348,52 @@ std::vector<Town> generate_chinese_region(
         });
         if (!river_candidates.empty()) {
             add_chinese_town(river_candidates.front());
+        }
+    }
+
+    if (const std::optional<Coord> access_destination = easternmost_river_destination(rivers); access_destination.has_value()) {
+        std::vector<Coord> access_candidates;
+        for (int radius = 1; radius <= 6; ++radius) {
+            for (int r = std::max(1, access_destination->r - radius); r <= std::min(args.height, access_destination->r + radius); ++r) {
+                for (int q = std::max(1, access_destination->q - radius); q <= std::min(args.width, access_destination->q + radius); ++q) {
+                    const Coord coord{q, r};
+                    if (hex_grid_distance(coord, access_destination.value()) > radius
+                        || !in_bounds(coord, args)
+                        || all_lakes.find(coord) != all_lakes.end()
+                        || local_occupied.find(coord) != local_occupied.end()
+                        || !coord_adjacent_to_river(coord, rivers.edges)
+                        || contains_coord(access_candidates, coord)) {
+                        continue;
+                    }
+                    access_candidates.push_back(coord);
+                }
+            }
+            if (!access_candidates.empty()) {
+                break;
+            }
+        }
+
+        std::sort(access_candidates.begin(), access_candidates.end(), [&](const Coord& first, const Coord& second) {
+            const int first_distance = hex_grid_distance(first, access_destination.value());
+            const int second_distance = hex_grid_distance(second, access_destination.value());
+            const bool first_grassland = final_grassland_before_towns(args, all_lakes, valley_hexes, first);
+            const bool second_grassland = final_grassland_before_towns(args, all_lakes, valley_hexes, second);
+            const double first_score = (first_distance == 1 ? 80.0 : 0.0)
+                + (first_grassland ? 20.0 : 0.0)
+                - static_cast<double>(first_distance) * 3.0
+                + unit_noise(args.seed, static_cast<std::uint32_t>(76840 + first.q * 211 + first.r * 397)) * 0.25;
+            const double second_score = (second_distance == 1 ? 80.0 : 0.0)
+                + (second_grassland ? 20.0 : 0.0)
+                - static_cast<double>(second_distance) * 3.0
+                + unit_noise(args.seed, static_cast<std::uint32_t>(76840 + second.q * 211 + second.r * 397)) * 0.25;
+            if (first_score != second_score) {
+                return first_score > second_score;
+            }
+            return coord_less(first, second);
+        });
+
+        if (!access_candidates.empty()) {
+            force_chinese_town(access_candidates.front(), {"china_access_town"});
         }
     }
 
@@ -2717,8 +2863,8 @@ std::optional<Road> build_silk_road(
     const std::set<Coord, decltype(coord_less)*>& valley_hexes,
     int& next_id
 ) {
-    const std::optional<Coord> chinese_anchor = easternmost_town_for_feature(towns, "chinese_town");
-    const std::optional<Coord> persian_anchor = westernmost_town_for_feature(towns, "persian_town");
+    const std::optional<Coord> chinese_anchor = westernmost_town_for_feature(towns, "chinese_town");
+    const std::optional<Coord> persian_anchor = easternmost_town_for_feature(towns, "persian_town");
     const auto oasis = std::find_if(towns.begin(), towns.end(), [](const Town& town) {
         return town.feature == "oasis";
     });
@@ -2729,15 +2875,15 @@ std::optional<Road> build_silk_road(
         return std::nullopt;
     }
 
-    std::vector<Coord> west_path = route_road_path(args, chinese_anchor.value(), oasis->coord, lake_hexes, &valley_hexes);
-    const std::vector<Coord> gate_path = route_road_path(args, oasis->coord, dzungarian_gate->coord, lake_hexes, &valley_hexes);
-    const std::vector<Coord> persian_path = route_road_path(args, dzungarian_gate->coord, persian_anchor.value(), lake_hexes, &valley_hexes);
-    if (west_path.empty() || gate_path.empty() || persian_path.empty()) {
+    std::vector<Coord> persian_path = route_road_path(args, persian_anchor.value(), dzungarian_gate->coord, lake_hexes, &valley_hexes);
+    const std::vector<Coord> oasis_path = route_road_path(args, dzungarian_gate->coord, oasis->coord, lake_hexes, &valley_hexes);
+    const std::vector<Coord> chinese_path = route_road_path(args, oasis->coord, chinese_anchor.value(), lake_hexes, &valley_hexes);
+    if (persian_path.empty() || oasis_path.empty() || chinese_path.empty()) {
         return std::nullopt;
     }
-    west_path.insert(west_path.end(), gate_path.begin() + 1, gate_path.end());
-    west_path.insert(west_path.end(), persian_path.begin() + 1, persian_path.end());
-    return Road{next_id++, "silk_road", west_path};
+    persian_path.insert(persian_path.end(), oasis_path.begin() + 1, oasis_path.end());
+    persian_path.insert(persian_path.end(), chinese_path.begin() + 1, chinese_path.end());
+    return Road{next_id++, "silk_road", persian_path};
 }
 
 std::vector<Coord> clean_path_through_waypoints(
@@ -2805,7 +2951,7 @@ std::vector<Road> clean_roads(
 
     for (Road& road : cleaned_roads) {
         if (road.feature == "silk_road" && oasis != towns.end() && dzungarian_gate != towns.end()) {
-            road.path = clean_path_through_waypoints(args, road.path, {oasis->coord, dzungarian_gate->coord}, lake_hexes, valley_hexes);
+            road.path = clean_path_through_waypoints(args, road.path, {dzungarian_gate->coord, oasis->coord}, lake_hexes, valley_hexes);
         } else {
             road.path = clean_road_path(args, road.path, lake_hexes);
         }
@@ -3052,7 +3198,12 @@ void print_edge(const RiverEdge& edge) {
 }
 
 void print_town(const Town& town) {
-    std::cout << "{\"q\":" << town.coord.q << ",\"r\":" << town.coord.r << ",\"feature\":\"" << town.feature << "\"}";
+    std::cout << "{\"q\":" << town.coord.q << ",\"r\":" << town.coord.r << ",\"feature\":\"" << town.feature << "\"";
+    if (!town.labels.empty()) {
+        std::cout << ",\"labels\":";
+        print_string_array(town.labels);
+    }
+    std::cout << "}";
 }
 
 void print_road(const Road& road) {
@@ -3097,8 +3248,6 @@ void print_generated_map(const GenerateArgs& args) {
     }
     std::sort(all_river_edges.begin(), all_river_edges.end(), edge_less);
     const std::set<Coord, decltype(coord_less)*> valley_hexes = derive_valley_hexes(args, all_lakes, all_river_edges);
-    const std::set<Coord, decltype(coord_less)*> forest_blob_hexes = derive_forest_blob_hexes(args, all_lakes, valley_hexes);
-    const std::map<Coord, std::string, decltype(coord_less)*> steppe_texture_hexes = derive_steppe_texture_hexes(args, all_lakes, valley_hexes, forest_blob_hexes, all_river_edges);
     std::vector<Town> towns = place_fixed_feature_towns(args, baikal, caspian, chinese_lake_network, all_lakes, valley_hexes, rivers);
     const std::optional<Town> dzungarian_gate = place_dzungarian_gate_town(args, all_lakes, valley_hexes, towns);
     if (dzungarian_gate.has_value()) {
@@ -3114,7 +3263,19 @@ void print_generated_map(const GenerateArgs& args) {
         return coord_less(first.coord, second.coord);
     });
     const std::vector<Road> roads = generate_roads(args, towns, all_lakes, valley_hexes);
-    const std::set<Coord, decltype(coord_less)*> eastern_desert_hexes = derive_eastern_desert_hexes(args, all_lakes, valley_hexes, forest_blob_hexes, towns, roads);
+    const std::set<Coord, decltype(coord_less)*> eastern_desert_hexes = derive_eastern_desert_hexes(args, all_lakes, valley_hexes, towns, roads);
+    const std::map<Coord, std::string, decltype(coord_less)*> desert_river_corridor_hexes = derive_desert_river_corridor_hexes(args, eastern_desert_hexes, all_river_edges);
+    std::set<Coord, decltype(coord_less)*> forest_blocked_hexes = eastern_desert_hexes;
+    for (const Town& town : towns) {
+        forest_blocked_hexes.insert(town.coord);
+    }
+    for (const Road& road : roads) {
+        for (const Coord& coord : road.path) {
+            forest_blocked_hexes.insert(coord);
+        }
+    }
+    const std::set<Coord, decltype(coord_less)*> forest_blob_hexes = derive_forest_blob_hexes(args, all_lakes, valley_hexes, forest_blocked_hexes);
+    const std::map<Coord, std::string, decltype(coord_less)*> steppe_texture_hexes = derive_steppe_texture_hexes(args, all_lakes, valley_hexes, forest_blob_hexes, all_river_edges);
     const std::vector<Crossing> crossings = generate_crossings(args, towns, roads, all_river_edges, rivers.segments, all_lakes, valley_hexes);
     const std::map<Coord, int, decltype(coord_less)*> grassland_distances = derive_grassland_distances(args, valley_hexes);
     const std::vector<LakeRiverConnection> lake_river_connections = derive_lake_river_connections(all_lakes, all_river_edges);
@@ -3141,8 +3302,10 @@ void print_generated_map(const GenerateArgs& args) {
             const bool caspian_lake = caspian.find(coord) != caspian.end();
             const bool chinese_lake = coord_in_vector(chinese_lake_network.lake_hexes, coord);
             const bool valley = valley_hexes.find(coord) != valley_hexes.end();
+            const auto desert_river_corridor = desert_river_corridor_hexes.find(coord);
+            const bool eastern_desert = eastern_desert_hexes.find(coord) != eastern_desert_hexes.end()
+                && desert_river_corridor == desert_river_corridor_hexes.end();
             const bool forest_blob = forest_blob_hexes.find(coord) != forest_blob_hexes.end();
-            const bool eastern_desert = eastern_desert_hexes.find(coord) != eastern_desert_hexes.end();
             const auto steppe_texture = steppe_texture_hexes.find(coord);
             const auto town = std::find_if(towns.begin(), towns.end(), [&coord](const Town& candidate) {
                 return coord_equal(candidate.coord, coord);
@@ -3161,6 +3324,8 @@ void print_generated_map(const GenerateArgs& args) {
                 terrain = "lake";
             } else if (forest_blob) {
                 terrain = "forest";
+            } else if (desert_river_corridor != desert_river_corridor_hexes.end()) {
+                terrain = desert_river_corridor->second.c_str();
             } else if (eastern_desert) {
                 terrain = "desert";
             } else if (steppe_texture != steppe_texture_hexes.end()) {
@@ -3187,7 +3352,7 @@ void print_generated_map(const GenerateArgs& args) {
             if ((forest_blob || eastern_desert) && base_steppe) {
                 remove_label("base_steppe");
             }
-            if ((lake || valley || urban) && !base_steppe) {
+            if ((lake || valley || urban || desert_river_corridor != desert_river_corridor_hexes.end()) && !base_steppe) {
                 remove_label("wild_terrain");
             }
             if (valley) {
@@ -3198,6 +3363,14 @@ void print_generated_map(const GenerateArgs& args) {
             }
             if (eastern_desert) {
                 labels.push_back("eastern_desert");
+            }
+            if (desert_river_corridor != desert_river_corridor_hexes.end()) {
+                labels.push_back("desert_river_corridor");
+                if (desert_river_corridor->second == "marsh") {
+                    labels.push_back("desert_river_marsh");
+                } else if (desert_river_corridor->second == "forest") {
+                    labels.push_back("desert_river_forest");
+                }
             }
             if (steppe_texture != steppe_texture_hexes.end()) {
                 labels.push_back(steppe_texture->second);
@@ -3220,6 +3393,7 @@ void print_generated_map(const GenerateArgs& args) {
                 labels.push_back("urban");
                 labels.push_back(town->feature == "grassland_water" ? "water_adjacent_town" : "fixed_feature_town");
                 labels.push_back(town->feature);
+                labels.insert(labels.end(), town->labels.begin(), town->labels.end());
             }
             std::cout << "{\"q\":" << q << ",\"r\":" << r << ",\"terrain\":\"" << terrain << "\",\"labels\":";
             print_string_array(labels);
