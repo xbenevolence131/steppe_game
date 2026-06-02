@@ -2,6 +2,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { execFile } = require("child_process");
+const { spawn } = require("child_process");
 
 const rootDir = path.resolve(__dirname, "..");
 const publicDir = path.join(rootDir, "public");
@@ -40,7 +41,7 @@ function readRequestJson(req) {
     let body = "";
     req.on("data", (chunk) => {
       body += chunk;
-      if (body.length > 64 * 1024) {
+      if (body.length > 8 * 1024 * 1024) {
         reject(new Error("request body is too large"));
         req.destroy();
       }
@@ -86,6 +87,49 @@ function parseSeed(value) {
     return Math.floor(Math.random() * 0x100000000);
   }
   return result;
+}
+
+function runEngineJson(args, input = "") {
+  return new Promise((resolve, reject) => {
+    const executable = enginePath();
+    if (!executable) {
+      reject(new Error("Engine executable not found. Build it with: cmake -S . -B build -G Ninja && cmake --build build"));
+      return;
+    }
+
+    const child = spawn(executable, args, {
+      cwd: rootDir,
+      windowsHide: true,
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      let payload;
+      try {
+        payload = JSON.parse(stdout);
+      } catch {
+        reject(new Error(stderr.trim() || "Engine returned invalid JSON"));
+        return;
+      }
+      if (code !== 0 && !payload.ok) {
+        resolve(payload);
+        return;
+      }
+      if (code !== 0) {
+        reject(new Error(stderr.trim() || `Engine exited with code ${code}`));
+        return;
+      }
+      resolve(payload);
+    });
+    child.stdin.end(input);
+  });
 }
 
 async function handleGenerate(req, res) {
@@ -171,6 +215,61 @@ async function handleGenerate(req, res) {
   });
 }
 
+async function handleGameNew(req, res) {
+  let payload;
+  try {
+    payload = await readRequestJson(req);
+    const width = parseDimension(payload.width, 10, 120);
+    const height = parseDimension(payload.height, 10, 80);
+    const factions = parseBoundedInteger(payload.factions, 2, 1, 3);
+    sendJson(res, 200, await runEngineJson([
+      "game-new",
+      "--width", String(width),
+      "--height", String(height),
+      "--factions", String(factions),
+    ]));
+  } catch (error) {
+    sendJson(res, 500, { error: error.message });
+  }
+}
+
+async function handleGameReachable(req, res) {
+  try {
+    const payload = await readRequestJson(req);
+    const unitId = parseBoundedInteger(payload.unitId, 0, 0, 1000000);
+    sendJson(res, 200, await runEngineJson(["game-reachable", "--unit", String(unitId)], JSON.stringify(payload.state || {})));
+  } catch (error) {
+    sendJson(res, 500, { error: error.message });
+  }
+}
+
+async function handleGameMove(req, res) {
+  try {
+    const payload = await readRequestJson(req);
+    const unitId = parseBoundedInteger(payload.unitId, 0, 0, 1000000);
+    const q = parseBoundedInteger(payload.q, 0, 0, 1000000);
+    const r = parseBoundedInteger(payload.r, 0, 0, 1000000);
+    const result = await runEngineJson([
+      "game-move",
+      "--unit", String(unitId),
+      "--q", String(q),
+      "--r", String(r),
+    ], JSON.stringify(payload.state || {}));
+    sendJson(res, result.ok ? 200 : 400, result);
+  } catch (error) {
+    sendJson(res, 500, { error: error.message });
+  }
+}
+
+async function handleGameEndTurn(req, res) {
+  try {
+    const payload = await readRequestJson(req);
+    sendJson(res, 200, await runEngineJson(["game-end-turn"], JSON.stringify(payload.state || {})));
+  } catch (error) {
+    sendJson(res, 500, { error: error.message });
+  }
+}
+
 function serveStatic(req, res) {
   const requestPath = new URL(req.url, `http://${req.headers.host}`).pathname;
   const relativePath = requestPath === "/" ? "index.html" : requestPath.slice(1);
@@ -200,6 +299,22 @@ function serveStatic(req, res) {
 const server = http.createServer((req, res) => {
   if (req.method === "POST" && req.url === "/api/generate") {
     handleGenerate(req, res);
+    return;
+  }
+  if (req.method === "POST" && req.url === "/api/game/new") {
+    handleGameNew(req, res);
+    return;
+  }
+  if (req.method === "POST" && req.url === "/api/game/reachable") {
+    handleGameReachable(req, res);
+    return;
+  }
+  if (req.method === "POST" && req.url === "/api/game/move") {
+    handleGameMove(req, res);
+    return;
+  }
+  if (req.method === "POST" && req.url === "/api/game/end-turn") {
+    handleGameEndTurn(req, res);
     return;
   }
 

@@ -4,6 +4,7 @@
 #include "steppe_generator.h"
 
 #include <cstdint>
+#include <iosfwd>
 #include <string>
 #include <vector>
 
@@ -11,6 +12,7 @@ namespace steppe::game {
 
 using OwnerId = int;
 constexpr OwnerId neutral_owner = -1;
+constexpr OwnerId mongol_owner = 0;
 constexpr OwnerId persian_owner = 1;
 constexpr OwnerId chinese_owner = 2;
 
@@ -84,7 +86,9 @@ struct Settlement {
 
 struct Clan {
     OwnerId id = neutral_owner;
+    std::string key;
     std::string name;
+    std::string color;
 };
 
 struct Unit {
@@ -92,14 +96,25 @@ struct Unit {
     OwnerId owner = neutral_owner;
     UnitKind kind = UnitKind::Cavalry;
     Coord coord;
+    int hp = 10;
+    int max_hp = 10;
+    int move = 4;
+    int remaining_move = 4;
+};
+
+struct ReachableHex {
+    Coord coord;
+    int cost = 0;
 };
 
 struct GameState {
     int width = 0;
     int height = 0;
     std::uint32_t seed = 1;
-    int turn = 1;
+    int round = 1;
+    int active_faction_index = 0;
     GameModeKind active_mode = GameModeKind::StrategicGame;
+    std::vector<OwnerId> turn_order;
 
     std::vector<GameHex> hexes;
     std::vector<RiverEdge> rivers;
@@ -122,5 +137,16 @@ PastureState initial_pasture_for_terrain(Terrain terrain);
 
 GameState game_state_from_generated_map(const GeneratedMap& generated);
 GameState generate_game_state(const GenerateArgs& args);
+GameState create_default_play_sandbox(int width = 10, int height = 10, int faction_count = 2);
+
+OwnerId active_faction(const GameState& state);
+std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id);
+bool move_unit(GameState& state, int unit_id, Coord destination);
+void end_turn(GameState& state);
+
+void print_game_state_json(const GameState& state, std::ostream& out);
+void print_reachable_json(const std::vector<ReachableHex>& reachable, std::ostream& out);
+void print_game_patch_json(const GameState& state, bool ok, std::ostream& out);
+GameState parse_game_state_json(const std::string& json);
 
 } // namespace steppe::game

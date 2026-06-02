@@ -3518,6 +3518,10 @@ void print_generated_map(const GenerateArgs& args) {
 void print_usage() {
     std::cerr << "Usage:\n";
     std::cerr << "  steppe_engine generate --width <n> --height <n> [--seed <n>] [--rivers <n>] [--lakes <n>] [--lake-size <n>] [--meander-forward <n>] [--meander-forward-jitter <n>] [--meander-lateral <n>] [--meander-lateral-jitter <n>] [--meander-strength <n>] [--meander-reach <n>] [--river-slant-strength <n>] [--valley-thickness <n>] [--forest-blobs <n>] [--forest-blob-radius <n>] [--meander-timeout <n>]\n";
+    std::cerr << "  steppe_engine game-new [--width <n>] [--height <n>] [--factions <n>]\n";
+    std::cerr << "  steppe_engine game-reachable --unit <id> < game-state.json\n";
+    std::cerr << "  steppe_engine game-move --unit <id> --q <q> --r <r> < game-state.json\n";
+    std::cerr << "  steppe_engine game-end-turn < game-state.json\n";
 }
 
 } // namespace steppe

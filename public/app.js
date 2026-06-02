@@ -58,6 +58,7 @@ let currentTurn = 1;
 let activeFactionIndex = 0;
 let selectedUnitId = null;
 let reachableHexes = new Map();
+let reachableRequestId = 0;
 
 const viewport = {
   scale: 1,
@@ -151,14 +152,22 @@ const factions = {
   mongol: {
     name: "Mongol",
     color: "#2368c4",
+    owner: 0,
   },
   chinese: {
     name: "Chinese",
     color: "#c93632",
+    owner: 2,
   },
   persian: {
     name: "Persian",
     color: "#8a4fb0",
+    owner: 1,
+  },
+  neutral: {
+    name: "Neutral",
+    color: "#777777",
+    owner: -1,
   },
 };
 
@@ -454,24 +463,6 @@ function inBounds(coord) {
   return currentMap && coord.q >= 1 && coord.q <= currentMap.width && coord.r >= 1 && coord.r <= currentMap.height;
 }
 
-function hexAtCoord(coord) {
-  if (!currentMap || !Array.isArray(currentMap.hexes)) {
-    return null;
-  }
-  return currentMap.hexes.find((hex) => hex.q === coord.q && hex.r === coord.r) || null;
-}
-
-function unitAtCoord(coord, exceptUnitId = null) {
-  if (!currentMap || !Array.isArray(currentMap.units)) {
-    return null;
-  }
-  return currentMap.units.find((unit) => unit.id !== exceptUnitId && unit.q === coord.q && unit.r === coord.r) || null;
-}
-
-function movementCostForHex(hex) {
-  return hex && hex.terrain === "grassland" ? 1 : Infinity;
-}
-
 function panelToWorld(event) {
   const rect = mapPanel.getBoundingClientRect();
   return {
@@ -627,20 +618,36 @@ function stopPainting() {
 }
 
 function activeFactionKey() {
-  return factionTurnOrder[activeFactionIndex] || factionTurnOrder[0] || "mongol";
+  const clan = activeFaction();
+  return clan.key || factionTurnOrder[activeFactionIndex] || factionTurnOrder[0] || "mongol";
+}
+
+function activeOwner() {
+  if (currentMap && currentMap.game && Number.isInteger(currentMap.game.activeOwner)) {
+    return currentMap.game.activeOwner;
+  }
+  const key = factionTurnOrder[activeFactionIndex] || "mongol";
+  return factions[key] ? factions[key].owner : factions.mongol.owner;
 }
 
 function activeFaction() {
-  return factions[activeFactionKey()] || factions.mongol;
+  const owner = activeOwner();
+  const clan = currentMap && currentMap.game && Array.isArray(currentMap.game.clans)
+    ? currentMap.game.clans.find((candidate) => candidate.id === owner)
+    : null;
+  if (clan) {
+    return clan;
+  }
+  return Object.values(factions).find((faction) => faction.owner === owner) || factions.mongol;
 }
 
 function canActWithUnit(unit) {
-  return Boolean(unit && unit.faction === activeFactionKey());
+  return Boolean(unit && unit.owner === activeOwner());
 }
 
-function countUnits(kind, factionKey = null) {
+function countUnits(kind, owner = null) {
   return currentMap && Array.isArray(currentMap.units)
-    ? currentMap.units.filter((unit) => unit.kind === kind && (!factionKey || unit.faction === factionKey)).length
+    ? currentMap.units.filter((unit) => unit.kind === kind && (owner === null || unit.owner === owner)).length
     : 0;
 }
 
@@ -650,84 +657,48 @@ function selectedUnit() {
     : null;
 }
 
-function calculateReachableHexes(unit) {
-  const reachable = new Map();
-  if (!canActWithUnit(unit) || !Number.isFinite(unit.remainingMove) || unit.remainingMove <= 0) {
-    return reachable;
-  }
-
-  const startKey = coordKey(unit);
-  const bestCosts = new Map([[startKey, 0]]);
-  const queue = [{ q: unit.q, r: unit.r, cost: 0 }];
-
-  for (let index = 0; index < queue.length; index += 1) {
-    const current = queue[index];
-    for (let direction = 0; direction < 6; direction += 1) {
-      const next = neighborInDirection(current, direction);
-      if (!inBounds(next) || unitAtCoord(next, unit.id)) {
-        continue;
-      }
-      const hex = hexAtCoord(next);
-      const stepCost = movementCostForHex(hex);
-      const nextCost = current.cost + stepCost;
-      if (!Number.isFinite(stepCost) || nextCost > unit.remainingMove) {
-        continue;
-      }
-      const key = coordKey(next);
-      if (bestCosts.has(key) && bestCosts.get(key) <= nextCost) {
-        continue;
-      }
-      bestCosts.set(key, nextCost);
-      reachable.set(key, { coord: next, cost: nextCost });
-      queue.push({ q: next.q, r: next.r, cost: nextCost });
-    }
-  }
-
-  return reachable;
+function defaultGameMeta() {
+  const turnOrder = ["mongol", "chinese", "persian"].slice(0, factionCount).map((key) => factions[key].owner);
+  return {
+    round: 1,
+    activeFactionIndex: 0,
+    activeOwner: turnOrder[0],
+    turnOrder,
+    clans: Object.entries(factions).map(([key, faction]) => ({
+      id: faction.owner,
+      key,
+      name: faction.name,
+      color: faction.color,
+    })),
+  };
 }
 
-function refreshReachableHexes() {
-  reachableHexes = appMode === "play" ? calculateReachableHexes(selectedUnit()) : new Map();
-}
-
-function resetMovementForFaction(factionKey) {
-  if (!currentMap || !Array.isArray(currentMap.units)) {
+function ensureGameMeta() {
+  if (!currentMap) {
     return;
   }
-  for (const unit of currentMap.units) {
-    if (unit.faction === factionKey) {
-      unit.remainingMove = unit.move;
-    }
+  if (!currentMap.game || typeof currentMap.game !== "object") {
+    currentMap.game = defaultGameMeta();
   }
-}
-
-function resetTurnState() {
-  currentTurn = 1;
-  activeFactionIndex = 0;
-  resetMovementForFaction(activeFactionKey());
-}
-
-function createCavalryUnit(id, faction, q, r) {
-  return {
-    id,
-    faction,
-    kind: "cavalry",
-    q,
-    r,
-    hp: unitDefaults.cavalry.hp,
-    maxHp: unitDefaults.cavalry.hp,
-    move: unitDefaults.cavalry.move,
-    remainingMove: unitDefaults.cavalry.move,
-  };
+  currentTurn = Number.isInteger(currentMap.game.round) ? currentMap.game.round : 1;
+  activeFactionIndex = Number.isInteger(currentMap.game.activeFactionIndex) ? currentMap.game.activeFactionIndex : 0;
 }
 
 function normalizeUnit(unit, index) {
   const defaults = unitDefaults[unit.kind] || unitDefaults.cavalry;
   const move = Number.isFinite(unit.move) ? unit.move : defaults.move;
   const hp = Number.isFinite(unit.hp) ? unit.hp : defaults.hp;
+  const owner = Number.isInteger(unit.owner) ? unit.owner : (
+    typeof unit.faction === "string" && factions[unit.faction] ? factions[unit.faction].owner : factions.mongol.owner
+  );
+  const ownerFaction = Object.entries(factions).find(([, faction]) => faction.owner === owner);
+  const faction = typeof unit.faction === "string" && factions[unit.faction]
+    ? unit.faction
+    : (ownerFaction ? ownerFaction[0] : "mongol");
   return {
     id: Number.isInteger(unit.id) ? unit.id : index + 1,
-    faction: typeof unit.faction === "string" && factions[unit.faction] ? unit.faction : "mongol",
+    owner,
+    faction,
     kind: typeof unit.kind === "string" ? unit.kind : "cavalry",
     q: unit.q,
     r: unit.r,
@@ -736,6 +707,75 @@ function normalizeUnit(unit, index) {
     move,
     remainingMove: Number.isFinite(unit.remainingMove) ? unit.remainingMove : move,
   };
+}
+
+function gameCommandState() {
+  ensureGameMeta();
+  return {
+    schema: currentMap.schema || "steppe-game.v1",
+    seed: currentMap.seed || 0,
+    width: currentMap.width,
+    height: currentMap.height,
+    hexes: currentMap.hexes,
+    units: currentMap.units,
+    game: currentMap.game,
+  };
+}
+
+function applyGamePatch(payload) {
+  if (!currentMap || !payload) {
+    return;
+  }
+  if (Array.isArray(payload.units)) {
+    currentMap.units = payload.units.map(normalizeUnit);
+  }
+  if (payload.game && typeof payload.game === "object") {
+    currentMap.game = payload.game;
+  }
+  ensureGameMeta();
+}
+
+async function postGameCommand(path, body) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || "game command failed");
+  }
+  return payload;
+}
+
+async function refreshReachableHexes() {
+  const requestId = ++reachableRequestId;
+  const unit = selectedUnit();
+  if (appMode !== "play" || !canActWithUnit(unit)) {
+    reachableHexes = new Map();
+    drawMap();
+    return;
+  }
+  try {
+    const payload = await postGameCommand("/api/game/reachable", {
+      state: gameCommandState(),
+      unitId: unit.id,
+    });
+    if (requestId !== reachableRequestId) {
+      return;
+    }
+    reachableHexes = new Map((payload.reachable || []).map((hex) => [
+      coordKey(hex),
+      { coord: { q: hex.q, r: hex.r }, cost: hex.cost },
+    ]));
+    drawMap();
+  } catch (error) {
+    if (requestId === reachableRequestId) {
+      reachableHexes = new Map();
+      window.alert(error.message);
+      drawMap();
+    }
+  }
 }
 
 function unitDisplayName(unit) {
@@ -760,15 +800,16 @@ function syncUnitInspector() {
 }
 
 function syncPlayControls() {
+  ensureGameMeta();
   const faction = activeFaction();
-  const factionKey = activeFactionKey();
+  const owner = activeOwner();
   turnCounter.textContent = `Round ${currentTurn} · ${faction.name} turn`;
   activeFactionName.textContent = faction.name;
   roundCount.textContent = String(currentTurn);
   turnStatusReadout.textContent = `${faction.name} turn`;
-  campCount.textContent = String(countUnits("camp", factionKey));
-  herdCount.textContent = String(countUnits("herd", factionKey));
-  cavalryCount.textContent = String(countUnits("cavalry", factionKey));
+  campCount.textContent = String(countUnits("camp", owner));
+  herdCount.textContent = String(countUnits("herd", owner));
+  cavalryCount.textContent = String(countUnits("cavalry", owner));
   syncUnitInspector();
 }
 
@@ -1081,7 +1122,7 @@ function selectUnit(unit) {
   drawMap();
 }
 
-function moveSelectedUnitTo(coord) {
+async function moveSelectedUnitTo(coord) {
   const unit = selectedUnit();
   if (!canActWithUnit(unit)) {
     return false;
@@ -1090,23 +1131,32 @@ function moveSelectedUnitTo(coord) {
   if (!move) {
     return false;
   }
-  unit.q = coord.q;
-  unit.r = coord.r;
-  unit.remainingMove = Math.max(0, unit.remainingMove - move.cost);
-  refreshReachableHexes();
+  const payload = await postGameCommand("/api/game/move", {
+    state: gameCommandState(),
+    unitId: unit.id,
+    q: coord.q,
+    r: coord.r,
+  });
+  if (!payload.ok) {
+    return false;
+  }
+  applyGamePatch(payload);
+  await refreshReachableHexes();
   syncModeControls();
   drawMap();
   return true;
 }
 
-function advanceTurn() {
+async function advanceTurn() {
   selectedUnitId = null;
   reachableHexes = new Map();
-  activeFactionIndex = (activeFactionIndex + 1) % factionTurnOrder.length;
-  if (activeFactionIndex === 0) {
-    currentTurn += 1;
+  try {
+    applyGamePatch(await postGameCommand("/api/game/end-turn", {
+      state: gameCommandState(),
+    }));
+  } catch (error) {
+    window.alert(error.message);
   }
-  resetMovementForFaction(activeFactionKey());
   syncModeControls();
   drawMap();
 }
@@ -1337,10 +1387,11 @@ async function generateMap() {
     }
     currentMap = payload;
     currentMap.units = Array.isArray(currentMap.units) ? currentMap.units : [];
+    currentMap.game = defaultGameMeta();
     selectedUnitId = null;
     reachableHexes = new Map();
     terrainUndo = new Map();
-    resetTurnState();
+    ensureGameMeta();
     refreshDerivedTopology();
     syncModeControls();
     fitMap();
@@ -1390,25 +1441,31 @@ function createBlankMap(options = {}) {
   selectedUnitId = null;
   reachableHexes = new Map();
   terrainUndo = new Map();
-  resetTurnState();
+  currentMap.game = defaultGameMeta();
+  ensureGameMeta();
   refreshDerivedTopology();
   syncModeControls();
   fitMap();
 }
 
-function createDefaultPlayScenario() {
-  createBlankMap({ width: 10, height: 10, generator: "default-play-sandbox" });
-  currentMap.units = [
-    createCavalryUnit(1, "mongol", 3, 5),
-    createCavalryUnit(2, "mongol", 3, 7),
-    createCavalryUnit(3, "chinese", 8, 5),
-    createCavalryUnit(4, "chinese", 8, 7),
-  ];
-  selectedUnitId = null;
-  reachableHexes = new Map();
-  resetTurnState();
-  syncModeControls();
-  fitMap();
+async function createDefaultPlayScenario() {
+  try {
+    currentMap = await postGameCommand("/api/game/new", {
+      width: 10,
+      height: 10,
+      factions: factionCount,
+    });
+    currentMap.units = Array.isArray(currentMap.units) ? currentMap.units.map(normalizeUnit) : [];
+    selectedUnitId = null;
+    reachableHexes = new Map();
+    terrainUndo = new Map();
+    ensureGameMeta();
+    refreshDerivedTopology();
+    syncModeControls();
+    fitMap();
+  } catch (error) {
+    window.alert(error.message);
+  }
 }
 
 function normalizeLoadedMap(map) {
@@ -1448,6 +1505,7 @@ function normalizeLoadedMap(map) {
         .filter((unit) => unit && Number.isInteger(unit.q) && Number.isInteger(unit.r))
         .map(normalizeUnit)
       : [],
+    game: map.game && typeof map.game === "object" ? map.game : defaultGameMeta(),
     metadata: map.metadata && typeof map.metadata === "object"
       ? map.metadata
       : { generator: "loaded-editor", terrain_types: editorTerrains.map((terrain) => terrain.key) },
@@ -1516,7 +1574,7 @@ async function loadMapText(text) {
     selectedUnitId = null;
     reachableHexes = new Map();
     terrainUndo = new Map();
-    resetTurnState();
+    ensureGameMeta();
     widthInput.value = currentMap.width;
     heightInput.value = currentMap.height;
     syncModeControls();
@@ -1583,7 +1641,7 @@ mapPanel.addEventListener("wheel", (event) => {
   zoomAt(event.clientX - rect.left, event.clientY - rect.top, event.deltaY < 0 ? 1.12 : 1 / 1.12);
 }, { passive: false });
 
-mapPanel.addEventListener("pointerdown", (event) => {
+mapPanel.addEventListener("pointerdown", async (event) => {
   mapPanel.focus();
   const point = panelToWorld(event);
   if (appMode === "play" && event.button === 0) {
@@ -1594,7 +1652,7 @@ mapPanel.addEventListener("pointerdown", (event) => {
       return;
     }
     const hex = findNearestHex(point);
-    if (hex && moveSelectedUnitTo(hex)) {
+    if (hex && await moveSelectedUnitTo(hex)) {
       event.preventDefault();
       return;
     }

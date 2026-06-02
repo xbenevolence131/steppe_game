@@ -15,8 +15,9 @@ This is an experimental procedural territory-generation app for a hex-based turn
 - `engine/steppe_generator.cpp` contains the authoritative C++17 generation implementation, exposed through `engine/steppe_generator.h` and built as the `steppe_generator` static library. `engine/main.cpp` is only the CLI wrapper.
 - The library API exposes typed `GeneratedMap` data through `generate_map(const GenerateArgs&)`; JSON output should serialize that map via `print_generated_map_json` instead of interleaving generation and printing.
 - `game/` contains the first game-facing state layer, built as the `steppe_game` static library. It adapts `steppe::GeneratedMap` into `steppe::game::GameState`, stable hex tag bitmasks, settlements, owners, pasture placeholders, and mode-controller interfaces.
+- All gameplay rules must be authored in the C++ engine/game layer. A complete game state should be playable by engine commands and data structures with no dependency on the Node proxy or browser UI.
 - `proxy/` contains a raw Node.js HTTP server that invokes the engine.
-- `public/` contains the browser UI for inspecting generated maps.
+- `public/` contains the browser UI for inspecting generated maps and controlling play. It should render state and submit commands, not own gameplay rules.
 - Terrain and hydrology decisions should generally live in C++, with the browser focused on visualization.
 
 ## Build And Run

@@ -38,5 +38,5 @@ add_executable(steppe_engine
 
 target_link_libraries(steppe_engine
     PRIVATE
-        steppe_generator
+        steppe_game
 )
