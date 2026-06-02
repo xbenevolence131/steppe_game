@@ -32,7 +32,11 @@ const editModeButton = document.querySelector("#edit-mode-button");
 const editorToolSelect = document.querySelector("#editor-tool");
 const terrainPalette = document.querySelector("#terrain-palette");
 const endTurnButton = document.querySelector("#end-turn-button");
+const controlEndTurnButton = document.querySelector("#control-end-turn-button");
 const turnCounter = document.querySelector(".turn-counter");
+const activeFactionName = document.querySelector("#active-faction-name");
+const roundCount = document.querySelector("#round-count");
+const turnStatusReadout = document.querySelector("#turn-status-readout");
 const campCount = document.querySelector("#camp-count");
 const herdCount = document.querySelector("#herd-count");
 const cavalryCount = document.querySelector("#cavalry-count");
@@ -51,6 +55,7 @@ let selectedTerrain = "lake";
 let paintStrokeKeys = new Set();
 let terrainUndo = new Map();
 let currentTurn = 1;
+let activeFactionIndex = 0;
 let selectedUnitId = null;
 let reachableHexes = new Map();
 
@@ -145,9 +150,20 @@ const terrainStyles = {
 const factions = {
   mongol: {
     name: "Mongol",
-    color: "#202020",
+    color: "#2368c4",
+  },
+  chinese: {
+    name: "Chinese",
+    color: "#c93632",
+  },
+  persian: {
+    name: "Persian",
+    color: "#8a4fb0",
   },
 };
+
+const factionCount = 2;
+const factionTurnOrder = ["mongol", "chinese", "persian"].slice(0, factionCount);
 
 const unitDefaults = {
   cavalry: {
@@ -610,9 +626,21 @@ function stopPainting() {
   paintStrokeKeys = new Set();
 }
 
-function countUnits(kind) {
+function activeFactionKey() {
+  return factionTurnOrder[activeFactionIndex] || factionTurnOrder[0] || "mongol";
+}
+
+function activeFaction() {
+  return factions[activeFactionKey()] || factions.mongol;
+}
+
+function canActWithUnit(unit) {
+  return Boolean(unit && unit.faction === activeFactionKey());
+}
+
+function countUnits(kind, factionKey = null) {
   return currentMap && Array.isArray(currentMap.units)
-    ? currentMap.units.filter((unit) => unit.kind === kind).length
+    ? currentMap.units.filter((unit) => unit.kind === kind && (!factionKey || unit.faction === factionKey)).length
     : 0;
 }
 
@@ -624,7 +652,7 @@ function selectedUnit() {
 
 function calculateReachableHexes(unit) {
   const reachable = new Map();
-  if (!unit || !Number.isFinite(unit.remainingMove) || unit.remainingMove <= 0) {
+  if (!canActWithUnit(unit) || !Number.isFinite(unit.remainingMove) || unit.remainingMove <= 0) {
     return reachable;
   }
 
@@ -662,6 +690,54 @@ function refreshReachableHexes() {
   reachableHexes = appMode === "play" ? calculateReachableHexes(selectedUnit()) : new Map();
 }
 
+function resetMovementForFaction(factionKey) {
+  if (!currentMap || !Array.isArray(currentMap.units)) {
+    return;
+  }
+  for (const unit of currentMap.units) {
+    if (unit.faction === factionKey) {
+      unit.remainingMove = unit.move;
+    }
+  }
+}
+
+function resetTurnState() {
+  currentTurn = 1;
+  activeFactionIndex = 0;
+  resetMovementForFaction(activeFactionKey());
+}
+
+function createCavalryUnit(id, faction, q, r) {
+  return {
+    id,
+    faction,
+    kind: "cavalry",
+    q,
+    r,
+    hp: unitDefaults.cavalry.hp,
+    maxHp: unitDefaults.cavalry.hp,
+    move: unitDefaults.cavalry.move,
+    remainingMove: unitDefaults.cavalry.move,
+  };
+}
+
+function normalizeUnit(unit, index) {
+  const defaults = unitDefaults[unit.kind] || unitDefaults.cavalry;
+  const move = Number.isFinite(unit.move) ? unit.move : defaults.move;
+  const hp = Number.isFinite(unit.hp) ? unit.hp : defaults.hp;
+  return {
+    id: Number.isInteger(unit.id) ? unit.id : index + 1,
+    faction: typeof unit.faction === "string" && factions[unit.faction] ? unit.faction : "mongol",
+    kind: typeof unit.kind === "string" ? unit.kind : "cavalry",
+    q: unit.q,
+    r: unit.r,
+    hp,
+    maxHp: Number.isFinite(unit.maxHp) ? unit.maxHp : hp,
+    move,
+    remainingMove: Number.isFinite(unit.remainingMove) ? unit.remainingMove : move,
+  };
+}
+
 function unitDisplayName(unit) {
   const faction = factions[unit.faction] || factions.mongol;
   const kind = unit.kind === "cavalry" ? "Cavalry" : unit.kind;
@@ -684,10 +760,15 @@ function syncUnitInspector() {
 }
 
 function syncPlayControls() {
-  turnCounter.textContent = `Turn ${currentTurn}`;
-  campCount.textContent = String(countUnits("camp"));
-  herdCount.textContent = String(countUnits("herd"));
-  cavalryCount.textContent = String(countUnits("cavalry"));
+  const faction = activeFaction();
+  const factionKey = activeFactionKey();
+  turnCounter.textContent = `Round ${currentTurn} · ${faction.name} turn`;
+  activeFactionName.textContent = faction.name;
+  roundCount.textContent = String(currentTurn);
+  turnStatusReadout.textContent = `${faction.name} turn`;
+  campCount.textContent = String(countUnits("camp", factionKey));
+  herdCount.textContent = String(countUnits("herd", factionKey));
+  cavalryCount.textContent = String(countUnits("cavalry", factionKey));
   syncUnitInspector();
 }
 
@@ -994,7 +1075,7 @@ function findUnitAtPoint(point) {
 }
 
 function selectUnit(unit) {
-  selectedUnitId = unit ? unit.id : null;
+  selectedUnitId = canActWithUnit(unit) ? unit.id : null;
   refreshReachableHexes();
   syncModeControls();
   drawMap();
@@ -1002,7 +1083,7 @@ function selectUnit(unit) {
 
 function moveSelectedUnitTo(coord) {
   const unit = selectedUnit();
-  if (!unit) {
+  if (!canActWithUnit(unit)) {
     return false;
   }
   const move = reachableHexes.get(coordKey(coord));
@@ -1016,6 +1097,18 @@ function moveSelectedUnitTo(coord) {
   syncModeControls();
   drawMap();
   return true;
+}
+
+function advanceTurn() {
+  selectedUnitId = null;
+  reachableHexes = new Map();
+  activeFactionIndex = (activeFactionIndex + 1) % factionTurnOrder.length;
+  if (activeFactionIndex === 0) {
+    currentTurn += 1;
+  }
+  resetMovementForFaction(activeFactionKey());
+  syncModeControls();
+  drawMap();
 }
 
 function drawMap() {
@@ -1247,6 +1340,7 @@ async function generateMap() {
     selectedUnitId = null;
     reachableHexes = new Map();
     terrainUndo = new Map();
+    resetTurnState();
     refreshDerivedTopology();
     syncModeControls();
     fitMap();
@@ -1296,6 +1390,7 @@ function createBlankMap(options = {}) {
   selectedUnitId = null;
   reachableHexes = new Map();
   terrainUndo = new Map();
+  resetTurnState();
   refreshDerivedTopology();
   syncModeControls();
   fitMap();
@@ -1304,32 +1399,14 @@ function createBlankMap(options = {}) {
 function createDefaultPlayScenario() {
   createBlankMap({ width: 10, height: 10, generator: "default-play-sandbox" });
   currentMap.units = [
-    {
-      id: 1,
-      faction: "mongol",
-      kind: "cavalry",
-      q: 4,
-      r: 5,
-      hp: unitDefaults.cavalry.hp,
-      maxHp: unitDefaults.cavalry.hp,
-      move: unitDefaults.cavalry.move,
-      remainingMove: unitDefaults.cavalry.move,
-    },
-    {
-      id: 2,
-      faction: "mongol",
-      kind: "cavalry",
-      q: 6,
-      r: 5,
-      hp: unitDefaults.cavalry.hp,
-      maxHp: unitDefaults.cavalry.hp,
-      move: unitDefaults.cavalry.move,
-      remainingMove: unitDefaults.cavalry.move,
-    },
+    createCavalryUnit(1, "mongol", 3, 5),
+    createCavalryUnit(2, "mongol", 3, 7),
+    createCavalryUnit(3, "chinese", 8, 5),
+    createCavalryUnit(4, "chinese", 8, 7),
   ];
   selectedUnitId = null;
   reachableHexes = new Map();
-  currentTurn = 1;
+  resetTurnState();
   syncModeControls();
   fitMap();
 }
@@ -1367,7 +1444,9 @@ function normalizeLoadedMap(map) {
     roads: Array.isArray(map.roads) ? map.roads : [],
     crossings: Array.isArray(map.crossings) ? map.crossings : [],
     units: Array.isArray(map.units)
-      ? map.units.filter((unit) => Number.isInteger(unit.q) && Number.isInteger(unit.r))
+      ? map.units
+        .filter((unit) => unit && Number.isInteger(unit.q) && Number.isInteger(unit.r))
+        .map(normalizeUnit)
       : [],
     metadata: map.metadata && typeof map.metadata === "object"
       ? map.metadata
@@ -1437,6 +1516,7 @@ async function loadMapText(text) {
     selectedUnitId = null;
     reachableHexes = new Map();
     terrainUndo = new Map();
+    resetTurnState();
     widthInput.value = currentMap.width;
     heightInput.value = currentMap.height;
     syncModeControls();
@@ -1488,10 +1568,8 @@ editorToolSelect.addEventListener("change", syncEditorControls);
 saveButton.addEventListener("click", saveCurrentMap);
 loadButton.addEventListener("click", chooseMapFile);
 loadFileInput.addEventListener("change", () => loadMapFile(loadFileInput.files[0]));
-endTurnButton.addEventListener("click", () => {
-  currentTurn += 1;
-  syncModeControls();
-});
+endTurnButton.addEventListener("click", advanceTurn);
+controlEndTurnButton.addEventListener("click", advanceTurn);
 zoomInButton.addEventListener("click", () => zoomFromCenter(1.25));
 zoomOutButton.addEventListener("click", () => zoomFromCenter(0.8));
 fitButton.addEventListener("click", fitMap);

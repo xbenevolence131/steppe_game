@@ -314,6 +314,15 @@ button.is-active {
   font-weight: 650;
 }
 
+.turn-control-region {
+  grid-template-rows: auto auto auto;
+}
+
+.turn-control-region button {
+  justify-self: start;
+  min-width: 120px;
+}
+
 @media (max-width: 820px) {
   .mode-chooser {
     width: 100%;
