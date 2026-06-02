@@ -63,6 +63,7 @@ const editorTerrains = [
   { key: "mountain", label: "Mountain", fill: "#5b3724", stroke: "#2c1a11", labelColor: "#f1e7d8" },
   { key: "forest", label: "Forest", fill: "#246b3b", stroke: "#133c22", labelColor: "#eef7e8" },
   { key: "marsh", label: "Marsh", fill: "#74794b", stroke: "#42462a", labelColor: "#f3eed0" },
+  { key: "desert", label: "Desert", fill: "#d3b766", stroke: "#80692d", labelColor: "#241c0d" },
   { key: "urban", label: "Urban", fill: "#8e8e8e", stroke: "#4e4e4e", labelColor: "#111111" },
 ];
 
@@ -84,6 +85,7 @@ const terrainStyles = {
     label: "#eef7e8",
   },
   marsh: terrainStyle("marsh"),
+  desert: terrainStyle("desert"),
   urban: terrainStyle("urban"),
   persian_town: {
     fill: "#8a4fb0",

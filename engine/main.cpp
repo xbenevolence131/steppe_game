@@ -400,6 +400,25 @@ bool is_steppe_hex(int q, int r, const GenerateArgs& args) {
         && (std::abs(static_cast<double>(r) - center_r) <= pinched_half_width || pass);
 }
 
+Coord dzungarian_gate_target(const GenerateArgs& args) {
+    const double x = std::max(0.0, std::min(1.0, seeded_steppe_pinch_center_x(args)));
+    const int q = std::max(1, std::min(args.width, static_cast<int>(std::round(x * static_cast<double>(args.width - 1))) + 1));
+    const double center_r = steppe_center_r_for_x(args, x);
+    const double average_half_width = steppe_average_half_width(args);
+    int best_pass = 0;
+    double best_distance = std::numeric_limits<double>::max();
+    for (int pass = 0; pass < steppe_pinch_pass_count(args); ++pass) {
+        const double pass_center = steppe_pinch_pass_center_r(args, pass, x, center_r, average_half_width);
+        const double distance = std::abs(pass_center - static_cast<double>(args.height) * 0.5);
+        if (distance < best_distance) {
+            best_distance = distance;
+            best_pass = pass;
+        }
+    }
+    const int r = std::max(1, std::min(args.height, static_cast<int>(std::round(steppe_pinch_pass_center_r(args, best_pass, x, center_r, average_half_width)))));
+    return {q, r};
+}
+
 bool coord_equal(const Coord& first, const Coord& second) {
     return first.q == second.q && first.r == second.r;
 }
@@ -1542,6 +1561,82 @@ std::map<Coord, int, decltype(coord_less)*> derive_grassland_distances(
     return distances;
 }
 
+std::set<Coord, decltype(coord_less)*> derive_eastern_desert_hexes(
+    const GenerateArgs& args,
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes,
+    const std::set<Coord, decltype(coord_less)*>& forest_blob_hexes,
+    const std::vector<Town>& towns,
+    const std::vector<Road>& roads
+) {
+    std::set<Coord, decltype(coord_less)*> desert_hexes(coord_less);
+    std::set<Coord, decltype(coord_less)*> protected_hexes(coord_less);
+    for (const Town& town : towns) {
+        protected_hexes.insert(town.coord);
+    }
+    for (const Road& road : roads) {
+        for (const Coord& coord : road.path) {
+            protected_hexes.insert(coord);
+        }
+    }
+
+    const Coord gate = dzungarian_gate_target(args);
+    const double center_q = std::max(1.0, std::min(
+        static_cast<double>(args.width),
+        static_cast<double>(gate.q) + static_cast<double>(args.width) * (0.08 + unit_noise(args.seed, 81201) * 0.08)
+    ));
+    const double center_r = std::max(1.0, std::min(
+        static_cast<double>(args.height),
+        static_cast<double>(gate.r) + static_cast<double>(args.height) * (0.12 + unit_noise(args.seed, 81202) * 0.08)
+    ));
+    const double radius_q = std::max(4.0, static_cast<double>(args.width) * (0.13 + unit_noise(args.seed, 81203) * 0.045));
+    const double radius_r = std::max(4.0, static_cast<double>(args.height) * (0.13 + unit_noise(args.seed, 81204) * 0.045));
+    const double angle = (14.0 + signed_noise(args.seed, 81205) * 8.0) * 3.14159265358979323846 / 180.0;
+    const double cos_angle = std::cos(angle);
+    const double sin_angle = std::sin(angle);
+
+    for (int r = 1; r <= args.height; ++r) {
+        for (int q = 1; q <= args.width; ++q) {
+            const Coord coord{q, r};
+            if (lake_hexes.find(coord) != lake_hexes.end()
+                || valley_hexes.find(coord) != valley_hexes.end()
+                || forest_blob_hexes.find(coord) != forest_blob_hexes.end()) {
+                continue;
+            }
+            if (protected_hexes.find(coord) != protected_hexes.end()) {
+                continue;
+            }
+            const double x = args.width == 1
+                ? 0.5
+                : static_cast<double>(q - 1) / static_cast<double>(args.width - 1);
+            const double steppe_center_r = steppe_center_r_for_x(args, x);
+            const double southern_steppe_fringe = static_cast<double>(r) - steppe_center_r;
+            const bool base_steppe = is_steppe_hex(q, r, args);
+            if (base_steppe && southern_steppe_fringe < steppe_average_half_width(args) * 0.12) {
+                continue;
+            }
+
+            const double dx = static_cast<double>(q) - center_q;
+            const double dy = static_cast<double>(r) - center_r;
+            const double rotated_q = dx * cos_angle - dy * sin_angle;
+            const double rotated_r = dx * sin_angle + dy * cos_angle;
+            const double distance = (rotated_q * rotated_q) / (radius_q * radius_q)
+                + (rotated_r * rotated_r) / (radius_r * radius_r);
+            const double coarse = signed_noise(
+                args.seed,
+                static_cast<std::uint32_t>(81250 + (q / 4) * 167 + (r / 4) * 349)
+            ) * 0.16;
+            const double fine = signed_noise(args.seed, static_cast<std::uint32_t>(81300 + q * 193 + r * 419)) * 0.045;
+            const double steppe_penalty = base_steppe ? 0.12 : 0.0;
+            if (distance + coarse + fine + steppe_penalty <= 1.0) {
+                desert_hexes.insert(coord);
+            }
+        }
+    }
+
+    return desert_hexes;
+}
+
 const char* wild_terrain_for_distance(const GenerateArgs& args, const Coord& coord, int grassland_distance) {
     const double coarse_texture = signed_noise(
         args.seed,
@@ -2217,25 +2312,6 @@ std::vector<Town> place_fixed_feature_towns(
         return coord_less(first.coord, second.coord);
     });
     return towns;
-}
-
-Coord dzungarian_gate_target(const GenerateArgs& args) {
-    const double x = std::max(0.0, std::min(1.0, seeded_steppe_pinch_center_x(args)));
-    const int q = std::max(1, std::min(args.width, static_cast<int>(std::round(x * static_cast<double>(args.width - 1))) + 1));
-    const double center_r = steppe_center_r_for_x(args, x);
-    const double average_half_width = steppe_average_half_width(args);
-    int best_pass = 0;
-    double best_distance = std::numeric_limits<double>::max();
-    for (int pass = 0; pass < steppe_pinch_pass_count(args); ++pass) {
-        const double pass_center = steppe_pinch_pass_center_r(args, pass, x, center_r, average_half_width);
-        const double distance = std::abs(pass_center - static_cast<double>(args.height) * 0.5);
-        if (distance < best_distance) {
-            best_distance = distance;
-            best_pass = pass;
-        }
-    }
-    const int r = std::max(1, std::min(args.height, static_cast<int>(std::round(steppe_pinch_pass_center_r(args, best_pass, x, center_r, average_half_width)))));
-    return {q, r};
 }
 
 std::optional<Town> place_dzungarian_gate_town(
@@ -3038,6 +3114,7 @@ void print_generated_map(const GenerateArgs& args) {
         return coord_less(first.coord, second.coord);
     });
     const std::vector<Road> roads = generate_roads(args, towns, all_lakes, valley_hexes);
+    const std::set<Coord, decltype(coord_less)*> eastern_desert_hexes = derive_eastern_desert_hexes(args, all_lakes, valley_hexes, forest_blob_hexes, towns, roads);
     const std::vector<Crossing> crossings = generate_crossings(args, towns, roads, all_river_edges, rivers.segments, all_lakes, valley_hexes);
     const std::map<Coord, int, decltype(coord_less)*> grassland_distances = derive_grassland_distances(args, valley_hexes);
     const std::vector<LakeRiverConnection> lake_river_connections = derive_lake_river_connections(all_lakes, all_river_edges);
@@ -3065,6 +3142,7 @@ void print_generated_map(const GenerateArgs& args) {
             const bool chinese_lake = coord_in_vector(chinese_lake_network.lake_hexes, coord);
             const bool valley = valley_hexes.find(coord) != valley_hexes.end();
             const bool forest_blob = forest_blob_hexes.find(coord) != forest_blob_hexes.end();
+            const bool eastern_desert = eastern_desert_hexes.find(coord) != eastern_desert_hexes.end();
             const auto steppe_texture = steppe_texture_hexes.find(coord);
             const auto town = std::find_if(towns.begin(), towns.end(), [&coord](const Town& candidate) {
                 return coord_equal(candidate.coord, coord);
@@ -3083,6 +3161,8 @@ void print_generated_map(const GenerateArgs& args) {
                 terrain = "lake";
             } else if (forest_blob) {
                 terrain = "forest";
+            } else if (eastern_desert) {
+                terrain = "desert";
             } else if (steppe_texture != steppe_texture_hexes.end()) {
                 if (steppe_texture->second == "steppe_hill") {
                     terrain = "hill";
@@ -3104,7 +3184,7 @@ void print_generated_map(const GenerateArgs& args) {
                 );
             }
 
-            if (forest_blob && base_steppe) {
+            if ((forest_blob || eastern_desert) && base_steppe) {
                 remove_label("base_steppe");
             }
             if ((lake || valley || urban) && !base_steppe) {
@@ -3115,6 +3195,9 @@ void print_generated_map(const GenerateArgs& args) {
             }
             if (forest_blob) {
                 labels.push_back("forest_blob");
+            }
+            if (eastern_desert) {
+                labels.push_back("eastern_desert");
             }
             if (steppe_texture != steppe_texture_hexes.end()) {
                 labels.push_back(steppe_texture->second);
@@ -3247,7 +3330,7 @@ void print_generated_map(const GenerateArgs& args) {
     std::cout << "],";
     std::cout << "\"metadata\":{";
     std::cout << "\"generator\":\"prototype-steppe-blob\",";
-    std::cout << "\"terrain_types\":[\"none\",\"grassland\",\"lake\",\"hill\",\"mountain\",\"forest\",\"marsh\",\"urban\"],";
+    std::cout << "\"terrain_types\":[\"none\",\"grassland\",\"lake\",\"hill\",\"mountain\",\"forest\",\"marsh\",\"desert\",\"urban\"],";
     std::cout << "\"hex_label_model\":\"final-semantic-labels.v2\",";
     std::cout << "\"lake_river_connection_model\":\"river-terminal-lake-vertex.v1\",";
     std::cout << "\"crossing_model\":\"bridges-and-spaced-fords.v1\",";
