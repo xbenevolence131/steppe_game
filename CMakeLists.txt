@@ -16,6 +16,22 @@ target_include_directories(steppe_generator
         ${CMAKE_CURRENT_SOURCE_DIR}/engine
 )
 
+add_library(steppe_game STATIC
+    game/game_mode.h
+    game/game_state.cpp
+    game/game_state.h
+)
+
+target_include_directories(steppe_game
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/game
+)
+
+target_link_libraries(steppe_game
+    PUBLIC
+        steppe_generator
+)
+
 add_executable(steppe_engine
     engine/main.cpp
 )

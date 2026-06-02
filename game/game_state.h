@@ -1,0 +1,126 @@
+#pragma once
+
+#include "game_mode.h"
+#include "steppe_generator.h"
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace steppe::game {
+
+using OwnerId = int;
+constexpr OwnerId neutral_owner = -1;
+constexpr OwnerId persian_owner = 1;
+constexpr OwnerId chinese_owner = 2;
+
+enum class HexTag : std::uint64_t {
+    BaseSteppe = 1ull << 0,
+    WildTerrain = 1ull << 1,
+    Valley = 1ull << 2,
+    ForestBlob = 1ull << 3,
+    EasternDesert = 1ull << 4,
+    DesertRiverCorridor = 1ull << 5,
+    DesertRiverMarsh = 1ull << 6,
+    DesertRiverForest = 1ull << 7,
+    SteppeHill = 1ull << 8,
+    SteppeForest = 1ull << 9,
+    SteppeMarsh = 1ull << 10,
+    LakeBaikal = 1ull << 11,
+    CaspianSea = 1ull << 12,
+    ChineseLakes = 1ull << 13,
+    RandomLakes = 1ull << 14,
+    Urban = 1ull << 15,
+    FixedFeatureTown = 1ull << 16,
+    WaterAdjacentTown = 1ull << 17,
+    PersianTown = 1ull << 18,
+    ChineseTown = 1ull << 19,
+    ChinaAccessTown = 1ull << 20,
+    DzungarianGate = 1ull << 21,
+    Oasis = 1ull << 22,
+};
+
+using HexTagMask = std::uint64_t;
+
+enum class SettlementKind {
+    Generic,
+    PersianTown,
+    ChineseTown,
+    ChinaAccessTown,
+    DzungarianGate,
+    Oasis,
+    WaterAdjacentTown,
+};
+
+enum class UnitKind {
+    Camp,
+    Herd,
+    Cavalry,
+};
+
+struct PastureState {
+    int capacity = 0;
+    int remaining = 0;
+    int recovery_turn = 0;
+};
+
+struct GameHex {
+    Coord coord;
+    Terrain terrain = Terrain::None;
+    HexTagMask tags = 0;
+    OwnerId owner = neutral_owner;
+    PastureState pasture;
+    std::vector<std::string> source_labels;
+};
+
+struct Settlement {
+    int id = 0;
+    Coord coord;
+    SettlementKind kind = SettlementKind::Generic;
+    OwnerId owner = neutral_owner;
+    std::string source_feature;
+    std::vector<std::string> source_labels;
+};
+
+struct Clan {
+    OwnerId id = neutral_owner;
+    std::string name;
+};
+
+struct Unit {
+    int id = 0;
+    OwnerId owner = neutral_owner;
+    UnitKind kind = UnitKind::Cavalry;
+    Coord coord;
+};
+
+struct GameState {
+    int width = 0;
+    int height = 0;
+    std::uint32_t seed = 1;
+    int turn = 1;
+    GameModeKind active_mode = GameModeKind::StrategicGame;
+
+    std::vector<GameHex> hexes;
+    std::vector<RiverEdge> rivers;
+    std::vector<RiverSegment> river_segments;
+    std::vector<LakeRiverConnection> lake_river_connections;
+    std::vector<Road> roads;
+    std::vector<Crossing> crossings;
+    std::vector<Settlement> settlements;
+    std::vector<Clan> clans;
+    std::vector<Unit> units;
+};
+
+HexTagMask tag_mask(HexTag tag);
+bool has_tag(HexTagMask mask, HexTag tag);
+HexTagMask tags_from_labels(const std::vector<std::string>& labels);
+
+SettlementKind settlement_kind_from_town(const Town& town);
+OwnerId owner_from_town(const Town& town);
+PastureState initial_pasture_for_terrain(Terrain terrain);
+
+GameState game_state_from_generated_map(const GeneratedMap& generated);
+GameState generate_game_state(const GenerateArgs& args);
+
+} // namespace steppe::game
