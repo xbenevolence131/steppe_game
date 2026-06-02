@@ -243,6 +243,17 @@ async function handleGameReachable(req, res) {
   }
 }
 
+async function handleGameSelect(req, res) {
+  try {
+    const payload = await readRequestJson(req);
+    const unitId = parseBoundedInteger(payload.unitId, 0, 0, 1000000);
+    const result = await runEngineJson(["game-select", "--unit", String(unitId)], JSON.stringify(payload.state || {}));
+    sendJson(res, result.ok ? 200 : 400, result);
+  } catch (error) {
+    sendJson(res, 500, { error: error.message });
+  }
+}
+
 async function handleGameAttackable(req, res) {
   try {
     const payload = await readRequestJson(req);
@@ -333,6 +344,10 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === "POST" && req.url === "/api/game/reachable") {
     handleGameReachable(req, res);
+    return;
+  }
+  if (req.method === "POST" && req.url === "/api/game/select") {
+    handleGameSelect(req, res);
     return;
   }
   if (req.method === "POST" && req.url === "/api/game/attackable") {

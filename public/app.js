@@ -56,11 +56,6 @@ let paintStrokeKeys = new Set();
 let terrainUndo = new Map();
 let currentTurn = 1;
 let activeFactionIndex = 0;
-let selectedUnitId = null;
-let reachableHexes = new Map();
-let attackableUnits = new Map();
-let reachableRequestId = 0;
-let attackableRequestId = 0;
 
 const viewport = {
   scale: 1,
@@ -175,13 +170,6 @@ const factions = {
 
 const factionCount = 2;
 const factionTurnOrder = ["mongol", "chinese", "persian"].slice(0, factionCount);
-
-const unitDefaults = {
-  cavalry: {
-    hp: 10,
-    move: 4,
-  },
-};
 
 function terrainStyle(key) {
   const terrain = editorTerrains.find((entry) => entry.key === key);
@@ -621,15 +609,14 @@ function stopPainting() {
 
 function activeFactionKey() {
   const clan = activeFaction();
-  return clan.key || factionTurnOrder[activeFactionIndex] || factionTurnOrder[0] || "mongol";
+  return clan.key || "neutral";
 }
 
 function activeOwner() {
   if (currentMap && currentMap.game && Number.isInteger(currentMap.game.activeOwner)) {
     return currentMap.game.activeOwner;
   }
-  const key = factionTurnOrder[activeFactionIndex] || "mongol";
-  return factions[key] ? factions[key].owner : factions.mongol.owner;
+  return null;
 }
 
 function activeFaction() {
@@ -640,11 +627,7 @@ function activeFaction() {
   if (clan) {
     return clan;
   }
-  return Object.values(factions).find((faction) => faction.owner === owner) || factions.mongol;
-}
-
-function canActWithUnit(unit) {
-  return Boolean(unit && unit.owner === activeOwner());
+  return Object.values(factions).find((faction) => faction.owner === owner) || factions.neutral;
 }
 
 function countUnits(kind, owner = null) {
@@ -654,66 +637,47 @@ function countUnits(kind, owner = null) {
 }
 
 function selectedUnit() {
+  const selectedUnitId = currentMap && currentMap.game && Number.isInteger(currentMap.game.selectedUnitId)
+    ? currentMap.game.selectedUnitId
+    : 0;
   return currentMap && Array.isArray(currentMap.units)
     ? currentMap.units.find((unit) => unit.id === selectedUnitId) || null
     : null;
-}
-
-function defaultGameMeta() {
-  const turnOrder = ["mongol", "chinese", "persian"].slice(0, factionCount).map((key) => factions[key].owner);
-  return {
-    round: 1,
-    activeFactionIndex: 0,
-    activeOwner: turnOrder[0],
-    turnOrder,
-    clans: Object.entries(factions).map(([key, faction]) => ({
-      id: faction.owner,
-      key,
-      name: faction.name,
-      color: faction.color,
-    })),
-  };
 }
 
 function ensureGameMeta() {
   if (!currentMap) {
     return;
   }
-  if (!currentMap.game || typeof currentMap.game !== "object") {
-    currentMap.game = defaultGameMeta();
-  }
+  currentMap.game = currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {};
   currentTurn = Number.isInteger(currentMap.game.round) ? currentMap.game.round : 1;
   activeFactionIndex = Number.isInteger(currentMap.game.activeFactionIndex) ? currentMap.game.activeFactionIndex : 0;
 }
 
 function normalizeUnit(unit, index) {
   const kind = typeof unit.kind === "string" ? unit.kind : "cavalry";
-  const defaults = unitDefaults[kind] || unitDefaults.cavalry;
-  const move = Number.isFinite(unit.move) ? unit.move : defaults.move;
-  const hp = Number.isFinite(unit.hp) ? unit.hp : defaults.hp;
-  const owner = Number.isInteger(unit.owner) ? unit.owner : (
-    typeof unit.faction === "string" && factions[unit.faction] ? factions[unit.faction].owner : factions.mongol.owner
-  );
+  const owner = Number.isInteger(unit.owner) ? unit.owner : null;
   const ownerFaction = Object.entries(factions).find(([, faction]) => faction.owner === owner);
   const faction = typeof unit.faction === "string" && factions[unit.faction]
     ? unit.faction
     : (ownerFaction ? ownerFaction[0] : "mongol");
-  return {
+  const normalized = {
     id: Number.isInteger(unit.id) ? unit.id : index + 1,
-    owner,
     faction,
     kind,
     q: unit.q,
     r: unit.r,
-    hp,
-    maxHp: Number.isFinite(unit.maxHp) ? unit.maxHp : hp,
-    move,
-    remainingMove: Number.isFinite(unit.remainingMove) ? unit.remainingMove : move,
-    moveDone: Boolean(unit.moveDone),
-    combatDone: Boolean(unit.combatDone),
-    projectsZoc: unit.projectsZoc !== undefined ? Boolean(unit.projectsZoc) : kind === "cavalry",
-    respectsZoc: Boolean(unit.respectsZoc),
   };
+  if (owner !== null) normalized.owner = owner;
+  if (Number.isFinite(unit.hp)) normalized.hp = unit.hp;
+  if (Number.isFinite(unit.maxHp)) normalized.maxHp = unit.maxHp;
+  if (Number.isFinite(unit.move)) normalized.move = unit.move;
+  if (Number.isFinite(unit.remainingMove)) normalized.remainingMove = unit.remainingMove;
+  if (unit.moveDone !== undefined) normalized.moveDone = Boolean(unit.moveDone);
+  if (unit.combatDone !== undefined) normalized.combatDone = Boolean(unit.combatDone);
+  if (unit.projectsZoc !== undefined) normalized.projectsZoc = Boolean(unit.projectsZoc);
+  if (unit.respectsZoc !== undefined) normalized.respectsZoc = Boolean(unit.respectsZoc);
+  return normalized;
 }
 
 function gameCommandState() {
@@ -755,74 +719,33 @@ async function postGameCommand(path, body) {
   return payload;
 }
 
-async function refreshReachableHexes() {
-  const requestId = ++reachableRequestId;
-  const unit = selectedUnit();
-  if (appMode !== "play" || !canActWithUnit(unit)) {
-    reachableHexes = new Map();
-    drawMap();
-    return;
-  }
-  try {
-    const payload = await postGameCommand("/api/game/reachable", {
-      state: gameCommandState(),
-      unitId: unit.id,
-    });
-    if (requestId !== reachableRequestId) {
-      return;
-    }
-    reachableHexes = new Map((payload.reachable || []).map((hex) => [
-      coordKey(hex),
-      { coord: { q: hex.q, r: hex.r }, cost: hex.cost },
-    ]));
-    drawMap();
-  } catch (error) {
-    if (requestId === reachableRequestId) {
-      reachableHexes = new Map();
-      window.alert(error.message);
-      drawMap();
-    }
-  }
+function legalMoves() {
+  return currentMap && currentMap.game && Array.isArray(currentMap.game.legalMoves)
+    ? currentMap.game.legalMoves
+    : [];
 }
 
-async function refreshAttackableUnits() {
-  const requestId = ++attackableRequestId;
-  const unit = selectedUnit();
-  if (appMode !== "play" || !canActWithUnit(unit)) {
-    attackableUnits = new Map();
-    drawMap();
-    return;
-  }
-  try {
-    const payload = await postGameCommand("/api/game/attackable", {
-      state: gameCommandState(),
-      unitId: unit.id,
-    });
-    if (requestId !== attackableRequestId) {
-      return;
-    }
-    attackableUnits = new Map((payload.attackable || []).map((target) => [
-      target.unitId,
-      { coord: { q: target.q, r: target.r } },
-    ]));
-    drawMap();
-  } catch (error) {
-    if (requestId === attackableRequestId) {
-      attackableUnits = new Map();
-      window.alert(error.message);
-      drawMap();
-    }
-  }
+function legalAttacks() {
+  return currentMap && currentMap.game && Array.isArray(currentMap.game.legalAttacks)
+    ? currentMap.game.legalAttacks
+    : [];
 }
 
-function refreshSelectedUnitActions() {
-  refreshReachableHexes();
-  refreshAttackableUnits();
+function legalMoveAt(coord) {
+  return legalMoves().find((move) => move.q === coord.q && move.r === coord.r) || null;
+}
+
+function legalAttackForUnit(unit) {
+  return unit ? legalAttacks().find((attack) => attack.unitId === unit.id) || null : null;
 }
 
 function unitDisplayName(unit) {
   const faction = factions[unit.faction] || factions.mongol;
-  const kind = unit.kind === "cavalry" ? "Cavalry" : unit.kind;
+  const kindNames = {
+    cavalry: "Cavalry",
+    infantry: "Infantry",
+  };
+  const kind = kindNames[unit.kind] || unit.kind;
   return `${faction.name} ${kind}`;
 }
 
@@ -837,8 +760,8 @@ function syncUnitInspector() {
   }
   sidebarSelectionReadout.textContent = unitDisplayName(unit);
   unitName.textContent = unitDisplayName(unit);
-  unitHp.textContent = `${unit.hp}/${unit.maxHp}`;
-  unitMove.textContent = `${unit.remainingMove}/${unit.move}`;
+  unitHp.textContent = Number.isFinite(unit.hp) && Number.isFinite(unit.maxHp) ? `${unit.hp}/${unit.maxHp}` : "-";
+  unitMove.textContent = Number.isFinite(unit.remainingMove) && Number.isFinite(unit.move) ? `${unit.remainingMove}/${unit.move}` : "-";
 }
 
 function syncPlayControls() {
@@ -871,7 +794,6 @@ function setAppMode(mode) {
   if (mode !== "scenario") {
     setEditMode(false);
   }
-  refreshReachableHexes();
   syncModeControls();
   if (currentMap) {
     requestAnimationFrame(drawMap);
@@ -1066,6 +988,9 @@ function drawUnitCounters(units) {
   }
 
   ctx.save();
+  const selectedUnitId = currentMap && currentMap.game && Number.isInteger(currentMap.game.selectedUnitId)
+    ? currentMap.game.selectedUnitId
+    : 0;
   for (const unit of units) {
     const faction = factions[unit.faction] || factions.mongol;
     const center = hexCenter(unit);
@@ -1078,7 +1003,7 @@ function drawUnitCounters(units) {
     roundedRectPath(x, y, counterWidth, counterHeight, 4 / viewport.scale);
     ctx.fillStyle = "#fffdf8";
     ctx.fill();
-    if (attackableUnits.has(unit.id)) {
+    if (legalAttackForUnit(unit)) {
       ctx.fillStyle = "rgba(201, 54, 50, 0.24)";
       ctx.fill();
     }
@@ -1099,10 +1024,23 @@ function drawUnitCounters(units) {
     ctx.lineWidth = 1 / viewport.scale;
     ctx.stroke();
 
-    ctx.beginPath();
-    ctx.ellipse(x + 9.5 / viewport.scale, y + counterHeight / 2, 5.5 / viewport.scale, 3.1 / viewport.scale, 0, 0, Math.PI * 2);
-    ctx.fillStyle = faction.color;
-    ctx.fill();
+    ctx.strokeStyle = faction.color;
+    ctx.lineWidth = 2 / viewport.scale;
+    if (unit.kind === "infantry") {
+      const iconInsetX = 5 / viewport.scale;
+      const iconInsetY = 5 / viewport.scale;
+      ctx.beginPath();
+      ctx.moveTo(x + iconInsetX, y + iconInsetY);
+      ctx.lineTo(dividerX - iconInsetX, y + counterHeight - iconInsetY);
+      ctx.moveTo(dividerX - iconInsetX, y + iconInsetY);
+      ctx.lineTo(x + iconInsetX, y + counterHeight - iconInsetY);
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.ellipse(x + 9.5 / viewport.scale, y + counterHeight / 2, 5.5 / viewport.scale, 3.1 / viewport.scale, 0, 0, Math.PI * 2);
+      ctx.fillStyle = faction.color;
+      ctx.fill();
+    }
 
     ctx.fillStyle = "#22201b";
     ctx.font = `${12 / viewport.scale}px Segoe UI, Arial, sans-serif`;
@@ -1114,13 +1052,14 @@ function drawUnitCounters(units) {
 }
 
 function drawReachableHexes() {
-  if (reachableHexes.size === 0) {
+  const moves = legalMoves();
+  if (moves.length === 0) {
     return;
   }
 
   ctx.save();
-  for (const { coord } of reachableHexes.values()) {
-    const center = hexCenter(coord);
+  for (const move of moves) {
+    const center = hexCenter(move);
     const points = hexPoints(center.x, center.y, geometry.size * 0.78);
     ctx.beginPath();
     points.forEach(([x, y], index) => {
@@ -1161,19 +1100,26 @@ function findUnitAtPoint(point) {
   return null;
 }
 
-function selectUnit(unit) {
-  selectedUnitId = canActWithUnit(unit) ? unit.id : null;
-  refreshSelectedUnitActions();
+async function selectUnit(unit) {
+  if (!unit) {
+    return false;
+  }
+  const payload = await postGameCommand("/api/game/select", {
+    state: gameCommandState(),
+    unitId: unit.id,
+  });
+  if (!payload.ok) {
+    return false;
+  }
+  applyGamePatch(payload);
   syncModeControls();
   drawMap();
+  return true;
 }
 
 async function moveSelectedUnitTo(coord) {
   const unit = selectedUnit();
-  if (!canActWithUnit(unit)) {
-    return false;
-  }
-  const move = reachableHexes.get(coordKey(coord));
+  const move = legalMoveAt(coord);
   if (!move) {
     return false;
   }
@@ -1187,7 +1133,6 @@ async function moveSelectedUnitTo(coord) {
     return false;
   }
   applyGamePatch(payload);
-  await Promise.all([refreshReachableHexes(), refreshAttackableUnits()]);
   syncModeControls();
   drawMap();
   return true;
@@ -1195,7 +1140,7 @@ async function moveSelectedUnitTo(coord) {
 
 async function attackSelectedUnit(defender) {
   const attacker = selectedUnit();
-  if (!canActWithUnit(attacker) || !defender || !attackableUnits.has(defender.id)) {
+  if (!attacker || !defender || !legalAttackForUnit(defender)) {
     return false;
   }
   const payload = await postGameCommand("/api/game/attack", {
@@ -1207,19 +1152,12 @@ async function attackSelectedUnit(defender) {
     return false;
   }
   applyGamePatch(payload);
-  if (!selectedUnit()) {
-    selectedUnitId = null;
-  }
-  await Promise.all([refreshReachableHexes(), refreshAttackableUnits()]);
   syncModeControls();
   drawMap();
   return true;
 }
 
 async function advanceTurn() {
-  selectedUnitId = null;
-  reachableHexes = new Map();
-  attackableUnits = new Map();
   try {
     applyGamePatch(await postGameCommand("/api/game/end-turn", {
       state: gameCommandState(),
@@ -1457,10 +1395,7 @@ async function generateMap() {
     }
     currentMap = payload;
     currentMap.units = Array.isArray(currentMap.units) ? currentMap.units : [];
-    currentMap.game = defaultGameMeta();
-    selectedUnitId = null;
-    reachableHexes = new Map();
-    attackableUnits = new Map();
+    currentMap.game = currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {};
     terrainUndo = new Map();
     ensureGameMeta();
     refreshDerivedTopology();
@@ -1509,11 +1444,8 @@ function createBlankMap(options = {}) {
       hex_label_model: "base-plus-generation-role.v1",
     },
   };
-  selectedUnitId = null;
-  reachableHexes = new Map();
-  attackableUnits = new Map();
   terrainUndo = new Map();
-  currentMap.game = defaultGameMeta();
+  currentMap.game = {};
   ensureGameMeta();
   refreshDerivedTopology();
   syncModeControls();
@@ -1528,9 +1460,6 @@ async function createDefaultPlayScenario() {
       factions: factionCount,
     });
     currentMap.units = Array.isArray(currentMap.units) ? currentMap.units.map(normalizeUnit) : [];
-    selectedUnitId = null;
-    reachableHexes = new Map();
-    attackableUnits = new Map();
     terrainUndo = new Map();
     ensureGameMeta();
     refreshDerivedTopology();
@@ -1578,7 +1507,7 @@ function normalizeLoadedMap(map) {
         .filter((unit) => unit && Number.isInteger(unit.q) && Number.isInteger(unit.r))
         .map(normalizeUnit)
       : [],
-    game: map.game && typeof map.game === "object" ? map.game : defaultGameMeta(),
+    game: map.game && typeof map.game === "object" ? map.game : {},
     metadata: map.metadata && typeof map.metadata === "object"
       ? map.metadata
       : { generator: "loaded-editor", terrain_types: editorTerrains.map((terrain) => terrain.key) },
@@ -1644,9 +1573,6 @@ async function saveCurrentMap() {
 async function loadMapText(text) {
   try {
     currentMap = normalizeLoadedMap(JSON.parse(text));
-    selectedUnitId = null;
-    reachableHexes = new Map();
-    attackableUnits = new Map();
     terrainUndo = new Map();
     ensureGameMeta();
     widthInput.value = currentMap.width;
@@ -1725,7 +1651,7 @@ mapPanel.addEventListener("pointerdown", async (event) => {
       if (await attackSelectedUnit(unit)) {
         return;
       }
-      selectUnit(unit);
+      await selectUnit(unit);
       return;
     }
     const hex = findNearestHex(point);

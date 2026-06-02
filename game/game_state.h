@@ -58,6 +58,7 @@ enum class UnitKind {
     Camp,
     Herd,
     Cavalry,
+    Infantry,
 };
 
 struct PastureState {
@@ -122,8 +123,11 @@ struct GameState {
     std::uint32_t seed = 1;
     int round = 1;
     int active_faction_index = 0;
+    int selected_unit_id = 0;
     GameModeKind active_mode = GameModeKind::StrategicGame;
     std::vector<OwnerId> turn_order;
+    std::vector<ReachableHex> legal_moves;
+    std::vector<AttackableUnit> legal_attacks;
 
     std::vector<GameHex> hexes;
     std::vector<RiverEdge> rivers;
@@ -151,6 +155,7 @@ GameState create_default_play_sandbox(int width = 10, int height = 10, int facti
 OwnerId active_faction(const GameState& state);
 std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id);
 std::vector<AttackableUnit> attackable_units(const GameState& state, int unit_id);
+bool select_unit(GameState& state, int unit_id);
 bool move_unit(GameState& state, int unit_id, Coord destination);
 bool attack_unit(GameState& state, int attacker_id, int defender_id);
 void end_turn(GameState& state);

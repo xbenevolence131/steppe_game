@@ -132,6 +132,7 @@ const char* unit_kind_to_string(UnitKind kind) {
         case UnitKind::Camp: return "camp";
         case UnitKind::Herd: return "herd";
         case UnitKind::Cavalry: return "cavalry";
+        case UnitKind::Infantry: return "infantry";
     }
     return "cavalry";
 }
@@ -139,6 +140,7 @@ const char* unit_kind_to_string(UnitKind kind) {
 UnitKind unit_kind_from_string(const std::string& kind) {
     if (kind == "camp") return UnitKind::Camp;
     if (kind == "herd") return UnitKind::Herd;
+    if (kind == "infantry") return UnitKind::Infantry;
     return UnitKind::Cavalry;
 }
 
@@ -156,11 +158,20 @@ Clan clan_for_owner(OwnerId owner) {
 }
 
 int default_hp(UnitKind kind) {
-    return kind == UnitKind::Cavalry ? 10 : 1;
+    if (kind == UnitKind::Cavalry || kind == UnitKind::Infantry) {
+        return 10;
+    }
+    return 1;
 }
 
 int default_move(UnitKind kind) {
-    return kind == UnitKind::Cavalry ? 4 : 0;
+    if (kind == UnitKind::Cavalry) {
+        return 4;
+    }
+    if (kind == UnitKind::Infantry) {
+        return 2;
+    }
+    return 0;
 }
 
 int movement_cost(Terrain terrain) {
@@ -472,26 +483,26 @@ GameState create_default_play_sandbox(int width, int height, int faction_count) 
         }
     }
 
-    auto cavalry = [](int id, OwnerId owner, Coord coord) {
+    auto make_unit = [](int id, OwnerId owner, UnitKind kind, Coord coord) {
         Unit unit;
         unit.id = id;
         unit.owner = owner;
-        unit.kind = UnitKind::Cavalry;
+        unit.kind = kind;
         unit.coord = coord;
         unit.hp = default_hp(unit.kind);
         unit.max_hp = unit.hp;
         unit.move = default_move(unit.kind);
         unit.remaining_move = unit.move;
         unit.projects_zoc = true;
-        unit.respects_zoc = false;
+        unit.respects_zoc = kind == UnitKind::Infantry;
         return unit;
     };
 
     state.units = {
-        cavalry(1, mongol_owner, {3, 5}),
-        cavalry(2, mongol_owner, {3, 7}),
-        cavalry(3, chinese_owner, {8, 5}),
-        cavalry(4, chinese_owner, {8, 7}),
+        make_unit(1, mongol_owner, UnitKind::Cavalry, {3, 5}),
+        make_unit(2, mongol_owner, UnitKind::Infantry, {3, 7}),
+        make_unit(3, chinese_owner, UnitKind::Cavalry, {8, 5}),
+        make_unit(4, chinese_owner, UnitKind::Infantry, {8, 7}),
     };
     return state;
 }
@@ -529,6 +540,21 @@ bool occupied_by_other_unit(const GameState& state, const Coord& coord, int movi
     return std::find_if(state.units.begin(), state.units.end(), [&](const Unit& unit) {
         return unit.id != moving_unit_id && coord_equal(unit.coord, coord);
     }) != state.units.end();
+}
+
+void refresh_legal_actions(GameState& state) {
+    state.legal_moves.clear();
+    state.legal_attacks.clear();
+    if (state.selected_unit_id == 0) {
+        return;
+    }
+    const Unit* unit = find_unit(state, state.selected_unit_id);
+    if (unit == nullptr || unit->owner != active_faction(state)) {
+        state.selected_unit_id = 0;
+        return;
+    }
+    state.legal_moves = reachable_hexes(state, state.selected_unit_id);
+    state.legal_attacks = attackable_units(state, state.selected_unit_id);
 }
 
 bool enemy_zoc_at(const GameState& state, const Coord& coord, const Unit& moving_unit) {
@@ -620,6 +646,19 @@ std::vector<AttackableUnit> attackable_units(const GameState& state, int unit_id
     return attackable;
 }
 
+bool select_unit(GameState& state, int unit_id) {
+    const Unit* unit = find_unit(state, unit_id);
+    if (unit == nullptr || unit->owner != active_faction(state)) {
+        state.selected_unit_id = 0;
+        state.legal_moves.clear();
+        state.legal_attacks.clear();
+        return false;
+    }
+    state.selected_unit_id = unit_id;
+    refresh_legal_actions(state);
+    return true;
+}
+
 bool move_unit(GameState& state, int unit_id, Coord destination) {
     Unit* unit = find_unit(state, unit_id);
     if (unit == nullptr || unit->owner != active_faction(state) || unit->move_done) {
@@ -640,6 +679,8 @@ bool move_unit(GameState& state, int unit_id, Coord destination) {
     if (unit->remaining_move == 0) {
         unit->move_done = true;
     }
+    state.selected_unit_id = unit_id;
+    refresh_legal_actions(state);
     return true;
 }
 
@@ -666,10 +707,15 @@ bool attack_unit(GameState& state, int attacker_id, int defender_id) {
     state.units.erase(std::remove_if(state.units.begin(), state.units.end(), [](const Unit& unit) {
         return unit.hp <= 0;
     }), state.units.end());
+    state.selected_unit_id = attacker_id;
+    refresh_legal_actions(state);
     return true;
 }
 
 void end_turn(GameState& state) {
+    state.selected_unit_id = 0;
+    state.legal_moves.clear();
+    state.legal_attacks.clear();
     if (state.turn_order.empty()) {
         state.turn_order = {mongol_owner, chinese_owner};
     }
@@ -732,11 +778,45 @@ void print_units_json(const std::vector<Unit>& units, std::ostream& out) {
     out << "]";
 }
 
+void print_reachable_array_json(const std::vector<ReachableHex>& reachable, std::ostream& out) {
+    out << "[";
+    for (std::size_t i = 0; i < reachable.size(); ++i) {
+        if (i > 0) {
+            out << ",";
+        }
+        out << "{\"q\":" << reachable[i].coord.q
+            << ",\"r\":" << reachable[i].coord.r
+            << ",\"cost\":" << reachable[i].cost
+            << "}";
+    }
+    out << "]";
+}
+
+void print_attackable_array_json(const std::vector<AttackableUnit>& attackable, std::ostream& out) {
+    out << "[";
+    for (std::size_t i = 0; i < attackable.size(); ++i) {
+        if (i > 0) {
+            out << ",";
+        }
+        out << "{\"unitId\":" << attackable[i].unit_id
+            << ",\"q\":" << attackable[i].coord.q
+            << ",\"r\":" << attackable[i].coord.r
+            << "}";
+    }
+    out << "]";
+}
+
 void print_game_meta_json(const GameState& state, std::ostream& out) {
     out << "\"game\":{";
     out << "\"round\":" << state.round << ",";
     out << "\"activeFactionIndex\":" << state.active_faction_index << ",";
     out << "\"activeOwner\":" << active_faction(state) << ",";
+    out << "\"selectedUnitId\":" << state.selected_unit_id << ",";
+    out << "\"legalMoves\":";
+    print_reachable_array_json(state.legal_moves, out);
+    out << ",\"legalAttacks\":";
+    print_attackable_array_json(state.legal_attacks, out);
+    out << ",";
     out << "\"turnOrder\":[";
     for (std::size_t i = 0; i < state.turn_order.size(); ++i) {
         if (i > 0) {
@@ -787,28 +867,15 @@ void print_game_state_json(const GameState& state, std::ostream& out) {
 }
 
 void print_reachable_json(const std::vector<ReachableHex>& reachable, std::ostream& out) {
-    out << "{\"reachable\":[";
-    for (std::size_t i = 0; i < reachable.size(); ++i) {
-        if (i > 0) {
-            out << ",";
-        }
-        out << "{\"q\":" << reachable[i].coord.q << ",\"r\":" << reachable[i].coord.r << ",\"cost\":" << reachable[i].cost << "}";
-    }
-    out << "]}\n";
+    out << "{\"reachable\":";
+    print_reachable_array_json(reachable, out);
+    out << "}\n";
 }
 
 void print_attackable_json(const std::vector<AttackableUnit>& attackable, std::ostream& out) {
-    out << "{\"attackable\":[";
-    for (std::size_t i = 0; i < attackable.size(); ++i) {
-        if (i > 0) {
-            out << ",";
-        }
-        out << "{\"unitId\":" << attackable[i].unit_id
-            << ",\"q\":" << attackable[i].coord.q
-            << ",\"r\":" << attackable[i].coord.r
-            << "}";
-    }
-    out << "]}\n";
+    out << "{\"attackable\":";
+    print_attackable_array_json(attackable, out);
+    out << "}\n";
 }
 
 void print_game_patch_json(const GameState& state, bool ok, std::ostream& out) {
@@ -849,6 +916,7 @@ GameState parse_game_state_json(const std::string& json) {
     const std::string game_json = object_field(json, "game");
     state.round = int_field(game_json.empty() ? json : game_json, "round", 1);
     state.active_faction_index = int_field(game_json.empty() ? json : game_json, "activeFactionIndex", 0);
+    state.selected_unit_id = int_field(game_json.empty() ? json : game_json, "selectedUnitId", 0);
     state.turn_order = parse_turn_order(object_field(game_json.empty() ? json : game_json, "turnOrder"));
     if (state.turn_order.empty()) {
         state.turn_order = {mongol_owner, chinese_owner};
@@ -893,14 +961,15 @@ GameState parse_game_state_json(const std::string& json) {
         unit.remaining_move = int_field(unit_json, "remainingMove", unit.move);
         unit.move_done = bool_field(unit_json, "moveDone", false);
         unit.combat_done = bool_field(unit_json, "combatDone", false);
-        unit.projects_zoc = bool_field(unit_json, "projectsZoc", unit.kind == UnitKind::Cavalry);
-        unit.respects_zoc = bool_field(unit_json, "respectsZoc", false);
+        unit.projects_zoc = bool_field(unit_json, "projectsZoc", unit.kind == UnitKind::Cavalry || unit.kind == UnitKind::Infantry);
+        unit.respects_zoc = bool_field(unit_json, "respectsZoc", unit.kind == UnitKind::Infantry);
         state.units.push_back(unit);
     }
 
     if (state.width <= 0 || state.height <= 0 || state.hexes.empty()) {
         throw std::runtime_error("game state JSON is missing width, height, or hexes");
     }
+    refresh_legal_actions(state);
     return state;
 }
 
