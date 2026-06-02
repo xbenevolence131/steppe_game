@@ -100,6 +100,11 @@ const terrainStyles = {
     stroke: "#1e5f55",
     label: "#ecfff9",
   },
+  dzungarian_gate: {
+    fill: "#d2a84a",
+    stroke: "#7c5820",
+    label: "#20170c",
+  },
   river: {
     stroke: "#2679a6",
     source: "#60c4e8",
@@ -565,6 +570,9 @@ function styleForHex(hex) {
   }
   if (hex.terrain === "urban" && labels.includes("oasis")) {
     return terrainStyles.oasis;
+  }
+  if (hex.terrain === "urban" && labels.includes("dzungarian_gate")) {
+    return terrainStyles.dzungarian_gate;
   }
   if (labels.includes("forest_blob")) {
     return terrainStyles.forest_blob;

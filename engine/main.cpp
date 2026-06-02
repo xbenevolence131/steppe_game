@@ -306,6 +306,49 @@ double steppe_pinch_center_x(const GenerateArgs& args) {
     return (static_cast<double>(steppe_pinch_band_index(args)) + 0.5) / static_cast<double>(band_count);
 }
 
+double seeded_steppe_pinch_center_x(const GenerateArgs& args) {
+    return steppe_pinch_center_x(args) + signed_noise(args.seed, 69000) * 0.018;
+}
+
+double steppe_center_r_for_x(const GenerateArgs& args, double x) {
+    const double map_midline = (static_cast<double>(args.height) + 1.0) * 0.5;
+    const double angle_degrees = signed_noise(args.seed, 1) * 15.0;
+    const double angle_radians = angle_degrees * 3.14159265358979323846 / 180.0;
+    const double total_row_rise = std::tan(angle_radians) * 0.8660254037844386 * static_cast<double>(args.width - 1);
+    const double wobble_phase = unit_noise(args.seed, 2) * 2.0 * 3.14159265358979323846;
+    const double wobble_frequency = 1.0 + unit_noise(args.seed, 3) * 1.5;
+    const double wobble = std::sin(x * wobble_frequency * 2.0 * 3.14159265358979323846 + wobble_phase)
+        * std::max(0.35, args.height * 0.07);
+    const double center_offset = signed_noise(args.seed, 4) * std::max(0.0, args.height * 0.08);
+    return map_midline + center_offset + (x - 0.5) * total_row_rise + wobble;
+}
+
+double steppe_average_half_width(const GenerateArgs& args) {
+    return std::max(1.0, args.height * (0.18 + unit_noise(args.seed, 5) * 0.1));
+}
+
+int steppe_pinch_pass_count(const GenerateArgs& args) {
+    return unit_noise(args.seed, 69001) < 0.58 ? 1 : 2;
+}
+
+double steppe_pinch_pass_center_r(
+    const GenerateArgs& args,
+    int pass,
+    double x,
+    double center_r,
+    double average_half_width
+) {
+    const int pass_count = steppe_pinch_pass_count(args);
+    double offset = signed_noise(args.seed, static_cast<std::uint32_t>(69010 + pass * 17))
+        * std::max(1.0, average_half_width * 0.34);
+    if (pass_count == 2) {
+        offset += (pass == 0 ? -1.0 : 1.0) * std::max(1.0, average_half_width * 0.18);
+    }
+    return center_r + offset
+        + std::sin((x * 5.0 + unit_noise(args.seed, static_cast<std::uint32_t>(69020 + pass)) * 2.0)
+            * 3.14159265358979323846) * 1.1;
+}
+
 bool in_steppe_pinch_pass(
     const GenerateArgs& args,
     int q,
@@ -319,16 +362,9 @@ bool in_steppe_pinch_pass(
         return false;
     }
 
-    const int pass_count = unit_noise(args.seed, 69001) < 0.58 ? 1 : 2;
+    const int pass_count = steppe_pinch_pass_count(args);
     for (int pass = 0; pass < pass_count; ++pass) {
-        double offset = signed_noise(args.seed, static_cast<std::uint32_t>(69010 + pass * 17))
-            * std::max(1.0, average_half_width * 0.34);
-        if (pass_count == 2) {
-            offset += (pass == 0 ? -1.0 : 1.0) * std::max(1.0, average_half_width * 0.18);
-        }
-        const double pass_center = center_r + offset
-            + std::sin((x * 5.0 + unit_noise(args.seed, static_cast<std::uint32_t>(69020 + pass)) * 2.0)
-                * 3.14159265358979323846) * 1.1;
+        const double pass_center = steppe_pinch_pass_center_r(args, pass, x, center_r, average_half_width);
         const double pass_half_width = 1.15 + unit_noise(args.seed, static_cast<std::uint32_t>(69030 + pass)) * 1.2;
         if (std::abs(static_cast<double>(r) - pass_center) <= pass_half_width) {
             return true;
@@ -346,22 +382,13 @@ bool is_steppe_hex(int q, int r, const GenerateArgs& args) {
     const double x = args.width == 1
         ? 0.5
         : static_cast<double>(q - 1) / static_cast<double>(args.width - 1);
-    const double map_midline = (static_cast<double>(args.height) + 1.0) * 0.5;
-    const double angle_degrees = signed_noise(args.seed, 1) * 15.0;
-    const double angle_radians = angle_degrees * 3.14159265358979323846 / 180.0;
-    const double total_row_rise = std::tan(angle_radians) * 0.8660254037844386 * static_cast<double>(args.width - 1);
-    const double wobble_phase = unit_noise(args.seed, 2) * 2.0 * 3.14159265358979323846;
-    const double wobble_frequency = 1.0 + unit_noise(args.seed, 3) * 1.5;
-    const double wobble = std::sin(x * wobble_frequency * 2.0 * 3.14159265358979323846 + wobble_phase)
-        * std::max(0.35, args.height * 0.07);
-    const double center_offset = signed_noise(args.seed, 4) * std::max(0.0, args.height * 0.08);
-    const double center_r = map_midline + center_offset + (x - 0.5) * total_row_rise + wobble;
-    const double average_half_width = std::max(1.0, args.height * (0.18 + unit_noise(args.seed, 5) * 0.1));
+    const double center_r = steppe_center_r_for_x(args, x);
+    const double average_half_width = steppe_average_half_width(args);
     const double width_phase = unit_noise(args.seed, 6) * 2.0 * 3.14159265358979323846;
     const double width_variation = std::sin((x * 2.0 + 0.25) * 3.14159265358979323846 + width_phase)
         * average_half_width * 0.22;
     const double half_width = average_half_width + width_variation;
-    const double pinch_center_x = steppe_pinch_center_x(args) + signed_noise(args.seed, 69000) * 0.018;
+    const double pinch_center_x = seeded_steppe_pinch_center_x(args);
     const double pinch_sigma = 0.052 + unit_noise(args.seed, 69002) * 0.018;
     const double pinch_dx = x - pinch_center_x;
     const double pinch_influence = std::exp(-(pinch_dx * pinch_dx) / (2.0 * pinch_sigma * pinch_sigma));
@@ -2192,6 +2219,72 @@ std::vector<Town> place_fixed_feature_towns(
     return towns;
 }
 
+Coord dzungarian_gate_target(const GenerateArgs& args) {
+    const double x = std::max(0.0, std::min(1.0, seeded_steppe_pinch_center_x(args)));
+    const int q = std::max(1, std::min(args.width, static_cast<int>(std::round(x * static_cast<double>(args.width - 1))) + 1));
+    const double center_r = steppe_center_r_for_x(args, x);
+    const double average_half_width = steppe_average_half_width(args);
+    int best_pass = 0;
+    double best_distance = std::numeric_limits<double>::max();
+    for (int pass = 0; pass < steppe_pinch_pass_count(args); ++pass) {
+        const double pass_center = steppe_pinch_pass_center_r(args, pass, x, center_r, average_half_width);
+        const double distance = std::abs(pass_center - static_cast<double>(args.height) * 0.5);
+        if (distance < best_distance) {
+            best_distance = distance;
+            best_pass = pass;
+        }
+    }
+    const int r = std::max(1, std::min(args.height, static_cast<int>(std::round(steppe_pinch_pass_center_r(args, best_pass, x, center_r, average_half_width)))));
+    return {q, r};
+}
+
+std::optional<Town> place_dzungarian_gate_town(
+    const GenerateArgs& args,
+    const std::set<Coord, decltype(coord_less)*>& all_lakes,
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes,
+    const std::vector<Town>& existing_towns
+) {
+    std::set<Coord, decltype(coord_less)*> occupied_towns(coord_less);
+    for (const Town& town : existing_towns) {
+        occupied_towns.insert(town.coord);
+    }
+
+    const Coord target = dzungarian_gate_target(args);
+    std::vector<Coord> candidates;
+    for (int radius = 0; radius <= 8 && candidates.empty(); ++radius) {
+        for (int r = std::max(1, target.r - radius); r <= std::min(args.height, target.r + radius); ++r) {
+            for (int q = std::max(1, target.q - radius); q <= std::min(args.width, target.q + radius); ++q) {
+                const Coord coord{q, r};
+                if (hex_grid_distance(target, coord) > radius
+                    || !final_grassland_before_towns(args, all_lakes, valley_hexes, coord)
+                    || occupied_towns.find(coord) != occupied_towns.end()) {
+                    continue;
+                }
+                candidates.push_back(coord);
+            }
+        }
+    }
+    if (candidates.empty()) {
+        return std::nullopt;
+    }
+
+    std::sort(candidates.begin(), candidates.end(), [&](const Coord& first, const Coord& second) {
+        const int first_distance = hex_grid_distance(target, first);
+        const int second_distance = hex_grid_distance(target, second);
+        if (first_distance != second_distance) {
+            return first_distance < second_distance;
+        }
+        const double first_noise = unit_noise(args.seed, static_cast<std::uint32_t>(76900 + first.q * 199 + first.r * 421));
+        const double second_noise = unit_noise(args.seed, static_cast<std::uint32_t>(76900 + second.q * 199 + second.r * 421));
+        if (first_noise != second_noise) {
+            return first_noise < second_noise;
+        }
+        return coord_less(first, second);
+    });
+
+    return Town{candidates.front(), "dzungarian_gate"};
+}
+
 std::optional<Town> place_oasis_town(
     const GenerateArgs& args,
     const std::set<Coord, decltype(coord_less)*>& all_lakes,
@@ -2548,44 +2641,73 @@ std::optional<Road> build_silk_road(
     const std::set<Coord, decltype(coord_less)*>& valley_hexes,
     int& next_id
 ) {
-    const std::optional<Coord> chinese_anchor = westernmost_town_for_feature(towns, "chinese_town");
-    const std::optional<Coord> persian_anchor = easternmost_town_for_feature(towns, "persian_town");
+    const std::optional<Coord> chinese_anchor = easternmost_town_for_feature(towns, "chinese_town");
+    const std::optional<Coord> persian_anchor = westernmost_town_for_feature(towns, "persian_town");
     const auto oasis = std::find_if(towns.begin(), towns.end(), [](const Town& town) {
         return town.feature == "oasis";
     });
-    if (!chinese_anchor.has_value() || !persian_anchor.has_value() || oasis == towns.end()) {
+    const auto dzungarian_gate = std::find_if(towns.begin(), towns.end(), [](const Town& town) {
+        return town.feature == "dzungarian_gate";
+    });
+    if (!chinese_anchor.has_value() || !persian_anchor.has_value() || oasis == towns.end() || dzungarian_gate == towns.end()) {
         return std::nullopt;
     }
 
     std::vector<Coord> west_path = route_road_path(args, chinese_anchor.value(), oasis->coord, lake_hexes, &valley_hexes);
-    const std::vector<Coord> east_path = route_road_path(args, oasis->coord, persian_anchor.value(), lake_hexes, &valley_hexes);
-    if (west_path.empty() || east_path.empty()) {
+    const std::vector<Coord> gate_path = route_road_path(args, oasis->coord, dzungarian_gate->coord, lake_hexes, &valley_hexes);
+    const std::vector<Coord> persian_path = route_road_path(args, dzungarian_gate->coord, persian_anchor.value(), lake_hexes, &valley_hexes);
+    if (west_path.empty() || gate_path.empty() || persian_path.empty()) {
         return std::nullopt;
     }
-    west_path.insert(west_path.end(), east_path.begin() + 1, east_path.end());
+    west_path.insert(west_path.end(), gate_path.begin() + 1, gate_path.end());
+    west_path.insert(west_path.end(), persian_path.begin() + 1, persian_path.end());
     return Road{next_id++, "silk_road", west_path};
 }
 
-std::vector<Coord> clean_silk_road_path(
+std::vector<Coord> clean_path_through_waypoints(
     const GenerateArgs& args,
     const std::vector<Coord>& path,
-    const Coord& oasis,
+    const std::vector<Coord>& waypoints,
     const std::set<Coord, decltype(coord_less)*>& lake_hexes,
     const std::set<Coord, decltype(coord_less)*>& valley_hexes
 ) {
-    const auto oasis_iter = std::find_if(path.begin(), path.end(), [&oasis](const Coord& coord) {
-        return coord_equal(coord, oasis);
-    });
-    if (oasis_iter == path.end()) {
+    if (waypoints.empty()) {
         return clean_road_path(args, path, lake_hexes, &valley_hexes);
     }
 
-    const std::vector<Coord> west(path.begin(), oasis_iter + 1);
-    const std::vector<Coord> east(oasis_iter, path.end());
-    std::vector<Coord> cleaned = clean_road_path(args, west, lake_hexes, &valley_hexes);
-    const std::vector<Coord> east_cleaned = clean_road_path(args, east, lake_hexes, &valley_hexes);
-    if (!east_cleaned.empty()) {
-        cleaned.insert(cleaned.end(), east_cleaned.begin() + 1, east_cleaned.end());
+    std::vector<std::size_t> waypoint_indices;
+    std::size_t search_start = 0;
+    for (const Coord& waypoint : waypoints) {
+        const auto iter = std::find_if(path.begin() + static_cast<std::ptrdiff_t>(search_start), path.end(), [&waypoint](const Coord& coord) {
+            return coord_equal(coord, waypoint);
+        });
+        if (iter == path.end()) {
+            return clean_road_path(args, path, lake_hexes, &valley_hexes);
+        }
+        const std::size_t index = static_cast<std::size_t>(std::distance(path.begin(), iter));
+        waypoint_indices.push_back(index);
+        search_start = index + 1;
+    }
+
+    std::vector<Coord> cleaned;
+    std::size_t segment_start = 0;
+    for (const std::size_t waypoint_index : waypoint_indices) {
+        const std::vector<Coord> segment(path.begin() + static_cast<std::ptrdiff_t>(segment_start), path.begin() + static_cast<std::ptrdiff_t>(waypoint_index) + 1);
+        const std::vector<Coord> segment_cleaned = clean_road_path(args, segment, lake_hexes, &valley_hexes);
+        if (cleaned.empty()) {
+            cleaned = segment_cleaned;
+        } else if (!segment_cleaned.empty()) {
+            cleaned.insert(cleaned.end(), segment_cleaned.begin() + 1, segment_cleaned.end());
+        }
+        segment_start = waypoint_index;
+    }
+
+    const std::vector<Coord> final_segment(path.begin() + static_cast<std::ptrdiff_t>(segment_start), path.end());
+    const std::vector<Coord> final_cleaned = clean_road_path(args, final_segment, lake_hexes, &valley_hexes);
+    if (cleaned.empty()) {
+        cleaned = final_cleaned;
+    } else if (!final_cleaned.empty()) {
+        cleaned.insert(cleaned.end(), final_cleaned.begin() + 1, final_cleaned.end());
     }
     return cleaned;
 }
@@ -2601,10 +2723,13 @@ std::vector<Road> clean_roads(
     const auto oasis = std::find_if(towns.begin(), towns.end(), [](const Town& town) {
         return town.feature == "oasis";
     });
+    const auto dzungarian_gate = std::find_if(towns.begin(), towns.end(), [](const Town& town) {
+        return town.feature == "dzungarian_gate";
+    });
 
     for (Road& road : cleaned_roads) {
-        if (road.feature == "silk_road" && oasis != towns.end()) {
-            road.path = clean_silk_road_path(args, road.path, oasis->coord, lake_hexes, valley_hexes);
+        if (road.feature == "silk_road" && oasis != towns.end() && dzungarian_gate != towns.end()) {
+            road.path = clean_path_through_waypoints(args, road.path, {oasis->coord, dzungarian_gate->coord}, lake_hexes, valley_hexes);
         } else {
             road.path = clean_road_path(args, road.path, lake_hexes);
         }
@@ -2899,6 +3024,10 @@ void print_generated_map(const GenerateArgs& args) {
     const std::set<Coord, decltype(coord_less)*> forest_blob_hexes = derive_forest_blob_hexes(args, all_lakes, valley_hexes);
     const std::map<Coord, std::string, decltype(coord_less)*> steppe_texture_hexes = derive_steppe_texture_hexes(args, all_lakes, valley_hexes, forest_blob_hexes, all_river_edges);
     std::vector<Town> towns = place_fixed_feature_towns(args, baikal, caspian, chinese_lake_network, all_lakes, valley_hexes, rivers);
+    const std::optional<Town> dzungarian_gate = place_dzungarian_gate_town(args, all_lakes, valley_hexes, towns);
+    if (dzungarian_gate.has_value()) {
+        towns.push_back(dzungarian_gate.value());
+    }
     const std::optional<Town> oasis = place_oasis_town(args, all_lakes, valley_hexes, all_river_edges, towns);
     if (oasis.has_value()) {
         towns.push_back(oasis.value());
