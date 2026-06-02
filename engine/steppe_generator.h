@@ -31,6 +31,24 @@ struct Coord {
     int r = 0;
 };
 
+enum class Terrain {
+    None,
+    Grassland,
+    Lake,
+    Hill,
+    Mountain,
+    Forest,
+    Marsh,
+    Desert,
+    Urban,
+};
+
+struct Hex {
+    Coord coord;
+    Terrain terrain = Terrain::None;
+    std::vector<std::string> labels;
+};
+
 struct VertexKey {
     long long x = 0;
     long long y = 0;
@@ -84,7 +102,36 @@ struct Crossing {
     RiverEdge edge;
 };
 
+struct GeneratedMapMetadata {
+    std::string generator = "prototype-steppe-blob";
+    std::vector<Terrain> terrain_types;
+    std::string hex_label_model = "final-semantic-labels.v2";
+    std::string lake_river_connection_model = "river-terminal-lake-vertex.v1";
+    std::string crossing_model = "bridges-and-spaced-fords.v1";
+    LakeNetworkOverlay chinese_lake_network;
+};
+
+struct GeneratedMap {
+    std::string schema = "steppe-terrain.v1";
+    std::uint32_t seed = 1;
+    int width = 0;
+    int height = 0;
+    std::vector<Hex> hexes;
+    std::vector<Town> towns;
+    std::vector<Coord> river_sources;
+    std::vector<Coord> river_destinations;
+    std::vector<Coord> merge_points;
+    std::vector<RiverSegment> river_segments;
+    std::vector<RiverEdge> edges;
+    std::vector<LakeRiverConnection> lake_river_connections;
+    std::vector<Road> roads;
+    std::vector<Crossing> crossings;
+    GeneratedMapMetadata metadata;
+};
+
 GenerateArgs parse_generate_args(int argc, char** argv);
+GeneratedMap generate_map(const GenerateArgs& args);
+void print_generated_map_json(const GeneratedMap& map);
 void print_generated_map(const GenerateArgs& args);
 void print_usage();
 

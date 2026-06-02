@@ -13,6 +13,7 @@ This is an experimental procedural territory-generation app for a hex-based turn
 ## Architecture
 
 - `engine/steppe_generator.cpp` contains the authoritative C++17 generation implementation, exposed through `engine/steppe_generator.h` and built as the `steppe_generator` static library. `engine/main.cpp` is only the CLI wrapper.
+- The library API exposes typed `GeneratedMap` data through `generate_map(const GenerateArgs&)`; JSON output should serialize that map via `print_generated_map_json` instead of interleaving generation and printing.
 - `proxy/` contains a raw Node.js HTTP server that invokes the engine.
 - `public/` contains the browser UI for inspecting generated maps.
 - Terrain and hydrology decisions should generally live in C++, with the browser focused on visualization.

@@ -3147,7 +3147,29 @@ bool coord_in_vector(const std::vector<Coord>& coords, const Coord& target) {
     }) != coords.end();
 }
 
-void print_generated_map(const GenerateArgs& args) {
+const char* terrain_to_string(Terrain terrain) {
+    switch (terrain) {
+        case Terrain::None: return "none";
+        case Terrain::Grassland: return "grassland";
+        case Terrain::Lake: return "lake";
+        case Terrain::Hill: return "hill";
+        case Terrain::Mountain: return "mountain";
+        case Terrain::Forest: return "forest";
+        case Terrain::Marsh: return "marsh";
+        case Terrain::Desert: return "desert";
+        case Terrain::Urban: return "urban";
+    }
+    return "none";
+}
+
+void print_hex(const Hex& hex) {
+    std::cout << "{\"q\":" << hex.coord.q << ",\"r\":" << hex.coord.r
+        << ",\"terrain\":\"" << terrain_to_string(hex.terrain) << "\",\"labels\":";
+    print_string_array(hex.labels);
+    std::cout << "}";
+}
+
+GeneratedMap generate_map(const GenerateArgs& args) {
     const RiverNetwork rivers = generate_river_network(args);
     const std::set<Coord, decltype(coord_less)*> lakes = generate_lake_hexes(args, rivers);
     const std::set<Coord, decltype(coord_less)*> baikal = generate_baikal_hexes(args);
@@ -3198,20 +3220,14 @@ void print_generated_map(const GenerateArgs& args) {
     const std::map<Coord, int, decltype(coord_less)*> grassland_distances = derive_grassland_distances(args, valley_hexes);
     const std::vector<LakeRiverConnection> lake_river_connections = derive_lake_river_connections(all_lakes, all_river_edges);
 
-    std::cout << "{";
-    std::cout << "\"schema\":\"steppe-terrain.v1\",";
-    std::cout << "\"seed\":" << args.seed << ",";
-    std::cout << "\"width\":" << args.width << ",";
-    std::cout << "\"height\":" << args.height << ",";
-    std::cout << "\"hexes\":[";
+    GeneratedMap map;
+    map.seed = args.seed;
+    map.width = args.width;
+    map.height = args.height;
+    map.hexes.reserve(static_cast<std::size_t>(args.width * args.height));
 
-    bool first = true;
     for (int r = 1; r <= args.height; ++r) {
         for (int q = 1; q <= args.width; ++q) {
-            if (!first) {
-                std::cout << ",";
-            }
-            first = false;
             const Coord coord{q, r};
             const bool base_steppe = is_steppe_hex(q, r, args);
             const bool lake = all_lakes.find(coord) != all_lakes.end();
@@ -3235,36 +3251,51 @@ void print_generated_map(const GenerateArgs& args) {
             const auto remove_label = [&](const std::string& label) {
                 labels.erase(std::remove(labels.begin(), labels.end(), label), labels.end());
             };
-            const char* terrain = "none";
+            Terrain terrain = Terrain::None;
             if (urban) {
-                terrain = "urban";
+                terrain = Terrain::Urban;
             } else if (lake) {
-                terrain = "lake";
+                terrain = Terrain::Lake;
             } else if (forest_blob) {
-                terrain = "forest";
+                terrain = Terrain::Forest;
             } else if (desert_river_corridor != desert_river_corridor_hexes.end()) {
-                terrain = desert_river_corridor->second.c_str();
+                if (desert_river_corridor->second == "marsh") {
+                    terrain = Terrain::Marsh;
+                } else if (desert_river_corridor->second == "forest") {
+                    terrain = Terrain::Forest;
+                } else {
+                    terrain = Terrain::Grassland;
+                }
             } else if (eastern_desert) {
-                terrain = "desert";
+                terrain = Terrain::Desert;
             } else if (steppe_texture != steppe_texture_hexes.end()) {
                 if (steppe_texture->second == "steppe_hill") {
-                    terrain = "hill";
+                    terrain = Terrain::Hill;
                 } else if (steppe_texture->second == "steppe_forest") {
-                    terrain = "forest";
+                    terrain = Terrain::Forest;
                 } else if (steppe_texture->second == "steppe_marsh") {
-                    terrain = "marsh";
+                    terrain = Terrain::Marsh;
                 } else {
-                    terrain = "grassland";
+                    terrain = Terrain::Grassland;
                 }
             } else if (valley || base_steppe) {
-                terrain = "grassland";
+                terrain = Terrain::Grassland;
             } else {
                 const auto distance = grassland_distances.find(coord);
-                terrain = wild_terrain_for_distance(
+                const std::string wild_terrain = wild_terrain_for_distance(
                     args,
                     coord,
                     distance == grassland_distances.end() ? std::max(args.width, args.height) : distance->second
                 );
+                if (wild_terrain == "hill") {
+                    terrain = Terrain::Hill;
+                } else if (wild_terrain == "forest") {
+                    terrain = Terrain::Forest;
+                } else if (wild_terrain == "mountain") {
+                    terrain = Terrain::Mountain;
+                } else {
+                    terrain = Terrain::None;
+                }
             }
 
             if ((forest_blob || eastern_desert) && base_steppe) {
@@ -3313,51 +3344,86 @@ void print_generated_map(const GenerateArgs& args) {
                 labels.push_back(town->feature);
                 labels.insert(labels.end(), town->labels.begin(), town->labels.end());
             }
-            std::cout << "{\"q\":" << q << ",\"r\":" << r << ",\"terrain\":\"" << terrain << "\",\"labels\":";
-            print_string_array(labels);
-            std::cout << "}";
+            map.hexes.push_back({coord, terrain, labels});
         }
     }
 
-    std::cout << "],";
-    std::cout << "\"towns\":[";
-    for (std::size_t i = 0; i < towns.size(); ++i) {
+    map.towns = towns;
+    map.river_sources = rivers.sources;
+    map.river_destinations = rivers.destinations;
+    map.merge_points = rivers.merge_points;
+    map.river_segments = rivers.segments;
+    map.edges = all_river_edges;
+    map.lake_river_connections = lake_river_connections;
+    map.roads = roads;
+    map.crossings = crossings;
+    map.metadata.terrain_types = {
+        Terrain::None,
+        Terrain::Grassland,
+        Terrain::Lake,
+        Terrain::Hill,
+        Terrain::Mountain,
+        Terrain::Forest,
+        Terrain::Marsh,
+        Terrain::Desert,
+        Terrain::Urban,
+    };
+    map.metadata.chinese_lake_network = chinese_lake_network;
+    return map;
+}
+
+void print_generated_map_json(const GeneratedMap& map) {
+    std::cout << "{";
+    std::cout << "\"schema\":\"" << map.schema << "\",";
+    std::cout << "\"seed\":" << map.seed << ",";
+    std::cout << "\"width\":" << map.width << ",";
+    std::cout << "\"height\":" << map.height << ",";
+    std::cout << "\"hexes\":[";
+    for (std::size_t i = 0; i < map.hexes.size(); ++i) {
         if (i > 0) {
             std::cout << ",";
         }
-        print_town(towns[i]);
+        print_hex(map.hexes[i]);
+    }
+    std::cout << "],";
+    std::cout << "\"towns\":[";
+    for (std::size_t i = 0; i < map.towns.size(); ++i) {
+        if (i > 0) {
+            std::cout << ",";
+        }
+        print_town(map.towns[i]);
     }
     std::cout << "],";
     std::cout << "\"river_sources\":[";
-    for (std::size_t i = 0; i < rivers.sources.size(); ++i) {
+    for (std::size_t i = 0; i < map.river_sources.size(); ++i) {
         if (i > 0) {
             std::cout << ",";
         }
-        print_coord(rivers.sources[i]);
+        print_coord(map.river_sources[i]);
     }
     std::cout << "],";
     std::cout << "\"river_destinations\":[";
-    for (std::size_t i = 0; i < rivers.destinations.size(); ++i) {
+    for (std::size_t i = 0; i < map.river_destinations.size(); ++i) {
         if (i > 0) {
             std::cout << ",";
         }
-        print_coord(rivers.destinations[i]);
+        print_coord(map.river_destinations[i]);
     }
     std::cout << "],";
     std::cout << "\"merge_points\":[";
-    for (std::size_t i = 0; i < rivers.merge_points.size(); ++i) {
+    for (std::size_t i = 0; i < map.merge_points.size(); ++i) {
         if (i > 0) {
             std::cout << ",";
         }
-        print_coord(rivers.merge_points[i]);
+        print_coord(map.merge_points[i]);
     }
     std::cout << "],";
     std::cout << "\"river_segments\":[";
-    for (std::size_t i = 0; i < rivers.segments.size(); ++i) {
+    for (std::size_t i = 0; i < map.river_segments.size(); ++i) {
         if (i > 0) {
             std::cout << ",";
         }
-        const RiverSegment& segment = rivers.segments[i];
+        const RiverSegment& segment = map.river_segments[i];
         std::cout << "{\"id\":" << segment.id << ",\"kind\":\"" << segment.kind << "\",\"from\":";
         print_coord(segment.from);
         std::cout << ",\"to\":";
@@ -3373,19 +3439,19 @@ void print_generated_map(const GenerateArgs& args) {
     }
     std::cout << "],";
     std::cout << "\"edges\":[";
-    for (std::size_t i = 0; i < all_river_edges.size(); ++i) {
+    for (std::size_t i = 0; i < map.edges.size(); ++i) {
         if (i > 0) {
             std::cout << ",";
         }
-        print_edge(all_river_edges[i]);
+        print_edge(map.edges[i]);
     }
     std::cout << "],";
     std::cout << "\"lake_river_connections\":[";
-    for (std::size_t i = 0; i < lake_river_connections.size(); ++i) {
+    for (std::size_t i = 0; i < map.lake_river_connections.size(); ++i) {
         if (i > 0) {
             std::cout << ",";
         }
-        const LakeRiverConnection& connection = lake_river_connections[i];
+        const LakeRiverConnection& connection = map.lake_river_connections[i];
         std::cout << "{\"id\":" << connection.id
             << ",\"kind\":\"river_terminal_to_lake_vertex\""
             << ",\"river_component\":" << connection.river_component
@@ -3405,37 +3471,48 @@ void print_generated_map(const GenerateArgs& args) {
     }
     std::cout << "],";
     std::cout << "\"roads\":[";
-    for (std::size_t i = 0; i < roads.size(); ++i) {
+    for (std::size_t i = 0; i < map.roads.size(); ++i) {
         if (i > 0) {
             std::cout << ",";
         }
-        print_road(roads[i]);
+        print_road(map.roads[i]);
     }
     std::cout << "],";
     std::cout << "\"crossings\":[";
-    for (std::size_t i = 0; i < crossings.size(); ++i) {
+    for (std::size_t i = 0; i < map.crossings.size(); ++i) {
         if (i > 0) {
             std::cout << ",";
         }
-        print_crossing(crossings[i]);
+        print_crossing(map.crossings[i]);
     }
     std::cout << "],";
     std::cout << "\"metadata\":{";
-    std::cout << "\"generator\":\"prototype-steppe-blob\",";
-    std::cout << "\"terrain_types\":[\"none\",\"grassland\",\"lake\",\"hill\",\"mountain\",\"forest\",\"marsh\",\"desert\",\"urban\"],";
-    std::cout << "\"hex_label_model\":\"final-semantic-labels.v2\",";
-    std::cout << "\"lake_river_connection_model\":\"river-terminal-lake-vertex.v1\",";
-    std::cout << "\"crossing_model\":\"bridges-and-spaced-fords.v1\",";
+    std::cout << "\"generator\":\"" << map.metadata.generator << "\",";
+    std::cout << "\"terrain_types\":[";
+    for (std::size_t i = 0; i < map.metadata.terrain_types.size(); ++i) {
+        if (i > 0) {
+            std::cout << ",";
+        }
+        std::cout << "\"" << terrain_to_string(map.metadata.terrain_types[i]) << "\"";
+    }
+    std::cout << "],";
+    std::cout << "\"hex_label_model\":\"" << map.metadata.hex_label_model << "\",";
+    std::cout << "\"lake_river_connection_model\":\"" << map.metadata.lake_river_connection_model << "\",";
+    std::cout << "\"crossing_model\":\"" << map.metadata.crossing_model << "\",";
     std::cout << "\"chinese_lake_network\":";
-    if (chinese_lake_network.placed) {
-        std::cout << "{\"template_id\":" << chinese_lake_network.template_id << ",\"anchor\":";
-        print_coord(chinese_lake_network.anchor);
+    if (map.metadata.chinese_lake_network.placed) {
+        std::cout << "{\"template_id\":" << map.metadata.chinese_lake_network.template_id << ",\"anchor\":";
+        print_coord(map.metadata.chinese_lake_network.anchor);
         std::cout << "}";
     } else {
         std::cout << "null";
     }
     std::cout << "}";
     std::cout << "}\n";
+}
+
+void print_generated_map(const GenerateArgs& args) {
+    print_generated_map_json(generate_map(args));
 }
 
 void print_usage() {
