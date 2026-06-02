@@ -4,4 +4,6 @@ server.log
 server.err
 latest-map.json
 logs/engine-traffic/
+test-results/
+playwright-report/
 .DS_Store

@@ -4,6 +4,11 @@
   "private": true,
   "description": "Prototype C++ engine and raw Node.js proxy for a steppe terrain generator.",
   "scripts": {
-    "start": "node proxy/server.js"
+    "start": "node proxy/server.js",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0"
   }
 }
