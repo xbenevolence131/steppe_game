@@ -39,6 +39,7 @@ On Windows, if a clean build fails with missing standard-library includes, run t
 ## Working Notes
 
 - The main east-west steppe blob generation is currently in acceptable shape.
+- Base steppe generation reserves a river-source band near one-third map width as a seeded mountain/terrain pinch. River sources are placed into `S+1` horizontal bands while skipping that pinch band; the pinch narrows the steppe smoothly and carves one or two seeded pass lanes through the throat.
 - River generation is a fresh baseline pass. Rivers live on hex edges, are routed on the vertex graph, grow generally north-to-south, use tunable steppe-only lateral meander steering, and should preserve clean merge topology.
 - River merges track edge ownership. If a head merges into an active downstream head, it terminates as a tributary; if it merges into a dead confluence, that head becomes the downstream trunk and keeps routing south.
 - Lake/river connectivity is vertex-based: a river/canal sequence may connect to a lake by starting or terminating on any vertex of a lake hex. Do not test this as river-edge face adjacency. The derived `lake_river_connections` array records `river_terminal_to_lake_vertex` links for gameplay/topology code.

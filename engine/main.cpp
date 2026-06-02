@@ -282,6 +282,62 @@ double signed_noise(std::uint32_t seed, std::uint32_t channel) {
     return unit_noise(seed, channel) * 2.0 - 1.0;
 }
 
+int steppe_pinch_band_count(const GenerateArgs& args) {
+    return std::max(2, args.river_count + 1);
+}
+
+int steppe_pinch_band_index(const GenerateArgs& args) {
+    const int band_count = steppe_pinch_band_count(args);
+    int best_band = 0;
+    double best_distance = std::numeric_limits<double>::max();
+    for (int band = 0; band < band_count; ++band) {
+        const double center = (static_cast<double>(band) + 0.5) / static_cast<double>(band_count);
+        const double distance = std::abs(center - 0.30);
+        if (distance < best_distance) {
+            best_distance = distance;
+            best_band = band;
+        }
+    }
+    return best_band;
+}
+
+double steppe_pinch_center_x(const GenerateArgs& args) {
+    const int band_count = steppe_pinch_band_count(args);
+    return (static_cast<double>(steppe_pinch_band_index(args)) + 0.5) / static_cast<double>(band_count);
+}
+
+bool in_steppe_pinch_pass(
+    const GenerateArgs& args,
+    int q,
+    int r,
+    double x,
+    double center_r,
+    double average_half_width,
+    double pinch_influence
+) {
+    if (pinch_influence < 0.28) {
+        return false;
+    }
+
+    const int pass_count = unit_noise(args.seed, 69001) < 0.58 ? 1 : 2;
+    for (int pass = 0; pass < pass_count; ++pass) {
+        double offset = signed_noise(args.seed, static_cast<std::uint32_t>(69010 + pass * 17))
+            * std::max(1.0, average_half_width * 0.34);
+        if (pass_count == 2) {
+            offset += (pass == 0 ? -1.0 : 1.0) * std::max(1.0, average_half_width * 0.18);
+        }
+        const double pass_center = center_r + offset
+            + std::sin((x * 5.0 + unit_noise(args.seed, static_cast<std::uint32_t>(69020 + pass)) * 2.0)
+                * 3.14159265358979323846) * 1.1;
+        const double pass_half_width = 1.15 + unit_noise(args.seed, static_cast<std::uint32_t>(69030 + pass)) * 1.2;
+        if (std::abs(static_cast<double>(r) - pass_center) <= pass_half_width) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool is_steppe_hex(int q, int r, const GenerateArgs& args) {
     if (args.height <= 2) {
         return true;
@@ -305,8 +361,16 @@ bool is_steppe_hex(int q, int r, const GenerateArgs& args) {
     const double width_variation = std::sin((x * 2.0 + 0.25) * 3.14159265358979323846 + width_phase)
         * average_half_width * 0.22;
     const double half_width = average_half_width + width_variation;
+    const double pinch_center_x = steppe_pinch_center_x(args) + signed_noise(args.seed, 69000) * 0.018;
+    const double pinch_sigma = 0.052 + unit_noise(args.seed, 69002) * 0.018;
+    const double pinch_dx = x - pinch_center_x;
+    const double pinch_influence = std::exp(-(pinch_dx * pinch_dx) / (2.0 * pinch_sigma * pinch_sigma));
+    const double pinch_strength = 0.76 + unit_noise(args.seed, 69003) * 0.13;
+    const double pinched_half_width = std::max(1.1, half_width * (1.0 - pinch_influence * pinch_strength));
+    const bool pass = in_steppe_pinch_pass(args, q, r, x, center_r, average_half_width, pinch_influence);
 
-    return std::abs(static_cast<double>(r) - center_r) <= half_width;
+    return std::abs(static_cast<double>(r) - center_r) <= half_width
+        && (std::abs(static_cast<double>(r) - center_r) <= pinched_half_width || pass);
 }
 
 bool coord_equal(const Coord& first, const Coord& second) {
@@ -509,10 +573,16 @@ std::vector<Coord> generate_river_sources(const GenerateArgs& args) {
         return sources;
     }
 
-    const double slot_width = static_cast<double>(args.width) / static_cast<double>(args.river_count);
+    const int band_count = steppe_pinch_band_count(args);
+    const int pinch_band = steppe_pinch_band_index(args);
+    const double slot_width = static_cast<double>(args.width) / static_cast<double>(band_count);
     const int jitter_limit = std::max(0, static_cast<int>(std::floor(slot_width * 0.25)));
     for (int i = 0; i < args.river_count; ++i) {
-        const double slot_center = (static_cast<double>(i) + 0.5) * slot_width + 1.0;
+        int band = i;
+        if (band >= pinch_band) {
+            ++band;
+        }
+        const double slot_center = (static_cast<double>(band) + 0.5) * slot_width + 1.0;
         const int jitter = jitter_limit == 0
             ? 0
             : static_cast<int>(std::floor(unit_noise(args.seed, 1000U + static_cast<std::uint32_t>(i)) * (jitter_limit * 2 + 1))) - jitter_limit;
