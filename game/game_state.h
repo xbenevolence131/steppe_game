@@ -99,8 +99,8 @@ struct Unit {
     Coord coord;
     int hp = 10;
     int max_hp = 10;
-    int move = 4;
-    int remaining_move = 4;
+    int scaled_move = 32;
+    int remaining_scaled_move = 32;
     bool move_done = false;
     bool combat_done = false;
     bool projects_zoc = false;
@@ -109,7 +109,7 @@ struct Unit {
 
 struct ReachableHex {
     Coord coord;
-    int cost = 0;
+    int scaled_cost = 0;
 };
 
 struct AttackableUnit {

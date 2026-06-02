@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <deque>
 #include <iostream>
 #include <limits>
@@ -181,8 +182,60 @@ int default_move(UnitKind kind) {
     return 0;
 }
 
-int movement_cost(Terrain terrain) {
-    return terrain == Terrain::Grassland ? 1 : std::numeric_limits<int>::max();
+constexpr int move_scale = 8;
+
+int to_scaled_move(int ref_move) {
+    return ref_move * move_scale;
+}
+
+int to_scaled_move(double ref_move) {
+    return static_cast<int>(std::lround(ref_move * move_scale));
+}
+
+double to_ref_move(int scaled_move) {
+    return static_cast<double>(scaled_move) / move_scale;
+}
+
+int blocked_movement_cost() {
+    return std::numeric_limits<int>::max();
+}
+
+int terrain_movement_cost(Terrain terrain) {
+    switch (terrain) {
+        case Terrain::Grassland:
+        case Terrain::Desert:
+        case Terrain::Urban:
+            return 8;
+        case Terrain::Hill:
+        case Terrain::Forest:
+            return 12;
+        case Terrain::Marsh:
+        case Terrain::Mountain:
+            return 16;
+        case Terrain::None:
+        case Terrain::Lake:
+            return blocked_movement_cost();
+    }
+    return blocked_movement_cost();
+}
+
+bool road_connects(const GameState& state, const Coord& first, const Coord& second) {
+    for (const Road& road : state.roads) {
+        for (std::size_t i = 1; i < road.path.size(); ++i) {
+            if ((coord_equal(road.path[i - 1], first) && coord_equal(road.path[i], second))
+                || (coord_equal(road.path[i - 1], second) && coord_equal(road.path[i], first))) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+int movement_cost(const GameState& state, const Coord& from, const GameHex& to_hex) {
+    if (road_connects(state, from, to_hex.coord)) {
+        return 6;
+    }
+    return terrain_movement_cost(to_hex.terrain);
 }
 
 bool adjacent(const Coord& first, const Coord& second) {
@@ -282,6 +335,18 @@ int int_field(const std::string& json, const std::string& key, int fallback) {
     }
     try {
         return std::stoi(field);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+double number_field(const std::string& json, const std::string& key, double fallback) {
+    const std::string field = object_field(json, key);
+    if (field.empty()) {
+        return fallback;
+    }
+    try {
+        return std::stod(field);
     } catch (...) {
         return fallback;
     }
@@ -498,8 +563,8 @@ GameState create_default_play_sandbox(int width, int height, int faction_count) 
         unit.coord = coord;
         unit.hp = default_hp(unit.kind);
         unit.max_hp = unit.hp;
-        unit.move = default_move(unit.kind);
-        unit.remaining_move = unit.move;
+        unit.scaled_move = to_scaled_move(default_move(unit.kind));
+        unit.remaining_scaled_move = unit.scaled_move;
         unit.projects_zoc = true;
         unit.respects_zoc = kind == UnitKind::Infantry;
         return unit;
@@ -576,7 +641,7 @@ bool enemy_zoc_at(const GameState& state, const Coord& coord, const Unit& moving
 std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id) {
     std::vector<ReachableHex> reachable;
     const Unit* unit = find_unit(state, unit_id);
-    if (unit == nullptr || unit->owner != active_faction(state) || unit->move_done || unit->remaining_move <= 0) {
+    if (unit == nullptr || unit->owner != active_faction(state) || unit->move_done || unit->remaining_scaled_move <= 0) {
         return reachable;
     }
 
@@ -598,12 +663,12 @@ std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id) {
             if (hex == nullptr) {
                 continue;
             }
-            const int step_cost = movement_cost(hex->terrain);
-            if (step_cost == std::numeric_limits<int>::max()) {
+            const int step_cost = movement_cost(state, current, *hex);
+            if (step_cost == blocked_movement_cost()) {
                 continue;
             }
             const int next_cost = current_cost + step_cost;
-            if (next_cost > unit->remaining_move) {
+            if (next_cost > unit->remaining_scaled_move) {
                 continue;
             }
             const auto existing = best_costs.find(next);
@@ -619,8 +684,8 @@ std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id) {
     }
 
     std::sort(reachable.begin(), reachable.end(), [](const ReachableHex& first, const ReachableHex& second) {
-        if (first.cost != second.cost) {
-            return first.cost < second.cost;
+        if (first.scaled_cost != second.scaled_cost) {
+            return first.scaled_cost < second.scaled_cost;
         }
         return coord_less(first.coord, second.coord);
     });
@@ -679,11 +744,11 @@ bool move_unit(GameState& state, int unit_id, Coord destination) {
         return false;
     }
     unit->coord = destination;
-    unit->remaining_move = std::max(0, unit->remaining_move - found->cost);
+    unit->remaining_scaled_move = std::max(0, unit->remaining_scaled_move - found->scaled_cost);
     if (unit->respects_zoc && enemy_zoc_at(state, destination, *unit)) {
-        unit->remaining_move = 0;
+        unit->remaining_scaled_move = 0;
     }
-    if (unit->remaining_move == 0) {
+    if (unit->remaining_scaled_move == 0) {
         unit->move_done = true;
     }
     state.selected_unit_id = unit_id;
@@ -707,7 +772,7 @@ bool attack_unit(GameState& state, int attacker_id, int defender_id) {
     defender->hp = std::max(0, defender->hp - cavalry_attack_damage);
     attacker = find_unit(state, attacker_id);
     if (attacker != nullptr) {
-        attacker->remaining_move = 0;
+        attacker->remaining_scaled_move = 0;
         attacker->move_done = true;
         attacker->combat_done = true;
     }
@@ -733,7 +798,7 @@ void end_turn(GameState& state) {
     const OwnerId owner = active_faction(state);
     for (Unit& unit : state.units) {
         if (unit.owner == owner) {
-            unit.remaining_move = unit.move;
+            unit.remaining_scaled_move = unit.scaled_move;
             unit.move_done = false;
             unit.combat_done = false;
         }
@@ -765,8 +830,12 @@ void print_unit_json(const Unit& unit, std::ostream& out) {
         << ",\"r\":" << unit.coord.r
         << ",\"hp\":" << unit.hp
         << ",\"maxHp\":" << unit.max_hp
-        << ",\"move\":" << unit.move
-        << ",\"remainingMove\":" << unit.remaining_move
+        << ",\"scaledMove\":" << unit.scaled_move
+        << ",\"remainingScaledMove\":" << unit.remaining_scaled_move
+        << ",\"refMove\":" << to_ref_move(unit.scaled_move)
+        << ",\"remainingRefMove\":" << to_ref_move(unit.remaining_scaled_move)
+        << ",\"move\":" << to_ref_move(unit.scaled_move)
+        << ",\"remainingMove\":" << to_ref_move(unit.remaining_scaled_move)
         << ",\"moveDone\":" << (unit.move_done ? "true" : "false")
         << ",\"combatDone\":" << (unit.combat_done ? "true" : "false")
         << ",\"projectsZoc\":" << (unit.projects_zoc ? "true" : "false")
@@ -793,7 +862,9 @@ void print_reachable_array_json(const std::vector<ReachableHex>& reachable, std:
         }
         out << "{\"q\":" << reachable[i].coord.q
             << ",\"r\":" << reachable[i].coord.r
-            << ",\"cost\":" << reachable[i].cost
+            << ",\"scaledCost\":" << reachable[i].scaled_cost
+            << ",\"refCost\":" << to_ref_move(reachable[i].scaled_cost)
+            << ",\"cost\":" << to_ref_move(reachable[i].scaled_cost)
             << "}";
     }
     out << "]";
@@ -809,6 +880,27 @@ void print_attackable_array_json(const std::vector<AttackableUnit>& attackable, 
             << ",\"q\":" << attackable[i].coord.q
             << ",\"r\":" << attackable[i].coord.r
             << "}";
+    }
+    out << "]";
+}
+
+void print_roads_array_json(const std::vector<Road>& roads, std::ostream& out) {
+    out << "[";
+    for (std::size_t i = 0; i < roads.size(); ++i) {
+        if (i > 0) {
+            out << ",";
+        }
+        const Road& road = roads[i];
+        out << "{\"id\":" << road.id
+            << ",\"feature\":\"" << escape_json(road.feature) << "\""
+            << ",\"path\":[";
+        for (std::size_t path_index = 0; path_index < road.path.size(); ++path_index) {
+            if (path_index > 0) {
+                out << ",";
+            }
+            print_coord_json(road.path[path_index], out);
+        }
+        out << "]}";
     }
     out << "]";
 }
@@ -865,7 +957,9 @@ void print_game_state_json(const GameState& state, std::ostream& out) {
         out << "}";
     }
     out << "],\"towns\":[],\"river_sources\":[],\"river_destinations\":[],\"merge_points\":[],";
-    out << "\"river_segments\":[],\"edges\":[],\"lake_river_connections\":[],\"roads\":[],\"crossings\":[],";
+    out << "\"river_segments\":[],\"edges\":[],\"lake_river_connections\":[],\"roads\":";
+    print_roads_array_json(state.roads, out);
+    out << ",\"crossings\":[],";
     out << "\"units\":";
     print_units_json(state.units, out);
     out << ",";
@@ -906,7 +1000,9 @@ void print_game_patch_json(const GameState& state, bool ok, std::ostream& out) {
         out << "}";
     }
     out << "],\"towns\":[],\"river_sources\":[],\"river_destinations\":[],\"merge_points\":[],";
-    out << "\"river_segments\":[],\"edges\":[],\"lake_river_connections\":[],\"roads\":[],\"crossings\":[],";
+    out << "\"river_segments\":[],\"edges\":[],\"lake_river_connections\":[],\"roads\":";
+    print_roads_array_json(state.roads, out);
+    out << ",\"crossings\":[],";
     out << "\"units\":";
     print_units_json(state.units, out);
     out << ",";
@@ -946,6 +1042,16 @@ GameState parse_game_state_json(const std::string& json) {
         state.hexes.push_back(std::move(hex));
     }
 
+    for (const std::string& road_json : object_array_items(object_field(json, "roads"))) {
+        Road road;
+        road.id = int_field(road_json, "id", 0);
+        road.feature = string_field(road_json, "feature", "");
+        for (const std::string& coord_json : object_array_items(object_field(road_json, "path"))) {
+            road.path.push_back({int_field(coord_json, "q", 0), int_field(coord_json, "r", 0)});
+        }
+        state.roads.push_back(std::move(road));
+    }
+
     for (const std::string& unit_json : object_array_items(object_field(json, "units"))) {
         Unit unit;
         unit.id = int_field(unit_json, "id", 0);
@@ -964,8 +1070,21 @@ GameState parse_game_state_json(const std::string& json) {
         unit.coord = {int_field(unit_json, "q", 0), int_field(unit_json, "r", 0)};
         unit.hp = int_field(unit_json, "hp", default_hp(unit.kind));
         unit.max_hp = int_field(unit_json, "maxHp", unit.hp);
-        unit.move = int_field(unit_json, "move", default_move(unit.kind));
-        unit.remaining_move = int_field(unit_json, "remainingMove", unit.move);
+        const int default_scaled_move = to_scaled_move(default_move(unit.kind));
+        unit.scaled_move = int_field(
+            unit_json,
+            "scaledMove",
+            to_scaled_move(number_field(unit_json, "refMove", number_field(unit_json, "move", default_move(unit.kind))))
+        );
+        unit.remaining_scaled_move = int_field(
+            unit_json,
+            "remainingScaledMove",
+            to_scaled_move(number_field(unit_json, "remainingRefMove", number_field(unit_json, "remainingMove", to_ref_move(unit.scaled_move))))
+        );
+        if (unit.scaled_move <= 0) {
+            unit.scaled_move = default_scaled_move;
+        }
+        unit.remaining_scaled_move = std::max(0, std::min(unit.remaining_scaled_move, unit.scaled_move));
         unit.move_done = bool_field(unit_json, "moveDone", false);
         unit.combat_done = bool_field(unit_json, "combatDone", false);
         unit.projects_zoc = bool_field(unit_json, "projectsZoc", unit.kind == UnitKind::Cavalry || unit.kind == UnitKind::Infantry);

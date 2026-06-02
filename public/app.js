@@ -671,8 +671,18 @@ function normalizeUnit(unit, index) {
   if (owner !== null) normalized.owner = owner;
   if (Number.isFinite(unit.hp)) normalized.hp = unit.hp;
   if (Number.isFinite(unit.maxHp)) normalized.maxHp = unit.maxHp;
-  if (Number.isFinite(unit.move)) normalized.move = unit.move;
-  if (Number.isFinite(unit.remainingMove)) normalized.remainingMove = unit.remainingMove;
+  if (Number.isFinite(unit.scaledMove)) normalized.scaledMove = unit.scaledMove;
+  if (Number.isFinite(unit.remainingScaledMove)) normalized.remainingScaledMove = unit.remainingScaledMove;
+  if (Number.isFinite(unit.refMove)) {
+    normalized.move = unit.refMove;
+  } else if (Number.isFinite(unit.move)) {
+    normalized.move = unit.move;
+  }
+  if (Number.isFinite(unit.remainingRefMove)) {
+    normalized.remainingMove = unit.remainingRefMove;
+  } else if (Number.isFinite(unit.remainingMove)) {
+    normalized.remainingMove = unit.remainingMove;
+  }
   if (unit.moveDone !== undefined) normalized.moveDone = Boolean(unit.moveDone);
   if (unit.combatDone !== undefined) normalized.combatDone = Boolean(unit.combatDone);
   if (unit.projectsZoc !== undefined) normalized.projectsZoc = Boolean(unit.projectsZoc);
