@@ -91,9 +91,16 @@ bool coord_equal(const Coord& first, const Coord& second) {
 }
 
 Coord neighbor_in_direction(const Coord& coord, int direction) {
-    static constexpr int dq[6] = {1, 0, -1, -1, 0, 1};
-    static constexpr int dr[6] = {0, 1, 1, 0, -1, -1};
-    return {coord.q + dq[direction], coord.r + dr[direction]};
+    const bool shifted_down = (coord.q - 1) % 2 == 1;
+    switch (direction) {
+        case 0: return {coord.q + 1, coord.r};
+        case 1: return shifted_down ? Coord{coord.q + 1, coord.r + 1} : Coord{coord.q + 1, coord.r - 1};
+        case 2: return {coord.q, coord.r - 1};
+        case 3: return {coord.q - 1, coord.r};
+        case 4: return shifted_down ? Coord{coord.q - 1, coord.r + 1} : Coord{coord.q - 1, coord.r - 1};
+        case 5: return {coord.q, coord.r + 1};
+    }
+    return coord;
 }
 
 bool in_bounds(const GameState& state, const Coord& coord) {

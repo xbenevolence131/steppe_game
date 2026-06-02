@@ -3,4 +3,5 @@ node_modules/
 server.log
 server.err
 latest-map.json
+logs/engine-traffic/
 .DS_Store

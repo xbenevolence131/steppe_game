@@ -6,11 +6,16 @@ const { spawn } = require("child_process");
 const rootDir = path.resolve(__dirname, "..");
 const publicDir = path.join(rootDir, "public");
 const latestMapPath = path.join(rootDir, "latest-map.json");
+const trafficLogDir = path.join(rootDir, "logs", "engine-traffic");
+const latestTrafficLogPath = path.join(trafficLogDir, "latest.jsonl");
 const port = Number(process.env.PORT || 3000);
 const daemonPort = Number(process.env.STEPPE_DAEMON_PORT || 4001);
 const daemonUrl = `http://127.0.0.1:${daemonPort}`;
 
 let daemonProcess = null;
+let trafficSequence = 0;
+const trafficSessionName = new Date().toISOString().replace(/[:.]/g, "-");
+const sessionTrafficLogPath = path.join(trafficLogDir, `${trafficSessionName}.jsonl`);
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -28,6 +33,21 @@ function daemonPath() {
   ];
 
   return candidates.find((candidate) => fs.existsSync(candidate));
+}
+
+function initializeTrafficLogs() {
+  fs.mkdirSync(trafficLogDir, { recursive: true });
+  fs.writeFileSync(latestTrafficLogPath, "", "utf8");
+}
+
+function appendTrafficLog(entry) {
+  const line = `${JSON.stringify(entry)}\n`;
+  try {
+    fs.appendFileSync(latestTrafficLogPath, line, "utf8");
+    fs.appendFileSync(sessionTrafficLogPath, line, "utf8");
+  } catch (error) {
+    console.error(`Could not write engine traffic log: ${error.message}`);
+  }
 }
 
 function sendJson(res, statusCode, payload) {
@@ -97,10 +117,39 @@ function delay(ms) {
 }
 
 async function daemonHealthy() {
+  const sequence = ++trafficSequence;
+  const startedAt = Date.now();
   try {
     const response = await fetch(`${daemonUrl}/health`);
+    appendTrafficLog({
+      sequence,
+      timestamp: new Date(startedAt).toISOString(),
+      durationMs: Date.now() - startedAt,
+      replayable: false,
+      transport: "proxy-daemon-http",
+      request: {
+        method: "GET",
+        url: `${daemonUrl}/health`,
+      },
+      response: {
+        status: response.status,
+        ok: response.ok,
+      },
+    });
     return response.ok;
-  } catch {
+  } catch (error) {
+    appendTrafficLog({
+      sequence,
+      timestamp: new Date(startedAt).toISOString(),
+      durationMs: Date.now() - startedAt,
+      replayable: false,
+      transport: "proxy-daemon-http",
+      request: {
+        method: "GET",
+        url: `${daemonUrl}/health`,
+      },
+      error: error.message,
+    });
     return false;
   }
 }
@@ -139,17 +188,70 @@ async function ensureDaemon() {
 }
 
 async function daemonCommand(command, gameId = "local-dev") {
+  const envelope = { gameId, command };
+  let logged = false;
   await ensureDaemon();
-  const response = await fetch(`${daemonUrl}/command`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ gameId, command }),
-  });
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(payload.error || "daemon command failed");
+  const sequence = ++trafficSequence;
+  const startedAt = Date.now();
+  try {
+    const response = await fetch(`${daemonUrl}/command`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(envelope),
+    });
+    const responseText = await response.text();
+    let payload = null;
+    try {
+      payload = JSON.parse(responseText);
+    } catch {
+      // Logged below as rawBody; the caller still gets a useful exception.
+    }
+
+    appendTrafficLog({
+      sequence,
+      timestamp: new Date(startedAt).toISOString(),
+      durationMs: Date.now() - startedAt,
+      replayable: true,
+      transport: "proxy-daemon-http",
+      request: {
+        method: "POST",
+        url: `${daemonUrl}/command`,
+        body: envelope,
+      },
+      response: {
+        status: response.status,
+        ok: response.ok,
+        body: payload,
+        rawBody: payload === null ? responseText : undefined,
+      },
+    });
+    logged = true;
+
+    if (payload === null) {
+      throw new Error("daemon returned invalid JSON");
+    }
+    if (!response.ok) {
+      throw new Error(payload.error || "daemon command failed");
+    }
+    return payload;
+  } catch (error) {
+    if (!logged) {
+      appendTrafficLog({
+        sequence,
+        timestamp: new Date(startedAt).toISOString(),
+        durationMs: Date.now() - startedAt,
+        replayable: true,
+        transport: "proxy-daemon-http",
+        request: {
+          method: "POST",
+          url: `${daemonUrl}/command`,
+          body: envelope,
+        },
+        error: error.message,
+      });
+    }
+    throw error;
   }
-  return payload;
 }
 
 function generationCommand(payload) {
@@ -274,6 +376,20 @@ async function handleGameEndTurn(req, res) {
   }
 }
 
+function handleLatestTrafficLog(req, res) {
+  fs.readFile(latestTrafficLogPath, "utf8", (error, content) => {
+    if (error) {
+      sendJson(res, 404, { error: "latest engine traffic log not found" });
+      return;
+    }
+    res.writeHead(200, {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Content-Length": Buffer.byteLength(content),
+    });
+    res.end(content);
+  });
+}
+
 function serveStatic(req, res) {
   const requestPath = new URL(req.url, `http://${req.headers.host}`).pathname;
   const relativePath = requestPath === "/" ? "index.html" : requestPath.slice(1);
@@ -329,6 +445,10 @@ const server = http.createServer((req, res) => {
     handleGameEndTurn(req, res);
     return;
   }
+  if (req.method === "GET" && req.url === "/api/debug/engine-traffic/latest") {
+    handleLatestTrafficLog(req, res);
+    return;
+  }
 
   if (req.method === "GET" || req.method === "HEAD") {
     serveStatic(req, res);
@@ -345,12 +465,16 @@ process.on("exit", () => {
   }
 });
 
+initializeTrafficLogs();
+
 server.listen(port, async () => {
   try {
     await ensureDaemon();
     console.log(`Steppe proxy listening at http://localhost:${port}; daemon at ${daemonUrl}`);
+    console.log(`Engine traffic log: ${latestTrafficLogPath}`);
   } catch (error) {
     console.error(error.message);
     console.log(`Steppe proxy listening at http://localhost:${port}; daemon unavailable`);
+    console.log(`Engine traffic log: ${latestTrafficLogPath}`);
   }
 });
