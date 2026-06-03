@@ -107,9 +107,25 @@
         <div class="control-section paint-fields">
           <h2>Paint</h2>
           <button id="edit-mode-button" class="secondary" type="button" aria-pressed="false">Edit</button>
-          <select id="editor-tool" aria-label="Editor tool">
-            <option value="hex">Hex</option>
-            <option value="edge">River Edge</option>
+          <select id="editor-mode" aria-label="Editor mode">
+            <option value="terrain">Terrain</option>
+            <option value="edges">Edges</option>
+            <option value="units">Units</option>
+          </select>
+          <select id="editor-edge-feature" aria-label="Edge feature">
+            <option value="river">River</option>
+            <option value="road">Road</option>
+          </select>
+          <select id="editor-unit-type" aria-label="Unit type">
+            <option value="cavalry">Cavalry</option>
+            <option value="infantry">Infantry</option>
+            <option value="camp">Camp</option>
+            <option value="herd">Herd</option>
+          </select>
+          <select id="editor-unit-side" aria-label="Unit side">
+            <option value="mongol">Mongol</option>
+            <option value="chinese">Chinese</option>
+            <option value="persian">Persian</option>
           </select>
           <div id="terrain-palette" class="terrain-palette" aria-label="Terrain palette"></div>
         </div>

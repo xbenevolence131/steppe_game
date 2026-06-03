@@ -1,5 +1,7 @@
 const { test, expect } = require("@playwright/test");
 
+test.describe.configure({ mode: "serial" });
+
 async function openPlayMode(page) {
   await page.goto("/");
   await page.getByRole("button", { name: "Play" }).click();
@@ -29,6 +31,98 @@ test("scenario controls sit above the shared map", async ({ page }) => {
   expect(layout.mapTop).toBeGreaterThanOrEqual(layout.topbarBottom - 1);
   expect(layout.mapWidth).toBeGreaterThan(layout.viewportWidth * 0.95);
   expect(layout.scrollWidth).toBeLessThanOrEqual(layout.viewportWidth);
+});
+
+test("generated great wall contains Chinese towns from outside", async ({ page, isMobile }) => {
+  test.skip(!isMobile, "data invariant is covered once on mobile project");
+
+  await page.goto("/");
+
+  const result = await page.evaluate(async () => {
+    const response = await fetch("/api/generate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ width: 120, height: 80, seed: 55555 }),
+    });
+    const map = await response.json();
+    const coordKey = (coord) => `${coord.q},${coord.r}`;
+    const edgeKey = (edge) => {
+      const first = edge.a;
+      const second = edge.b;
+      const before = first.r < second.r || (first.r === second.r && first.q <= second.q);
+      const a = before ? first : second;
+      const b = before ? second : first;
+      return `${coordKey(a)}|${coordKey(b)}`;
+    };
+    const neighbor = (coord, direction) => {
+      const shiftedDown = ((coord.q - 1) % 2) === 1;
+      const neighbors = [
+        { q: coord.q + 1, r: coord.r },
+        shiftedDown ? { q: coord.q + 1, r: coord.r + 1 } : { q: coord.q + 1, r: coord.r - 1 },
+        { q: coord.q, r: coord.r - 1 },
+        { q: coord.q - 1, r: coord.r },
+        shiftedDown ? { q: coord.q - 1, r: coord.r + 1 } : { q: coord.q - 1, r: coord.r - 1 },
+        { q: coord.q, r: coord.r + 1 },
+      ];
+      return neighbors[direction];
+    };
+
+    const wall = map.walls && map.walls[0];
+    const wallEdges = new Set((wall ? wall.edge_path : []).map(edgeKey));
+    const terrain = new Map(map.hexes.map((hex) => [coordKey(hex), hex.terrain]));
+    const chineseTowns = new Set(map.towns
+      .filter((town) => town.feature === "chinese_town")
+      .map(coordKey));
+    const blocked = (coord) => {
+      const value = terrain.get(coordKey(coord));
+      return value === "mountain" || value === "lake";
+    };
+    const frontier = [];
+    const visited = new Set();
+    const add = (coord) => {
+      const key = coordKey(coord);
+      if (coord.q < 1 || coord.q > map.width || coord.r < 1 || coord.r > map.height || blocked(coord) || visited.has(key)) {
+        return;
+      }
+      visited.add(key);
+      frontier.push(coord);
+    };
+
+    for (let q = 1; q <= map.width; q += 1) {
+      add({ q, r: 1 });
+    }
+    for (let r = 1; r <= map.height; r += 1) {
+      add({ q: 1, r });
+    }
+
+    const leaked = [];
+    while (frontier.length > 0) {
+      const current = frontier.shift();
+      if (chineseTowns.has(coordKey(current))) {
+        leaked.push(coordKey(current));
+      }
+      for (let direction = 0; direction < 6; direction += 1) {
+        const next = neighbor(current, direction);
+        if (next.q < 1 || next.q > map.width || next.r < 1 || next.r > map.height || blocked(next) || visited.has(coordKey(next))) {
+          continue;
+        }
+        if (wallEdges.has(edgeKey({ a: current, b: next }))) {
+          continue;
+        }
+        add(next);
+      }
+    }
+
+    return {
+      wallCount: map.walls.length,
+      wallEdges: wall ? wall.edge_path.length : 0,
+      leaked,
+    };
+  });
+
+  expect(result.wallCount).toBe(1);
+  expect(result.wallEdges).toBeGreaterThan(0);
+  expect(result.leaked).toEqual([]);
 });
 
 test("play sidebar lists deployed units and bottom panel inspects selection", async ({ page, isMobile }) => {
@@ -89,4 +183,76 @@ test("mobile play mode keeps the map usable below the unit roster", async ({ pag
   expect(layout.panelTop).toBeGreaterThanOrEqual(layout.sidebarBottom - 1);
   expect(layout.panelHeight).toBeGreaterThan(200);
   expect(layout.scrollWidth).toBeLessThanOrEqual(layout.viewportWidth);
+});
+
+test("scenario editor modes toggle terrain edges and units", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop pointer geometry is simpler for editor assertions");
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Scenario Edit" }).click();
+  await page.getByRole("button", { name: "Blank Map" }).click();
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+
+  const hexPoint = async (coord) => page.evaluate(({ q, r }) => {
+    const panel = mapPanel.getBoundingClientRect();
+    const center = hexCenter({ q, r });
+    return {
+      x: panel.left + viewport.offsetX + center.x * viewport.scale,
+      y: panel.top + viewport.offsetY + center.y * viewport.scale,
+    };
+  }, coord);
+
+  const edgePoint = async (first, second) => page.evaluate(({ first, second }) => {
+    const panel = mapPanel.getBoundingClientRect();
+    const boundary = edgeBoundaryPoints(canonicalEdge(first, second));
+    const center = hexCenter(first);
+    const boundaryMidpoint = {
+      x: (boundary[0][0] + boundary[1][0]) / 2,
+      y: (boundary[0][1] + boundary[1][1]) / 2,
+    };
+    const target = {
+      x: boundaryMidpoint.x * 0.75 + center.x * 0.25,
+      y: boundaryMidpoint.y * 0.75 + center.y * 0.25,
+    };
+    return {
+      x: panel.left + viewport.offsetX + target.x * viewport.scale,
+      y: panel.top + viewport.offsetY + target.y * viewport.scale,
+    };
+  }, { first, second });
+
+  await expect(page.locator("#editor-mode")).toHaveValue("terrain");
+  await expect(page.locator("#terrain-palette")).toBeVisible();
+  await expect(page.locator("#editor-edge-feature")).toBeHidden();
+  await expect(page.locator("#editor-unit-type")).toBeHidden();
+
+  await page.locator("#editor-mode").selectOption("edges");
+  await expect(page.locator("#terrain-palette")).toBeHidden();
+  await expect(page.locator("#editor-edge-feature")).toBeVisible();
+
+  await page.locator("#editor-edge-feature").selectOption("road");
+  let point = await edgePoint({ q: 2, r: 2 }, { q: 3, r: 2 });
+  await page.mouse.click(point.x, point.y);
+  await expect.poll(() => page.evaluate(() => currentMap.roads.length)).toBe(1);
+  await page.mouse.click(point.x, point.y);
+  await expect.poll(() => page.evaluate(() => currentMap.roads.length)).toBe(0);
+
+  await page.locator("#editor-edge-feature").selectOption("river");
+  point = await edgePoint({ q: 2, r: 2 }, { q: 3, r: 2 });
+  await page.mouse.click(point.x, point.y);
+  await expect.poll(() => page.evaluate(() => currentMap.edges.length)).toBe(1);
+  await page.mouse.click(point.x, point.y);
+  await expect.poll(() => page.evaluate(() => currentMap.edges.length)).toBe(0);
+
+  await page.locator("#editor-mode").selectOption("units");
+  await expect(page.locator("#editor-unit-type")).toBeVisible();
+  await expect(page.locator("#editor-unit-side")).toBeVisible();
+  await page.locator("#editor-unit-type").selectOption("infantry");
+  await page.locator("#editor-unit-side").selectOption("chinese");
+  point = await hexPoint({ q: 3, r: 3 });
+  await page.mouse.click(point.x, point.y);
+  await expect.poll(() => page.evaluate(() => currentMap.units.length)).toBe(1);
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].kind)).toBe("infantry");
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].faction)).toBe("chinese");
+  await page.mouse.click(point.x, point.y);
+  await expect.poll(() => page.evaluate(() => currentMap.units.length)).toBe(0);
 });

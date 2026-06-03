@@ -2897,6 +2897,602 @@ std::vector<Road> generate_roads(
     return clean_roads(args, roads, towns, lake_hexes, valley_hexes);
 }
 
+bool wall_hex_allowed(
+    const GenerateArgs& args,
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const std::vector<Town>& towns,
+    const Coord& coord
+) {
+    if (!in_bounds(coord, args) || lake_hexes.find(coord) != lake_hexes.end()) {
+        return false;
+    }
+    return std::find_if(towns.begin(), towns.end(), [&coord](const Town& town) {
+        return coord_equal(town.coord, coord);
+    }) == towns.end();
+}
+
+std::vector<Coord> wall_anchor_candidates_near(
+    const GenerateArgs& args,
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const std::vector<Town>& towns,
+    const Coord& target,
+    int radius
+) {
+    std::vector<Coord> candidates;
+    for (int r = std::max(1, target.r - radius); r <= std::min(args.height, target.r + radius); ++r) {
+        for (int q = std::max(1, target.q - radius); q <= std::min(args.width, target.q + radius); ++q) {
+            const Coord coord{q, r};
+            if (hex_grid_distance(coord, target) <= radius
+                && wall_hex_allowed(args, lake_hexes, towns, coord)) {
+                candidates.push_back(coord);
+            }
+        }
+    }
+    return candidates;
+}
+
+std::optional<Coord> find_wall_sw_anchor(
+    const GenerateArgs& args,
+    const std::vector<Town>& towns,
+    const std::vector<RiverEdge>& river_edges,
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes
+) {
+    std::vector<Town> chinese_towns;
+    std::copy_if(towns.begin(), towns.end(), std::back_inserter(chinese_towns), [](const Town& town) {
+        return town.feature == "chinese_town";
+    });
+    if (chinese_towns.empty()) {
+        return std::nullopt;
+    }
+    const Town western_town = *std::min_element(chinese_towns.begin(), chinese_towns.end(), [](const Town& first, const Town& second) {
+        if (first.coord.q != second.coord.q) {
+            return first.coord.q < second.coord.q;
+        }
+        return first.coord.r < second.coord.r;
+    });
+
+    std::optional<RiverEdge> best_edge;
+    double best_score = -std::numeric_limits<double>::infinity();
+    const double preferred_row = std::max(1.0, static_cast<double>(western_town.coord.r) - static_cast<double>(args.height) * 0.12);
+    for (const RiverEdge& edge : river_edges) {
+        const double mid_q = (static_cast<double>(edge.a.q) + static_cast<double>(edge.b.q)) * 0.5;
+        const double mid_r = (static_cast<double>(edge.a.r) + static_cast<double>(edge.b.r)) * 0.5;
+        if (mid_q > static_cast<double>(western_town.coord.q) + 1.5) {
+            continue;
+        }
+        const int distance = std::min(hex_grid_distance(edge.a, western_town.coord), hex_grid_distance(edge.b, western_town.coord));
+        if (distance > std::max(8, args.width / 7)) {
+            continue;
+        }
+        const bool valley_touch = valley_hexes.find(edge.a) != valley_hexes.end() || valley_hexes.find(edge.b) != valley_hexes.end();
+        const double west_bonus = std::max(0.0, static_cast<double>(western_town.coord.q) - mid_q) * 0.55;
+        const double score = (valley_touch ? 18.0 : 0.0)
+            + west_bonus
+            - static_cast<double>(distance) * 2.0
+            - std::abs(mid_r - preferred_row) * 0.35
+            + unit_noise(args.seed, static_cast<std::uint32_t>(81200 + edge.a.q * 197 + edge.a.r * 389 + edge.b.q * 587 + edge.b.r * 733)) * 0.2;
+        if (score > best_score) {
+            best_score = score;
+            best_edge = edge;
+        }
+    }
+
+    Coord target = best_edge.has_value()
+        ? Coord{std::min(best_edge->a.q, best_edge->b.q) - 2, std::min(best_edge->a.r, best_edge->b.r) - 1}
+        : Coord{western_town.coord.q - 5, western_town.coord.r - 5};
+    target.q = std::max(1, std::min(args.width, target.q));
+    target.r = std::max(1, std::min(args.height, target.r));
+
+    for (int radius = 0; radius <= 8; ++radius) {
+        std::vector<Coord> candidates = wall_anchor_candidates_near(args, lake_hexes, towns, target, radius);
+        if (candidates.empty()) {
+            continue;
+        }
+        std::sort(candidates.begin(), candidates.end(), [&](const Coord& first, const Coord& second) {
+            const double first_score = -hex_grid_distance(first, target)
+                - static_cast<double>(first.q) * 0.05
+                - static_cast<double>(first.r) * 0.03;
+            const double second_score = -hex_grid_distance(second, target)
+                - static_cast<double>(second.q) * 0.05
+                - static_cast<double>(second.r) * 0.03;
+            if (first_score != second_score) {
+                return first_score > second_score;
+            }
+            return coord_less(first, second);
+        });
+        return candidates.front();
+    }
+
+    return std::nullopt;
+}
+
+std::optional<Coord> find_wall_ne_anchor(
+    const GenerateArgs& args,
+    const std::vector<Town>& towns,
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes
+) {
+    std::vector<Town> chinese_towns;
+    std::copy_if(towns.begin(), towns.end(), std::back_inserter(chinese_towns), [](const Town& town) {
+        return town.feature == "chinese_town";
+    });
+    if (chinese_towns.empty()) {
+        return std::nullopt;
+    }
+    int easternmost_q = 1;
+    int northernmost_r = args.height;
+    for (const Town& town : chinese_towns) {
+        easternmost_q = std::max(easternmost_q, town.coord.q);
+        northernmost_r = std::min(northernmost_r, town.coord.r);
+    }
+    Coord target{
+        std::min(args.width, easternmost_q + std::max(3, args.width / 18)),
+        std::max(1, northernmost_r - std::max(3, args.height / 14))
+    };
+    for (int radius = 0; radius <= 10; ++radius) {
+        std::vector<Coord> candidates = wall_anchor_candidates_near(args, lake_hexes, towns, target, radius);
+        candidates.erase(std::remove_if(candidates.begin(), candidates.end(), [&](const Coord& candidate) {
+            return candidate.q < easternmost_q - 2 || candidate.r > northernmost_r + 1;
+        }), candidates.end());
+        if (candidates.empty()) {
+            continue;
+        }
+        std::sort(candidates.begin(), candidates.end(), [&](const Coord& first, const Coord& second) {
+            const double first_score = -hex_grid_distance(first, target)
+                + static_cast<double>(first.q) * 0.04
+                - static_cast<double>(first.r) * 0.04;
+            const double second_score = -hex_grid_distance(second, target)
+                + static_cast<double>(second.q) * 0.04
+                - static_cast<double>(second.r) * 0.04;
+            if (first_score != second_score) {
+                return first_score > second_score;
+            }
+            return coord_less(first, second);
+        });
+        return candidates.front();
+    }
+
+    return std::nullopt;
+}
+
+struct WallPathState {
+    int edge = -1;
+    VertexKey vertex;
+};
+
+bool operator<(const WallPathState& first, const WallPathState& second) {
+    if (first.edge != second.edge) {
+        return first.edge < second.edge;
+    }
+    return first.vertex < second.vertex;
+}
+
+struct WallPathQueueNode {
+    WallPathState state;
+    double estimated_total = 0.0;
+    double cost_so_far = 0.0;
+    int order = 0;
+};
+
+struct WallPathQueueCompare {
+    bool operator()(const WallPathQueueNode& first, const WallPathQueueNode& second) const {
+        if (first.estimated_total != second.estimated_total) {
+            return first.estimated_total > second.estimated_total;
+        }
+        if (first.cost_so_far != second.cost_so_far) {
+            return first.cost_so_far > second.cost_so_far;
+        }
+        return first.order > second.order;
+    }
+};
+
+struct WallRouteOptions {
+    double bow_multiplier = 1.0;
+    double terminal_projection_min = 0.75;
+    double mountain_terminal_bonus = -7.0;
+    double map_edge_terminal_bonus = 2.0;
+};
+
+double wall_edge_mid_q(const BoundaryEdge& edge) {
+    return (static_cast<double>(edge.edge.a.q) + static_cast<double>(edge.edge.b.q)) * 0.5;
+}
+
+double wall_edge_mid_r(const BoundaryEdge& edge) {
+    return (static_cast<double>(edge.edge.a.r) + static_cast<double>(edge.edge.b.r)) * 0.5;
+}
+
+double wall_edge_anchor_distance(const BoundaryEdge& edge, const Coord& anchor) {
+    return static_cast<double>(std::min(hex_grid_distance(edge.edge.a, anchor), hex_grid_distance(edge.edge.b, anchor)));
+}
+
+std::optional<int> nearest_wall_edge_to_anchor(const std::vector<BoundaryEdge>& boundaries, const Coord& anchor) {
+    std::optional<int> best;
+    double best_score = std::numeric_limits<double>::max();
+    for (std::size_t i = 0; i < boundaries.size(); ++i) {
+        const double midpoint_q = wall_edge_mid_q(boundaries[i]);
+        const double midpoint_r = wall_edge_mid_r(boundaries[i]);
+        const double dq = midpoint_q - static_cast<double>(anchor.q);
+        const double dr = midpoint_r - static_cast<double>(anchor.r);
+        const double score = dq * dq + dr * dr + wall_edge_anchor_distance(boundaries[i], anchor) * 0.25;
+        if (score < best_score) {
+            best_score = score;
+            best = static_cast<int>(i);
+        }
+    }
+    return best;
+}
+
+Coord wall_edge_mid_coord(const GenerateArgs& args, const BoundaryEdge& edge) {
+    return {
+        std::max(1, std::min(args.width, static_cast<int>(std::round(wall_edge_mid_q(edge))))),
+        std::max(1, std::min(args.height, static_cast<int>(std::round(wall_edge_mid_r(edge))))),
+    };
+}
+
+bool wall_blocks_outside_access_to_chinese_towns(
+    const GenerateArgs& args,
+    const std::vector<Town>& towns,
+    const std::vector<RiverEdge>& wall_edges,
+    const std::map<Coord, Terrain, decltype(coord_less)*>& terrain_by_coord
+) {
+    if (wall_edges.empty()) {
+        return false;
+    }
+
+    std::vector<Coord> chinese_towns;
+    for (const Town& town : towns) {
+        if (town.feature == "chinese_town") {
+            chinese_towns.push_back(town.coord);
+        }
+    }
+    if (chinese_towns.empty()) {
+        return true;
+    }
+
+    std::set<RiverEdge, decltype(edge_less)*> wall_edge_set(edge_less);
+    for (const RiverEdge& edge : wall_edges) {
+        wall_edge_set.insert(canonical_edge(edge.a, edge.b));
+    }
+
+    const auto terrain_at = [&](const Coord& coord) {
+        const auto found = terrain_by_coord.find(coord);
+        return found == terrain_by_coord.end() ? Terrain::None : found->second;
+    };
+    const auto blocks_hex = [&](const Coord& coord) {
+        const Terrain terrain = terrain_at(coord);
+        return terrain == Terrain::Mountain || terrain == Terrain::Lake;
+    };
+    const auto reached_chinese_town = [&](const Coord& coord) {
+        return std::find_if(chinese_towns.begin(), chinese_towns.end(), [&coord](const Coord& town) {
+            return coord_equal(coord, town);
+        }) != chinese_towns.end();
+    };
+
+    std::queue<Coord> frontier;
+    std::set<Coord, decltype(coord_less)*> visited(coord_less);
+    const auto add_outside_seed = [&](const Coord& coord) {
+        if (!in_bounds(coord, args) || blocks_hex(coord) || visited.find(coord) != visited.end()) {
+            return;
+        }
+        visited.insert(coord);
+        frontier.push(coord);
+    };
+    for (int q = 1; q <= args.width; ++q) {
+        add_outside_seed({q, 1});
+    }
+    for (int r = 1; r <= args.height; ++r) {
+        add_outside_seed({1, r});
+    }
+
+    while (!frontier.empty()) {
+        const Coord current = frontier.front();
+        frontier.pop();
+        if (reached_chinese_town(current)) {
+            return false;
+        }
+
+        for (int direction = 0; direction < 6; ++direction) {
+            const Coord neighbor = neighbor_in_direction(current, direction);
+            if (!in_bounds(neighbor, args) || blocks_hex(neighbor) || visited.find(neighbor) != visited.end()) {
+                continue;
+            }
+            if (wall_edge_set.find(canonical_edge(current, neighbor)) != wall_edge_set.end()) {
+                continue;
+            }
+            visited.insert(neighbor);
+            frontier.push(neighbor);
+        }
+    }
+
+    return true;
+}
+
+std::vector<RiverEdge> route_bowed_wall_edge_path(
+    const GenerateArgs& args,
+    const Coord& start,
+    const Coord& end,
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const std::vector<Town>& towns,
+    const std::map<Coord, Terrain, decltype(coord_less)*>& terrain_by_coord,
+    const WallRouteOptions& options
+) {
+    std::vector<BoundaryEdge> boundaries;
+    for (const RiverEdge& edge : all_map_edges(args)) {
+        if (wall_hex_allowed(args, lake_hexes, towns, edge.a)
+            && wall_hex_allowed(args, lake_hexes, towns, edge.b)) {
+            boundaries.push_back(make_boundary_edge(edge));
+        }
+    }
+    if (boundaries.empty()) {
+        return {};
+    }
+
+    std::map<VertexKey, std::vector<int>> edges_by_vertex;
+    for (std::size_t i = 0; i < boundaries.size(); ++i) {
+        edges_by_vertex[boundaries[i].first].push_back(static_cast<int>(i));
+        edges_by_vertex[boundaries[i].second].push_back(static_cast<int>(i));
+    }
+
+    const std::optional<int> start_edge = nearest_wall_edge_to_anchor(boundaries, start);
+    const std::optional<int> end_edge = nearest_wall_edge_to_anchor(boundaries, end);
+    if (!start_edge.has_value() || !end_edge.has_value()) {
+        return {};
+    }
+
+    const auto terrain_at = [&](const Coord& coord) {
+        const auto found = terrain_by_coord.find(coord);
+        return found == terrain_by_coord.end() ? Terrain::None : found->second;
+    };
+    const auto touches_map_edge = [&](const BoundaryEdge& edge) {
+        const Coord coords[] = {edge.edge.a, edge.edge.b};
+        for (const Coord& coord : coords) {
+            if (coord.q == 1 || coord.q == args.width || coord.r == 1 || coord.r == args.height) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const auto touches_mountain = [&](const BoundaryEdge& edge) {
+        return terrain_at(edge.edge.a) == Terrain::Mountain || terrain_at(edge.edge.b) == Terrain::Mountain;
+    };
+    const auto is_terminal_edge = [&](const BoundaryEdge& edge) {
+        return touches_mountain(edge) || touches_map_edge(edge);
+    };
+
+    const auto terminal_edge_outward_from = [&](const Coord& anchor, const Coord& inward) {
+        const double outward_q = static_cast<double>(anchor.q - inward.q);
+        const double outward_r = static_cast<double>(anchor.r - inward.r);
+        const double outward_length = std::max(1.0, std::sqrt(outward_q * outward_q + outward_r * outward_r));
+        std::optional<int> best;
+        double best_score = std::numeric_limits<double>::max();
+        std::optional<int> fallback;
+        double fallback_score = std::numeric_limits<double>::max();
+
+        for (std::size_t i = 0; i < boundaries.size(); ++i) {
+            const BoundaryEdge& edge = boundaries[i];
+            if (!is_terminal_edge(edge)) {
+                continue;
+            }
+            const double dq = wall_edge_mid_q(edge) - static_cast<double>(anchor.q);
+            const double dr = wall_edge_mid_r(edge) - static_cast<double>(anchor.r);
+            const double projection = (dq * outward_q + dr * outward_r) / outward_length;
+            const double lateral = std::abs(dq * outward_r - dr * outward_q) / outward_length;
+            const double distance = std::sqrt(dq * dq + dr * dr);
+            const double terminal_bonus = touches_mountain(edge)
+                ? options.mountain_terminal_bonus
+                : options.map_edge_terminal_bonus;
+            const double score = distance
+                + lateral * 1.6
+                - projection * 0.18
+                + terminal_bonus
+                + unit_noise(args.seed, static_cast<std::uint32_t>(81800 + i * 193 + anchor.q * 389 + anchor.r * 733)) * 0.1;
+            if (score < fallback_score) {
+                fallback_score = score;
+                fallback = static_cast<int>(i);
+            }
+            if (projection < options.terminal_projection_min) {
+                continue;
+            }
+            if (score < best_score) {
+                best_score = score;
+                best = static_cast<int>(i);
+            }
+        }
+
+        return best.has_value() ? best : fallback;
+    };
+
+    const auto route_between_edges = [&](int route_start_edge, int route_end_edge, const Coord& route_start, const Coord& route_end, double bow_multiplier) {
+        if (route_start_edge == route_end_edge) {
+            return std::vector<int>{route_start_edge};
+        }
+
+        const double dx = static_cast<double>(route_end.q - route_start.q);
+        const double dy = static_cast<double>(route_end.r - route_start.r);
+        const double length_sq = std::max(1.0, dx * dx + dy * dy);
+        const double bow = std::max(3.0, static_cast<double>(args.height) * 0.08) * bow_multiplier * options.bow_multiplier;
+        const auto progress_for = [&](double q, double r) {
+            const double raw_t = ((q - static_cast<double>(route_start.q)) * dx + (r - static_cast<double>(route_start.r)) * dy) / length_sq;
+            return std::max(0.0, std::min(1.0, raw_t));
+        };
+        const auto expected_row = [&](double q, double r) {
+            const double t = progress_for(q, r);
+            const double linear_r = static_cast<double>(route_start.r) + dy * t;
+            return linear_r - std::sin(t * 3.14159265358979323846) * bow;
+        };
+        const auto curve_error = [&](const BoundaryEdge& edge) {
+            return std::abs(wall_edge_mid_r(edge) - expected_row(wall_edge_mid_q(edge), wall_edge_mid_r(edge)));
+        };
+        const auto edge_heuristic = [&](int edge_index) {
+            const BoundaryEdge& boundary = boundaries[edge_index];
+            return wall_edge_anchor_distance(boundary, route_end) * 0.85 + curve_error(boundary) * 0.12;
+        };
+        const auto step_cost = [&](int from_edge, int to_edge) {
+            const BoundaryEdge& from = boundaries[from_edge];
+            const BoundaryEdge& to = boundaries[to_edge];
+            const double from_t = progress_for(wall_edge_mid_q(from), wall_edge_mid_r(from));
+            const double to_t = progress_for(wall_edge_mid_q(to), wall_edge_mid_r(to));
+            const double backtrack_penalty = to_t + 0.015 < from_t ? 1.6 : 0.0;
+            const double south_penalty = wall_edge_mid_r(to) > expected_row(wall_edge_mid_q(to), wall_edge_mid_r(to)) + 2.5 ? 0.8 : 0.0;
+            return 1.0
+                + curve_error(to) * 0.32
+                + backtrack_penalty
+                + south_penalty
+                + unit_noise(args.seed, static_cast<std::uint32_t>(81600 + from_edge * 131 + to_edge * 197)) * 0.04;
+        };
+
+        std::priority_queue<WallPathQueueNode, std::vector<WallPathQueueNode>, WallPathQueueCompare> frontier;
+        std::map<WallPathState, double> costs;
+        std::map<WallPathState, WallPathState> came_from;
+        int order = 0;
+
+        const BoundaryEdge& start_boundary = boundaries[route_start_edge];
+        const WallPathState starts[] = {
+            {route_start_edge, start_boundary.first},
+            {route_start_edge, start_boundary.second},
+        };
+        for (const WallPathState& state : starts) {
+            costs[state] = 0.0;
+            frontier.push({state, edge_heuristic(state.edge), 0.0, order++});
+        }
+
+        while (!frontier.empty()) {
+            const WallPathQueueNode current_node = frontier.top();
+            frontier.pop();
+            const auto known_cost = costs.find(current_node.state);
+            if (known_cost == costs.end() || current_node.cost_so_far > known_cost->second + 0.000001) {
+                continue;
+            }
+            if (current_node.state.edge == route_end_edge) {
+                std::vector<int> edge_indices{current_node.state.edge};
+                WallPathState current = current_node.state;
+                while (current.edge != route_start_edge) {
+                    const auto previous = came_from.find(current);
+                    if (previous == came_from.end()) {
+                        return std::vector<int>{};
+                    }
+                    current = previous->second;
+                    edge_indices.push_back(current.edge);
+                }
+                std::reverse(edge_indices.begin(), edge_indices.end());
+                return edge_indices;
+            }
+
+            const auto adjacent = edges_by_vertex.find(current_node.state.vertex);
+            if (adjacent == edges_by_vertex.end()) {
+                continue;
+            }
+
+            for (const int candidate : adjacent->second) {
+                if (candidate == current_node.state.edge) {
+                    continue;
+                }
+                const BoundaryEdge& boundary = boundaries[candidate];
+                const VertexKey next_vertex = other_vertex(boundary, current_node.state.vertex);
+                const WallPathState next{candidate, next_vertex};
+                const double next_cost = current_node.cost_so_far + step_cost(current_node.state.edge, candidate);
+                const auto existing_cost = costs.find(next);
+                if (existing_cost != costs.end() && next_cost >= existing_cost->second - 0.000001) {
+                    continue;
+                }
+                costs[next] = next_cost;
+                came_from[next] = current_node.state;
+                frontier.push({next, next_cost + edge_heuristic(candidate), next_cost, order++});
+            }
+        }
+
+        return std::vector<int>{};
+    };
+
+    const int sw_terminal_edge = terminal_edge_outward_from(start, end).value_or(start_edge.value());
+    const int ne_terminal_edge = terminal_edge_outward_from(end, start).value_or(end_edge.value());
+    const Coord sw_terminal = wall_edge_mid_coord(args, boundaries[sw_terminal_edge]);
+    const Coord ne_terminal = wall_edge_mid_coord(args, boundaries[ne_terminal_edge]);
+
+    std::vector<int> combined;
+    const auto append_path = [&](const std::vector<int>& edge_indices) {
+        for (const int edge_index : edge_indices) {
+            if (combined.empty() || combined.back() != edge_index) {
+                combined.push_back(edge_index);
+            }
+        }
+    };
+
+    append_path(route_between_edges(sw_terminal_edge, start_edge.value(), sw_terminal, start, 0.0));
+    append_path(route_between_edges(start_edge.value(), end_edge.value(), start, end, 1.0));
+    append_path(route_between_edges(end_edge.value(), ne_terminal_edge, end, ne_terminal, 0.0));
+
+    std::vector<RiverEdge> path;
+    path.reserve(combined.size());
+    for (const int edge_index : combined) {
+        path.push_back(boundaries[edge_index].edge);
+    }
+    return path;
+}
+
+std::vector<Wall> generate_walls(
+    const GenerateArgs& args,
+    const std::vector<Town>& towns,
+    const std::vector<RiverEdge>& river_edges,
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes,
+    const std::vector<Hex>& hexes
+) {
+    const std::optional<Coord> start = find_wall_sw_anchor(args, towns, river_edges, lake_hexes, valley_hexes);
+    const std::optional<Coord> end = find_wall_ne_anchor(args, towns, lake_hexes);
+    if (!start.has_value() || !end.has_value() || coord_equal(start.value(), end.value())) {
+        return {};
+    }
+
+    std::map<Coord, Terrain, decltype(coord_less)*> terrain_by_coord(coord_less);
+    for (const Hex& hex : hexes) {
+        terrain_by_coord[hex.coord] = hex.terrain;
+    }
+
+    const WallRouteOptions attempts[] = {
+        {},
+        {1.2, 0.55, 1.0, -8.0},
+        {1.45, 0.35, 2.5, -11.0},
+        {1.75, 0.15, 4.0, -13.0},
+        {2.1, 0.0, 6.0, -16.0},
+    };
+    std::vector<RiverEdge> fallback_path;
+    for (const WallRouteOptions& options : attempts) {
+        const std::vector<RiverEdge> edge_path = route_bowed_wall_edge_path(
+            args,
+            start.value(),
+            end.value(),
+            lake_hexes,
+            towns,
+            terrain_by_coord,
+            options
+        );
+        if (edge_path.empty()) {
+            continue;
+        }
+        if (fallback_path.empty()) {
+            fallback_path = edge_path;
+        }
+        if (wall_blocks_outside_access_to_chinese_towns(args, towns, edge_path, terrain_by_coord)) {
+            Wall wall;
+            wall.id = 1;
+            wall.feature = "great_wall";
+            wall.edge_path = edge_path;
+            return {wall};
+        }
+    }
+
+    if (fallback_path.empty()) {
+        return {};
+    }
+
+    Wall wall;
+    wall.id = 1;
+    wall.feature = "great_wall";
+    wall.edge_path = fallback_path;
+    return {wall};
+}
+
 int distance_between_edges(const RiverEdge& first, const RiverEdge& second) {
     return std::min({
         hex_grid_distance(first.a, second.a),
@@ -3115,6 +3711,14 @@ void print_edge(const RiverEdge& edge) {
     std::cout << ",\"river\":true}";
 }
 
+void print_plain_edge(const RiverEdge& edge) {
+    std::cout << "{\"a\":";
+    print_coord(edge.a);
+    std::cout << ",\"b\":";
+    print_coord(edge.b);
+    std::cout << "}";
+}
+
 void print_town(const Town& town) {
     std::cout << "{\"q\":" << town.coord.q << ",\"r\":" << town.coord.r << ",\"feature\":\"" << town.feature << "\"";
     if (!town.labels.empty()) {
@@ -3139,6 +3743,17 @@ void print_crossing(const Crossing& crossing) {
     std::cout << "{\"id\":" << crossing.id << ",\"kind\":\"" << crossing.kind << "\",\"edge\":";
     print_edge(crossing.edge);
     std::cout << "}";
+}
+
+void print_wall(const Wall& wall) {
+    std::cout << "{\"id\":" << wall.id << ",\"feature\":\"" << wall.feature << "\",\"edge_path\":[";
+    for (std::size_t i = 0; i < wall.edge_path.size(); ++i) {
+        if (i > 0) {
+            std::cout << ",";
+        }
+        print_plain_edge(wall.edge_path[i]);
+    }
+    std::cout << "]}";
 }
 
 bool coord_in_vector(const std::vector<Coord>& coords, const Coord& target) {
@@ -3356,6 +3971,7 @@ GeneratedMap generate_map(const GenerateArgs& args) {
     map.edges = all_river_edges;
     map.lake_river_connections = lake_river_connections;
     map.roads = roads;
+    map.walls = generate_walls(args, towns, all_river_edges, all_lakes, valley_hexes, map.hexes);
     map.crossings = crossings;
     map.metadata.terrain_types = {
         Terrain::None,
@@ -3476,6 +4092,14 @@ void print_generated_map_json(const GeneratedMap& map) {
             std::cout << ",";
         }
         print_road(map.roads[i]);
+    }
+    std::cout << "],";
+    std::cout << "\"walls\":[";
+    for (std::size_t i = 0; i < map.walls.size(); ++i) {
+        if (i > 0) {
+            std::cout << ",";
+        }
+        print_wall(map.walls[i]);
     }
     std::cout << "],";
     std::cout << "\"crossings\":[";

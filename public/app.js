@@ -29,7 +29,10 @@ const zoomInButton = document.querySelector("#zoom-in-button");
 const zoomOutButton = document.querySelector("#zoom-out-button");
 const fitButton = document.querySelector("#fit-button");
 const editModeButton = document.querySelector("#edit-mode-button");
-const editorToolSelect = document.querySelector("#editor-tool");
+const editorModeSelect = document.querySelector("#editor-mode");
+const editorEdgeFeatureSelect = document.querySelector("#editor-edge-feature");
+const editorUnitTypeSelect = document.querySelector("#editor-unit-type");
+const editorUnitSideSelect = document.querySelector("#editor-unit-side");
 const terrainPalette = document.querySelector("#terrain-palette");
 const endTurnButton = document.querySelector("#end-turn-button");
 const controlEndTurnButton = document.querySelector("#control-end-turn-button");
@@ -139,6 +142,10 @@ const terrainStyles = {
     chinese: "#aa3f2c",
     silk: "#c28a2c",
   },
+  wall: {
+    stroke: "#3a3328",
+    highlight: "#c4b28a",
+  },
   crossing: {
     bridge: "#b8b8b8",
     ford: "#f4f4f4",
@@ -171,6 +178,13 @@ const factions = {
 
 const factionCount = 2;
 const factionTurnOrder = ["mongol", "chinese", "persian"].slice(0, factionCount);
+
+const unitTypeDefaults = {
+  camp: { hp: 1, move: 0 },
+  herd: { hp: 1, move: 0 },
+  cavalry: { hp: 10, move: 4 },
+  infantry: { hp: 10, move: 2 },
+};
 
 function terrainStyle(key) {
   const terrain = editorTerrains.find((entry) => entry.key === key);
@@ -965,6 +979,49 @@ function drawRoads(roads) {
   ctx.restore();
 }
 
+function drawWalls(walls) {
+  if (!walls || walls.length === 0) {
+    return;
+  }
+
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  for (const wall of walls) {
+    if (!Array.isArray(wall.edge_path) || wall.edge_path.length === 0) {
+      continue;
+    }
+    ctx.strokeStyle = terrainStyles.wall.stroke;
+    ctx.lineWidth = 5 / viewport.scale;
+    for (const edge of wall.edge_path) {
+      const boundary = edgeBoundaryPoints(edge);
+      if (!boundary) {
+        continue;
+      }
+      ctx.beginPath();
+      ctx.moveTo(boundary[0][0], boundary[0][1]);
+      ctx.lineTo(boundary[1][0], boundary[1][1]);
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = terrainStyles.wall.highlight;
+    ctx.lineWidth = 1.5 / viewport.scale;
+    for (const edge of wall.edge_path) {
+      const boundary = edgeBoundaryPoints(edge);
+      if (!boundary) {
+        continue;
+      }
+      ctx.beginPath();
+      ctx.moveTo(boundary[0][0], boundary[0][1]);
+      ctx.lineTo(boundary[1][0], boundary[1][1]);
+      ctx.stroke();
+    }
+  }
+
+  ctx.restore();
+}
+
 function drawCrossings(crossings) {
   if (!crossings || crossings.length === 0) {
     return;
@@ -1231,6 +1288,7 @@ function drawMap() {
 
   drawRoads(currentMap.roads);
   drawRiverEdges(currentMap.edges);
+  drawWalls(currentMap.walls);
   drawCrossings(currentMap.crossings);
   drawMapMarkers(currentMap.river_sources, terrainStyles.river.source, 5);
   drawMapMarkers(currentMap.merge_points, terrainStyles.river.merge, 5);
@@ -1245,6 +1303,11 @@ function syncEditorControls() {
   editModeButton.classList.toggle("is-active", isEditing);
   editModeButton.setAttribute("aria-pressed", String(isEditing));
   mapPanel.classList.toggle("is-editing", isEditing);
+  const mode = editorModeSelect.value;
+  terrainPalette.hidden = mode !== "terrain";
+  editorEdgeFeatureSelect.hidden = mode !== "edges";
+  editorUnitTypeSelect.hidden = mode !== "units";
+  editorUnitSideSelect.hidden = mode !== "units";
 
   for (const button of terrainPalette.querySelectorAll(".terrain-button")) {
     button.classList.toggle("is-selected", button.dataset.terrain === selectedTerrain);
@@ -1263,7 +1326,7 @@ function initializeTerrainPalette() {
     button.style.borderColor = terrain.stroke;
     button.addEventListener("click", () => {
       selectedTerrain = terrain.key;
-      editorToolSelect.value = "hex";
+      editorModeSelect.value = "terrain";
       syncEditorControls();
     });
     terrainPalette.appendChild(button);
@@ -1300,6 +1363,77 @@ function toggleRiverEdge(edge) {
   } else {
     currentMap.edges.push(edge);
   }
+}
+
+function roadEdgeKey(road) {
+  if (!road || !Array.isArray(road.path) || road.path.length !== 2) {
+    return "";
+  }
+  return edgeKey(canonicalEdge(road.path[0], road.path[1]));
+}
+
+function toggleRoadEdge(edge) {
+  currentMap.roads = currentMap.roads || [];
+  const key = edgeKey(edge);
+  const index = currentMap.roads.findIndex((road) => road.feature === "editor_road" && roadEdgeKey(road) === key);
+  if (index >= 0) {
+    currentMap.roads.splice(index, 1);
+    return;
+  }
+  const nextId = currentMap.roads.reduce((maxId, road) => Math.max(maxId, Number.isInteger(road.id) ? road.id : 0), 0) + 1;
+  currentMap.roads.push({
+    id: nextId,
+    feature: "editor_road",
+    path: [{ ...edge.a }, { ...edge.b }],
+  });
+}
+
+function nextUnitId() {
+  const units = currentMap && Array.isArray(currentMap.units) ? currentMap.units : [];
+  return units.reduce((maxId, unit) => Math.max(maxId, Number.isInteger(unit.id) ? unit.id : 0), 0) + 1;
+}
+
+function makeEditorUnit(coord) {
+  const kind = editorUnitTypeSelect.value;
+  const factionKey = editorUnitSideSelect.value;
+  const faction = factions[factionKey] || factions.mongol;
+  const defaults = unitTypeDefaults[kind] || unitTypeDefaults.cavalry;
+  return {
+    id: nextUnitId(),
+    owner: faction.owner,
+    faction: factionKey,
+    kind,
+    q: coord.q,
+    r: coord.r,
+    hp: defaults.hp,
+    maxHp: defaults.hp,
+    move: defaults.move,
+    remainingMove: defaults.move,
+  };
+}
+
+function toggleEditorUnit(hex) {
+  currentMap.units = Array.isArray(currentMap.units) ? currentMap.units : [];
+  const kind = editorUnitTypeSelect.value;
+  const factionKey = editorUnitSideSelect.value;
+  const faction = factions[factionKey] || factions.mongol;
+  const existingSelected = currentMap.units.findIndex((unit) => (
+    unit.q === hex.q
+    && unit.r === hex.r
+    && unit.kind === kind
+    && unit.owner === faction.owner
+  ));
+  if (existingSelected >= 0) {
+    const removedId = currentMap.units[existingSelected].id;
+    currentMap.units.splice(existingSelected, 1);
+    if (currentMap.game && currentMap.game.selectedUnitId === removedId) {
+      currentMap.game.selectedUnitId = 0;
+    }
+    return;
+  }
+
+  currentMap.units = currentMap.units.filter((unit) => !(unit.q === hex.q && unit.r === hex.r));
+  currentMap.units.push(normalizeUnit(makeEditorUnit(hex), currentMap.units.length));
 }
 
 function toggleHexTerrain(hex, terrain) {
@@ -1343,7 +1477,8 @@ function paintAtPointer(event) {
   }
 
   const point = panelToWorld(event);
-  if (editorToolSelect.value === "edge") {
+  const mode = editorModeSelect.value;
+  if (mode === "edges") {
     const edge = findNearestEditableEdge(point);
     if (!edge) {
       return;
@@ -1353,10 +1488,14 @@ function paintAtPointer(event) {
       return;
     }
     paintStrokeKeys.add(key);
-    if (event.shiftKey) {
-      setRiverEdge(edge, false);
+    if (editorEdgeFeatureSelect.value === "road") {
+      toggleRoadEdge(edge);
     } else {
-      toggleRiverEdge(edge);
+      if (event.shiftKey) {
+        setRiverEdge(edge, false);
+      } else {
+        toggleRiverEdge(edge);
+      }
     }
     refreshDerivedTopology();
     drawMap();
@@ -1367,6 +1506,18 @@ function paintAtPointer(event) {
   if (!hex) {
     return;
   }
+  if (mode === "units") {
+    const key = `unit:${coordKey(hex)}`;
+    if (paintStrokeKeys.has(key)) {
+      return;
+    }
+    paintStrokeKeys.add(key);
+    toggleEditorUnit(hex);
+    syncModeControls();
+    drawMap();
+    return;
+  }
+
   const terrain = event.shiftKey ? "grassland" : selectedTerrain;
   const key = `hex:${coordKey(hex)}`;
   if (paintStrokeKeys.has(key)) {
@@ -1476,6 +1627,7 @@ function createBlankMap(options = {}) {
     edges: [],
     towns: [],
     roads: [],
+    walls: [],
     crossings: [],
     units: [],
     metadata: {
@@ -1542,6 +1694,7 @@ function normalizeLoadedMap(map) {
     edges: Array.isArray(map.edges) ? map.edges : [],
     towns: Array.isArray(map.towns) ? map.towns : [],
     roads: Array.isArray(map.roads) ? map.roads : [],
+    walls: Array.isArray(map.walls) ? map.walls : [],
     crossings: Array.isArray(map.crossings) ? map.crossings : [],
     units: Array.isArray(map.units)
       ? map.units
@@ -1661,9 +1814,12 @@ async function chooseMapFile() {
 scenarioModeButton.addEventListener("click", () => setAppMode("scenario"));
 playModeButton.addEventListener("click", () => setAppMode("play"));
 generateButton.addEventListener("click", generateMap);
-blankMapButton.addEventListener("click", createBlankMap);
+blankMapButton.addEventListener("click", () => createBlankMap());
 editModeButton.addEventListener("click", () => setEditMode(!isEditing));
-editorToolSelect.addEventListener("change", syncEditorControls);
+editorModeSelect.addEventListener("change", syncEditorControls);
+editorEdgeFeatureSelect.addEventListener("change", syncEditorControls);
+editorUnitTypeSelect.addEventListener("change", syncEditorControls);
+editorUnitSideSelect.addEventListener("change", syncEditorControls);
 saveButton.addEventListener("click", saveCurrentMap);
 loadButton.addEventListener("click", chooseMapFile);
 loadFileInput.addEventListener("change", () => loadMapFile(loadFileInput.files[0]));
