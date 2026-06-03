@@ -5,7 +5,7 @@ test.describe.configure({ mode: "serial" });
 async function openPlayMode(page) {
   await page.goto("/");
   await page.getByRole("button", { name: "Play" }).click();
-  await expect(page.locator(".unit-roster-item")).toHaveCount(4);
+  await expect(page.locator(".unit-roster-item")).toHaveCount(6);
 }
 
 test("scenario controls sit above the shared map", async ({ page }) => {
@@ -172,7 +172,7 @@ test("mobile play mode keeps the map usable below the unit roster", async ({ pag
   await openPlayMode(page);
 
   await expect(page.locator("#play-details-bar")).toBeHidden();
-  await expect(page.locator(".unit-roster-item")).toHaveCount(4);
+  await expect(page.locator(".unit-roster-item")).toHaveCount(6);
 
   const layout = await page.evaluate(() => {
     const sidebar = document.querySelector("#play-controls").getBoundingClientRect();
@@ -252,13 +252,16 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await page.locator("#editor-mode").selectOption("units");
   await expect(page.locator("#editor-unit-type")).toBeVisible();
   await expect(page.locator("#editor-unit-side")).toBeVisible();
-  await page.locator("#editor-unit-type").selectOption("infantry");
+  await page.locator("#editor-unit-type").selectOption("horde");
   await page.locator("#editor-unit-side").selectOption("chinese");
   point = await hexPoint({ q: 3, r: 3 });
   await page.mouse.click(point.x, point.y);
   await expect.poll(() => page.evaluate(() => currentMap.units.length)).toBe(1);
-  await expect.poll(() => page.evaluate(() => currentMap.units[0].kind)).toBe("infantry");
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].kind)).toBe("horde");
   await expect.poll(() => page.evaluate(() => currentMap.units[0].faction)).toBe("chinese");
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].move)).toBe(3);
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].projectsZoc)).toBe(true);
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].respectsZoc)).toBe(true);
   await page.mouse.click(point.x, point.y);
   await expect.poll(() => page.evaluate(() => currentMap.units.length)).toBe(0);
 });

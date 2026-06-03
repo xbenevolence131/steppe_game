@@ -141,6 +141,7 @@ const char* unit_kind_to_string(UnitKind kind) {
         case UnitKind::Herd: return "herd";
         case UnitKind::Cavalry: return "cavalry";
         case UnitKind::Infantry: return "infantry";
+        case UnitKind::Horde: return "horde";
     }
     return "cavalry";
 }
@@ -149,6 +150,7 @@ UnitKind unit_kind_from_string(const std::string& kind) {
     if (kind == "camp") return UnitKind::Camp;
     if (kind == "herd") return UnitKind::Herd;
     if (kind == "infantry") return UnitKind::Infantry;
+    if (kind == "horde") return UnitKind::Horde;
     return UnitKind::Cavalry;
 }
 
@@ -166,7 +168,7 @@ Clan clan_for_owner(OwnerId owner) {
 }
 
 int default_hp(UnitKind kind) {
-    if (kind == UnitKind::Cavalry || kind == UnitKind::Infantry) {
+    if (kind == UnitKind::Cavalry || kind == UnitKind::Infantry || kind == UnitKind::Horde) {
         return 10;
     }
     return 1;
@@ -179,7 +181,18 @@ int default_move(UnitKind kind) {
     if (kind == UnitKind::Infantry) {
         return 2;
     }
+    if (kind == UnitKind::Horde) {
+        return 3;
+    }
     return 0;
+}
+
+bool default_projects_zoc(UnitKind kind) {
+    return kind == UnitKind::Cavalry || kind == UnitKind::Infantry || kind == UnitKind::Horde;
+}
+
+bool default_respects_zoc(UnitKind kind) {
+    return kind == UnitKind::Infantry || kind == UnitKind::Horde;
 }
 
 constexpr int move_scale = 8;
@@ -567,16 +580,18 @@ GameState create_default_play_sandbox(int width, int height, int faction_count) 
         unit.max_hp = unit.hp;
         unit.scaled_move = to_scaled_move(default_move(unit.kind));
         unit.remaining_scaled_move = unit.scaled_move;
-        unit.projects_zoc = true;
-        unit.respects_zoc = kind == UnitKind::Infantry;
+        unit.projects_zoc = default_projects_zoc(kind);
+        unit.respects_zoc = default_respects_zoc(kind);
         return unit;
     };
 
     state.units = {
         make_unit(1, mongol_owner, UnitKind::Cavalry, {3, 5}),
         make_unit(2, mongol_owner, UnitKind::Infantry, {3, 7}),
-        make_unit(3, chinese_owner, UnitKind::Cavalry, {8, 5}),
-        make_unit(4, chinese_owner, UnitKind::Infantry, {8, 7}),
+        make_unit(3, mongol_owner, UnitKind::Horde, {3, 6}),
+        make_unit(4, chinese_owner, UnitKind::Cavalry, {8, 5}),
+        make_unit(5, chinese_owner, UnitKind::Infantry, {8, 7}),
+        make_unit(6, chinese_owner, UnitKind::Horde, {8, 6}),
     };
     return state;
 }
@@ -770,8 +785,8 @@ bool attack_unit(GameState& state, int attacker_id, int defender_id) {
         return false;
     }
 
-    constexpr int cavalry_attack_damage = 3;
-    defender->hp = std::max(0, defender->hp - cavalry_attack_damage);
+    constexpr int attack_damage = 3;
+    defender->hp = std::max(0, defender->hp - attack_damage);
     attacker = find_unit(state, attacker_id);
     if (attacker != nullptr) {
         attacker->remaining_scaled_move = 0;
@@ -1171,8 +1186,8 @@ GameState parse_game_state_json(const std::string& json) {
         unit.remaining_scaled_move = std::max(0, std::min(unit.remaining_scaled_move, unit.scaled_move));
         unit.move_done = bool_field(unit_json, "moveDone", false);
         unit.combat_done = bool_field(unit_json, "combatDone", false);
-        unit.projects_zoc = bool_field(unit_json, "projectsZoc", unit.kind == UnitKind::Cavalry || unit.kind == UnitKind::Infantry);
-        unit.respects_zoc = bool_field(unit_json, "respectsZoc", unit.kind == UnitKind::Infantry);
+        unit.projects_zoc = bool_field(unit_json, "projectsZoc", default_projects_zoc(unit.kind));
+        unit.respects_zoc = bool_field(unit_json, "respectsZoc", default_respects_zoc(unit.kind));
         state.units.push_back(unit);
     }
 

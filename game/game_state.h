@@ -59,6 +59,7 @@ enum class UnitKind {
     Herd,
     Cavalry,
     Infantry,
+    Horde,
 };
 
 struct PastureState {

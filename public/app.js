@@ -43,6 +43,7 @@ const turnStatusReadout = document.querySelector("#turn-status-readout");
 const campCount = document.querySelector("#camp-count");
 const herdCount = document.querySelector("#herd-count");
 const cavalryCount = document.querySelector("#cavalry-count");
+const hordeCount = document.querySelector("#horde-count");
 const sidebarSelectionReadout = document.querySelector(".sidebar-selection-readout");
 const unitRoster = document.querySelector("#unit-roster");
 const unitName = document.querySelector("#unit-name");
@@ -187,6 +188,7 @@ const unitTypeDefaults = {
   herd: { hp: 1, move: 0 },
   cavalry: { hp: 10, move: 4 },
   infantry: { hp: 10, move: 2 },
+  horde: { hp: 10, move: 3, projectsZoc: true, respectsZoc: true },
 };
 
 function terrainStyle(key) {
@@ -762,6 +764,7 @@ function unitDisplayName(unit) {
   const kindNames = {
     cavalry: "Cavalry",
     infantry: "Infantry",
+    horde: "Horde",
   };
   const kind = kindNames[unit.kind] || unit.kind;
   return `${faction.name} ${kind}`;
@@ -773,6 +776,7 @@ function unitKindLabel(unit) {
     herd: "Herd",
     cavalry: "Cavalry",
     infantry: "Infantry",
+    horde: "Horde",
   };
   return kindNames[unit.kind] || unit.kind || "Unit";
 }
@@ -843,6 +847,7 @@ function syncPlayControls() {
   campCount.textContent = String(countUnits("camp", owner));
   herdCount.textContent = String(countUnits("herd", owner));
   cavalryCount.textContent = String(countUnits("cavalry", owner));
+  hordeCount.textContent = String(countUnits("horde", owner));
   syncUnitRoster();
   syncUnitInspector();
 }
@@ -1183,6 +1188,17 @@ function drawUnitCounters(units) {
       ctx.moveTo(dividerX - iconInsetX, y + iconInsetY);
       ctx.lineTo(x + iconInsetX, y + counterHeight - iconInsetY);
       ctx.stroke();
+    } else if (unit.kind === "horde") {
+      const left = x + 5 / viewport.scale;
+      const right = dividerX - 5 / viewport.scale;
+      const top = y + 5 / viewport.scale;
+      const bottom = y + counterHeight - 5 / viewport.scale;
+      ctx.beginPath();
+      ctx.moveTo((left + right) / 2, top);
+      ctx.lineTo(right, bottom);
+      ctx.lineTo(left, bottom);
+      ctx.closePath();
+      ctx.stroke();
     } else {
       ctx.beginPath();
       ctx.ellipse(x + 9.5 / viewport.scale, y + counterHeight / 2, 5.5 / viewport.scale, 3.1 / viewport.scale, 0, 0, Math.PI * 2);
@@ -1449,6 +1465,8 @@ function makeEditorUnit(coord) {
     maxHp: defaults.hp,
     move: defaults.move,
     remainingMove: defaults.move,
+    projectsZoc: Boolean(defaults.projectsZoc),
+    respectsZoc: Boolean(defaults.respectsZoc),
   };
 }
 
