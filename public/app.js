@@ -145,6 +145,9 @@ const terrainStyles = {
   wall: {
     stroke: "#3a3328",
     highlight: "#c4b28a",
+    gate: "#d6b45f",
+    roadGate: "#f1f1e6",
+    outline: "#221b13",
   },
   crossing: {
     bridge: "#b8b8b8",
@@ -1022,6 +1025,42 @@ function drawWalls(walls) {
   ctx.restore();
 }
 
+function drawWallGates(gates) {
+  if (!gates || gates.length === 0) {
+    return;
+  }
+
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  for (const gate of gates) {
+    if (!gate.edge || !gate.edge.a || !gate.edge.b) {
+      continue;
+    }
+    const boundary = edgeBoundaryPoints(gate.edge);
+    if (!boundary) {
+      continue;
+    }
+    const x = (boundary[0][0] + boundary[1][0]) / 2;
+    const y = (boundary[0][1] + boundary[1][1]) / 2;
+    const radius = 4.2 / viewport.scale;
+    ctx.fillStyle = terrainStyles.wall.outline;
+    ctx.beginPath();
+    ctx.arc(x, y, radius * 1.35, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = gate.kind === "silk_gate" || gate.kind === "road_gate"
+      ? terrainStyles.wall.roadGate
+      : terrainStyles.wall.gate;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
 function drawCrossings(crossings) {
   if (!crossings || crossings.length === 0) {
     return;
@@ -1289,6 +1328,7 @@ function drawMap() {
   drawRoads(currentMap.roads);
   drawRiverEdges(currentMap.edges);
   drawWalls(currentMap.walls);
+  drawWallGates(currentMap.wall_gates);
   drawCrossings(currentMap.crossings);
   drawMapMarkers(currentMap.river_sources, terrainStyles.river.source, 5);
   drawMapMarkers(currentMap.merge_points, terrainStyles.river.merge, 5);
@@ -1628,6 +1668,7 @@ function createBlankMap(options = {}) {
     towns: [],
     roads: [],
     walls: [],
+    wall_gates: [],
     crossings: [],
     units: [],
     metadata: {
@@ -1695,6 +1736,7 @@ function normalizeLoadedMap(map) {
     towns: Array.isArray(map.towns) ? map.towns : [],
     roads: Array.isArray(map.roads) ? map.roads : [],
     walls: Array.isArray(map.walls) ? map.walls : [],
+    wall_gates: Array.isArray(map.wall_gates) ? map.wall_gates : [],
     crossings: Array.isArray(map.crossings) ? map.crossings : [],
     units: Array.isArray(map.units)
       ? map.units

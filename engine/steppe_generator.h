@@ -108,6 +108,12 @@ struct Wall {
     std::vector<RiverEdge> edge_path;
 };
 
+struct WallGate {
+    int id = 0;
+    std::string kind;
+    RiverEdge edge;
+};
+
 struct GeneratedMapMetadata {
     std::string generator = "prototype-steppe-blob";
     std::vector<Terrain> terrain_types;
@@ -132,6 +138,7 @@ struct GeneratedMap {
     std::vector<LakeRiverConnection> lake_river_connections;
     std::vector<Road> roads;
     std::vector<Wall> walls;
+    std::vector<WallGate> wall_gates;
     std::vector<Crossing> crossings;
     GeneratedMapMetadata metadata;
 };

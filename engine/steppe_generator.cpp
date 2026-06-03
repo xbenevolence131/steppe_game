@@ -3493,6 +3493,136 @@ std::vector<Wall> generate_walls(
     return {wall};
 }
 
+std::vector<WallGate> generate_wall_gates(
+    const GenerateArgs& args,
+    const std::vector<Wall>& walls,
+    const std::vector<Road>& roads,
+    const std::vector<Hex>& hexes
+) {
+    std::vector<RiverEdge> wall_edges;
+    std::map<RiverEdge, int, decltype(edge_less)*> wall_edge_indices(edge_less);
+    for (const Wall& wall : walls) {
+        for (const RiverEdge& edge : wall.edge_path) {
+            const RiverEdge canonical = canonical_edge(edge.a, edge.b);
+            if (wall_edge_indices.find(canonical) == wall_edge_indices.end()) {
+                wall_edge_indices[canonical] = static_cast<int>(wall_edges.size());
+                wall_edges.push_back(canonical);
+            }
+        }
+    }
+    if (wall_edges.empty()) {
+        return {};
+    }
+
+    std::map<Coord, Terrain, decltype(coord_less)*> terrain_by_coord(coord_less);
+    for (const Hex& hex : hexes) {
+        terrain_by_coord[hex.coord] = hex.terrain;
+    }
+    const auto terrain_at = [&](const Coord& coord) {
+        const auto found = terrain_by_coord.find(coord);
+        return found == terrain_by_coord.end() ? Terrain::None : found->second;
+    };
+    const auto gate_terrain_allowed = [&](const RiverEdge& edge) {
+        const Terrain first = terrain_at(edge.a);
+        const Terrain second = terrain_at(edge.b);
+        return first != Terrain::Lake
+            && second != Terrain::Lake
+            && first != Terrain::Mountain
+            && second != Terrain::Mountain;
+    };
+
+    std::vector<WallGate> gates;
+    std::set<RiverEdge, decltype(edge_less)*> gate_edges(edge_less);
+    const auto add_gate = [&](const RiverEdge& edge, const std::string& kind) {
+        const RiverEdge canonical = canonical_edge(edge.a, edge.b);
+        if (wall_edge_indices.find(canonical) == wall_edge_indices.end()
+            || gate_edges.find(canonical) != gate_edges.end()
+            || !gate_terrain_allowed(canonical)) {
+            return false;
+        }
+        gates.push_back({static_cast<int>(gates.size()) + 1, kind, canonical});
+        gate_edges.insert(canonical);
+        return true;
+    };
+
+    for (const Road& road : roads) {
+        for (std::size_t i = 1; i < road.path.size(); ++i) {
+            const RiverEdge edge = canonical_edge(road.path[i - 1], road.path[i]);
+            const std::string kind = road.feature == "silk_road" ? "silk_gate" : "road_gate";
+            add_gate(edge, kind);
+        }
+    }
+
+    const int target_gate_count = std::max(
+        5,
+        std::min(9, static_cast<int>(std::round(static_cast<double>(wall_edges.size()) / 18.0)))
+    );
+    const int minimum_spacing = std::max(8, static_cast<int>(std::round(static_cast<double>(wall_edges.size()) / static_cast<double>(target_gate_count + 3))));
+    const auto far_from_existing_gates = [&](int index) {
+        for (const WallGate& gate : gates) {
+            const auto found = wall_edge_indices.find(canonical_edge(gate.edge.a, gate.edge.b));
+            if (found == wall_edge_indices.end()) {
+                continue;
+            }
+            if (std::abs(found->second - index) < minimum_spacing) {
+                return false;
+            }
+        }
+        return true;
+    };
+    const auto best_supplemental_index_near = [&](int target_index) {
+        int best_index = -1;
+        double best_score = std::numeric_limits<double>::max();
+        const int margin = std::min(6, std::max(2, static_cast<int>(wall_edges.size()) / 20));
+        const int window = std::max(minimum_spacing, 10);
+        for (int offset = -window; offset <= window; ++offset) {
+            const int index = target_index + offset;
+            if (index < margin || index >= static_cast<int>(wall_edges.size()) - margin) {
+                continue;
+            }
+            const RiverEdge& edge = wall_edges[index];
+            if (gate_edges.find(edge) != gate_edges.end()
+                || !gate_terrain_allowed(edge)
+                || !far_from_existing_gates(index)) {
+                continue;
+            }
+            const double score = std::abs(offset)
+                + unit_noise(args.seed, static_cast<std::uint32_t>(82100 + index * 977 + target_index * 37)) * 0.4;
+            if (score < best_score) {
+                best_score = score;
+                best_index = index;
+            }
+        }
+        return best_index;
+    };
+
+    int supplemental_slots = std::max(0, target_gate_count - static_cast<int>(gates.size()));
+    for (int slot = 0; slot < supplemental_slots; ++slot) {
+        const int target_index = static_cast<int>(std::round(
+            (static_cast<double>(slot) + 1.0)
+            / (static_cast<double>(supplemental_slots) + 1.0)
+            * static_cast<double>(std::max(0, static_cast<int>(wall_edges.size()) - 1))
+        ));
+        const int index = best_supplemental_index_near(target_index);
+        if (index >= 0) {
+            add_gate(wall_edges[index], "gate");
+        }
+    }
+
+    std::sort(gates.begin(), gates.end(), [&](const WallGate& first, const WallGate& second) {
+        const int first_index = wall_edge_indices[canonical_edge(first.edge.a, first.edge.b)];
+        const int second_index = wall_edge_indices[canonical_edge(second.edge.a, second.edge.b)];
+        if (first_index != second_index) {
+            return first_index < second_index;
+        }
+        return first.id < second.id;
+    });
+    for (std::size_t i = 0; i < gates.size(); ++i) {
+        gates[i].id = static_cast<int>(i) + 1;
+    }
+    return gates;
+}
+
 int distance_between_edges(const RiverEdge& first, const RiverEdge& second) {
     return std::min({
         hex_grid_distance(first.a, second.a),
@@ -3756,6 +3886,12 @@ void print_wall(const Wall& wall) {
     std::cout << "]}";
 }
 
+void print_wall_gate(const WallGate& gate) {
+    std::cout << "{\"id\":" << gate.id << ",\"kind\":\"" << gate.kind << "\",\"edge\":";
+    print_plain_edge(gate.edge);
+    std::cout << "}";
+}
+
 bool coord_in_vector(const std::vector<Coord>& coords, const Coord& target) {
     return std::find_if(coords.begin(), coords.end(), [&target](const Coord& coord) {
         return coord_equal(coord, target);
@@ -3972,6 +4108,7 @@ GeneratedMap generate_map(const GenerateArgs& args) {
     map.lake_river_connections = lake_river_connections;
     map.roads = roads;
     map.walls = generate_walls(args, towns, all_river_edges, all_lakes, valley_hexes, map.hexes);
+    map.wall_gates = generate_wall_gates(args, map.walls, roads, map.hexes);
     map.crossings = crossings;
     map.metadata.terrain_types = {
         Terrain::None,
@@ -4100,6 +4237,14 @@ void print_generated_map_json(const GeneratedMap& map) {
             std::cout << ",";
         }
         print_wall(map.walls[i]);
+    }
+    std::cout << "],";
+    std::cout << "\"wall_gates\":[";
+    for (std::size_t i = 0; i < map.wall_gates.size(); ++i) {
+        if (i > 0) {
+            std::cout << ",";
+        }
+        print_wall_gate(map.wall_gates[i]);
     }
     std::cout << "],";
     std::cout << "\"crossings\":[";

@@ -134,6 +134,8 @@ struct GameState {
     std::vector<RiverSegment> river_segments;
     std::vector<LakeRiverConnection> lake_river_connections;
     std::vector<Road> roads;
+    std::vector<Wall> walls;
+    std::vector<WallGate> wall_gates;
     std::vector<Crossing> crossings;
     std::vector<Settlement> settlements;
     std::vector<Clan> clans;

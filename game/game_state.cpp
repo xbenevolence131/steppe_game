@@ -509,6 +509,8 @@ GameState game_state_from_generated_map(const GeneratedMap& generated) {
     state.river_segments = generated.river_segments;
     state.lake_river_connections = generated.lake_river_connections;
     state.roads = generated.roads;
+    state.walls = generated.walls;
+    state.wall_gates = generated.wall_gates;
     state.crossings = generated.crossings;
     state.clans = {
         clan_for_owner(neutral_owner),
@@ -809,6 +811,14 @@ void print_coord_json(const Coord& coord, std::ostream& out) {
     out << "{\"q\":" << coord.q << ",\"r\":" << coord.r << "}";
 }
 
+void print_edge_json(const RiverEdge& edge, std::ostream& out) {
+    out << "{\"a\":";
+    print_coord_json(edge.a, out);
+    out << ",\"b\":";
+    print_coord_json(edge.b, out);
+    out << "}";
+}
+
 void print_string_array_json(const std::vector<std::string>& values, std::ostream& out) {
     out << "[";
     for (std::size_t i = 0; i < values.size(); ++i) {
@@ -905,6 +915,43 @@ void print_roads_array_json(const std::vector<Road>& roads, std::ostream& out) {
     out << "]";
 }
 
+void print_walls_array_json(const std::vector<Wall>& walls, std::ostream& out) {
+    out << "[";
+    for (std::size_t i = 0; i < walls.size(); ++i) {
+        if (i > 0) {
+            out << ",";
+        }
+        const Wall& wall = walls[i];
+        out << "{\"id\":" << wall.id
+            << ",\"feature\":\"" << escape_json(wall.feature) << "\""
+            << ",\"edge_path\":[";
+        for (std::size_t edge_index = 0; edge_index < wall.edge_path.size(); ++edge_index) {
+            if (edge_index > 0) {
+                out << ",";
+            }
+            print_edge_json(wall.edge_path[edge_index], out);
+        }
+        out << "]}";
+    }
+    out << "]";
+}
+
+void print_wall_gates_array_json(const std::vector<WallGate>& gates, std::ostream& out) {
+    out << "[";
+    for (std::size_t i = 0; i < gates.size(); ++i) {
+        if (i > 0) {
+            out << ",";
+        }
+        const WallGate& gate = gates[i];
+        out << "{\"id\":" << gate.id
+            << ",\"kind\":\"" << escape_json(gate.kind) << "\""
+            << ",\"edge\":";
+        print_edge_json(gate.edge, out);
+        out << "}";
+    }
+    out << "]";
+}
+
 void print_game_meta_json(const GameState& state, std::ostream& out) {
     out << "\"game\":{";
     out << "\"round\":" << state.round << ",";
@@ -959,6 +1006,10 @@ void print_game_state_json(const GameState& state, std::ostream& out) {
     out << "],\"towns\":[],\"river_sources\":[],\"river_destinations\":[],\"merge_points\":[],";
     out << "\"river_segments\":[],\"edges\":[],\"lake_river_connections\":[],\"roads\":";
     print_roads_array_json(state.roads, out);
+    out << ",\"walls\":";
+    print_walls_array_json(state.walls, out);
+    out << ",\"wall_gates\":";
+    print_wall_gates_array_json(state.wall_gates, out);
     out << ",\"crossings\":[],";
     out << "\"units\":";
     print_units_json(state.units, out);
@@ -1002,6 +1053,10 @@ void print_game_patch_json(const GameState& state, bool ok, std::ostream& out) {
     out << "],\"towns\":[],\"river_sources\":[],\"river_destinations\":[],\"merge_points\":[],";
     out << "\"river_segments\":[],\"edges\":[],\"lake_river_connections\":[],\"roads\":";
     print_roads_array_json(state.roads, out);
+    out << ",\"walls\":";
+    print_walls_array_json(state.walls, out);
+    out << ",\"wall_gates\":";
+    print_wall_gates_array_json(state.wall_gates, out);
     out << ",\"crossings\":[],";
     out << "\"units\":";
     print_units_json(state.units, out);
@@ -1050,6 +1105,35 @@ GameState parse_game_state_json(const std::string& json) {
             road.path.push_back({int_field(coord_json, "q", 0), int_field(coord_json, "r", 0)});
         }
         state.roads.push_back(std::move(road));
+    }
+
+    for (const std::string& wall_json : object_array_items(object_field(json, "walls"))) {
+        Wall wall;
+        wall.id = int_field(wall_json, "id", 0);
+        wall.feature = string_field(wall_json, "feature", "");
+        for (const std::string& edge_json : object_array_items(object_field(wall_json, "edge_path"))) {
+            const std::string a_json = object_field(edge_json, "a");
+            const std::string b_json = object_field(edge_json, "b");
+            wall.edge_path.push_back({
+                {int_field(a_json, "q", 0), int_field(a_json, "r", 0)},
+                {int_field(b_json, "q", 0), int_field(b_json, "r", 0)}
+            });
+        }
+        state.walls.push_back(std::move(wall));
+    }
+
+    for (const std::string& gate_json : object_array_items(object_field(json, "wall_gates"))) {
+        WallGate gate;
+        gate.id = int_field(gate_json, "id", 0);
+        gate.kind = string_field(gate_json, "kind", "");
+        const std::string edge_json = object_field(gate_json, "edge");
+        const std::string a_json = object_field(edge_json, "a");
+        const std::string b_json = object_field(edge_json, "b");
+        gate.edge = {
+            {int_field(a_json, "q", 0), int_field(a_json, "r", 0)},
+            {int_field(b_json, "q", 0), int_field(b_json, "r", 0)}
+        };
+        state.wall_gates.push_back(gate);
     }
 
     for (const std::string& unit_json : object_array_items(object_field(json, "units"))) {

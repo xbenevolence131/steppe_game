@@ -116,12 +116,14 @@ test("generated great wall contains Chinese towns from outside", async ({ page, 
     return {
       wallCount: map.walls.length,
       wallEdges: wall ? wall.edge_path.length : 0,
+      wallGates: Array.isArray(map.wall_gates) ? map.wall_gates.length : 0,
       leaked,
     };
   });
 
   expect(result.wallCount).toBe(1);
   expect(result.wallEdges).toBeGreaterThan(0);
+  expect(result.wallGates).toBeGreaterThanOrEqual(5);
   expect(result.leaked).toEqual([]);
 });
 
