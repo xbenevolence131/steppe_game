@@ -211,9 +211,16 @@
               </dl>
               <button id="control-end-turn-button" type="button">End Turn</button>
             </section>
-            <section class="play-detail-region" aria-label="Status">
+            <section class="play-detail-region turn-status-region" aria-label="Status">
               <h2>Status</h2>
+              <dl class="status-list">
+                <div>
+                  <dt>Faction</dt>
+                  <dd id="status-active-faction-name">Mongol</dd>
+                </div>
+              </dl>
               <div id="turn-status-readout" class="selection-readout">Mongol turn</div>
+              <button id="status-end-turn-button" class="turn-play-button" type="button" aria-label="End current turn" title="End current turn"></button>
             </section>
           </div>
         </section>

@@ -147,6 +147,12 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   await expect(page.locator("#unit-hp")).toHaveText("10/10");
   await expect(page.locator("#unit-move")).toHaveText("4/4");
   await expect(page.locator("#play-details-bar")).toBeVisible();
+  await expect(page.locator("#status-active-faction-name")).toHaveText("Mongol");
+  await expect(page.locator("#status-end-turn-button")).toBeVisible();
+
+  await page.locator("#status-end-turn-button").click();
+  await expect(page.locator("#status-active-faction-name")).toHaveText("Chinese");
+  await expect(page.locator("#turn-status-readout")).toHaveText("Chinese turn");
 
   const layout = await page.evaluate(() => {
     const sidebar = document.querySelector("#play-controls").getBoundingClientRect();
