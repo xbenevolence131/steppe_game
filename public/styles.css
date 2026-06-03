@@ -405,6 +405,43 @@ button.is-active {
   min-height: 0;
 }
 
+.context-menu {
+  position: absolute;
+  z-index: 20;
+  min-width: 132px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  background: #f8f3e8;
+  box-shadow: 0 10px 24px rgba(33, 31, 27, 0.18);
+}
+
+.context-menu[hidden] {
+  display: none;
+}
+
+.context-menu button {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  padding: 7px 9px;
+  text-align: left;
+}
+
+.context-menu button:hover:not(:disabled),
+.context-menu button:focus-visible:not(:disabled) {
+  background: #e8f1ef;
+}
+
+.context-menu button:disabled {
+  cursor: default;
+  color: var(--muted);
+  opacity: 0.58;
+}
+
 .play-details-bar {
   display: none;
   grid-template-columns: minmax(220px, 280px) minmax(180px, 1fr) minmax(180px, 1fr);

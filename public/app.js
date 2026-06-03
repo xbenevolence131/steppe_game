@@ -2,6 +2,7 @@ const canvas = document.querySelector("#map-canvas");
 const ctx = canvas.getContext("2d");
 const appShell = document.querySelector("#app-shell");
 const mapPanel = document.querySelector("#map-panel");
+const contextMenu = document.querySelector("#context-menu");
 const scenarioModeButton = document.querySelector("#scenario-mode-button");
 const playModeButton = document.querySelector("#play-mode-button");
 const widthInput = document.querySelector("#map-width");
@@ -63,6 +64,7 @@ let paintStrokeKeys = new Set();
 let terrainUndo = new Map();
 let currentTurn = 1;
 let activeFactionIndex = 0;
+let activeContextMenu = null;
 
 const viewport = {
   scale: 1,
@@ -761,6 +763,30 @@ function legalAttackForUnit(unit) {
   return unit ? legalAttacks().find((attack) => attack.unitId === unit.id) || null : null;
 }
 
+const contextActionDefinitions = [
+  {
+    id: "select-unit",
+    label: "Select",
+    visible: ({ unit }) => Boolean(unit && unit.owner === activeOwner()),
+    enabled: ({ unit, selected }) => Boolean(unit && (!selected || selected.id !== unit.id)),
+    run: async ({ unit }) => selectUnit(unit),
+  },
+  {
+    id: "move-here",
+    label: "Move here",
+    visible: ({ hex, selected }) => Boolean(hex && selected && legalMoveAt(hex)),
+    enabled: ({ hex }) => Boolean(hex && legalMoveAt(hex)),
+    run: async ({ hex }) => moveSelectedUnitTo(hex),
+  },
+  {
+    id: "attack-unit",
+    label: "Attack",
+    visible: ({ unit }) => Boolean(unit && legalAttackForUnit(unit)),
+    enabled: ({ unit }) => Boolean(unit && legalAttackForUnit(unit)),
+    run: async ({ unit }) => attackSelectedUnit(unit),
+  },
+];
+
 function unitDisplayName(unit) {
   const faction = factions[unit.faction] || factions.mongol;
   const kindNames = {
@@ -1277,6 +1303,73 @@ function findUnitAtPoint(point) {
     }
   }
   return null;
+}
+
+function hideContextMenu() {
+  activeContextMenu = null;
+  contextMenu.hidden = true;
+  contextMenu.replaceChildren();
+}
+
+function contextForPointer(event) {
+  const point = panelToWorld(event);
+  return {
+    point,
+    hex: findNearestHex(point),
+    unit: findUnitAtPoint(point),
+    selected: selectedUnit(),
+  };
+}
+
+function positionContextMenu(event) {
+  const rect = mapPanel.getBoundingClientRect();
+  const margin = 8;
+  const rawLeft = event.clientX - rect.left;
+  const rawTop = event.clientY - rect.top;
+  const maxLeft = Math.max(margin, rect.width - contextMenu.offsetWidth - margin);
+  const maxTop = Math.max(margin, rect.height - contextMenu.offsetHeight - margin);
+  contextMenu.style.left = `${clamp(rawLeft, margin, maxLeft)}px`;
+  contextMenu.style.top = `${clamp(rawTop, margin, maxTop)}px`;
+}
+
+function showContextMenu(event) {
+  if (appMode !== "play" || !currentMap) {
+    hideContextMenu();
+    return false;
+  }
+
+  const context = contextForPointer(event);
+  const actions = contextActionDefinitions.filter((action) => action.visible(context));
+  if (actions.length === 0) {
+    hideContextMenu();
+    return false;
+  }
+
+  activeContextMenu = context;
+  contextMenu.replaceChildren();
+  for (const action of actions) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("role", "menuitem");
+    button.dataset.action = action.id;
+    button.textContent = action.label;
+    button.disabled = !action.enabled(context);
+    button.addEventListener("click", async () => {
+      if (button.disabled || !activeContextMenu) {
+        return;
+      }
+      try {
+        hideContextMenu();
+        await action.run(context);
+      } catch (error) {
+        window.alert(error.message);
+      }
+    });
+    contextMenu.appendChild(button);
+  }
+  contextMenu.hidden = false;
+  positionContextMenu(event);
+  return true;
 }
 
 async function selectUnit(unit) {
@@ -1916,6 +2009,12 @@ mapPanel.addEventListener("wheel", (event) => {
 
 mapPanel.addEventListener("pointerdown", async (event) => {
   mapPanel.focus();
+  if (event.button === 2) {
+    event.preventDefault();
+    showContextMenu(event);
+    return;
+  }
+  hideContextMenu();
   const point = panelToWorld(event);
   if (appMode === "play" && event.button === 0) {
     const unit = findUnitAtPoint(point);
@@ -1992,7 +2091,17 @@ mapPanel.addEventListener("auxclick", (event) => {
   }
 });
 
+mapPanel.addEventListener("contextmenu", (event) => {
+  if (appMode === "play") {
+    event.preventDefault();
+  }
+});
+
 mapPanel.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    hideContextMenu();
+    return;
+  }
   const step = event.shiftKey ? 80 : 32;
   const moves = {
     ArrowLeft: [step, 0],

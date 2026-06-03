@@ -173,6 +173,53 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   expect(layout.scrollWidth).toBeLessThanOrEqual(layout.viewportWidth);
 });
 
+test("play context menu exposes unit actions", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop pointer geometry is simpler for context menu assertions");
+
+  await openPlayMode(page);
+
+  const unitPoint = async (predicateSource) => page.evaluate((source) => {
+    const predicate = Function("unit", `return ${source};`);
+    const unit = currentMap.units.find((candidate) => predicate(candidate));
+    const panel = mapPanel.getBoundingClientRect();
+    const center = hexCenter(unit);
+    return {
+      x: panel.left + viewport.offsetX + center.x * viewport.scale,
+      y: panel.top + viewport.offsetY + center.y * viewport.scale,
+    };
+  }, predicateSource);
+
+  let point = await unitPoint("unit.kind === 'herd' && unit.faction === 'mongol'");
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  await expect(page.locator("#context-menu")).toBeVisible();
+  await expect(page.locator("#context-menu [data-action='select-unit']")).toHaveText("Select");
+  await page.locator("#context-menu [data-action='select-unit']").click();
+  await expect(page.locator("#unit-name")).not.toHaveText("None");
+
+  const movePoint = await page.evaluate(() => {
+    const selectedId = currentMap.game.selectedUnitId;
+    const unit = currentMap.units.find((candidate) => candidate.id === selectedId);
+    const move = currentMap.game.legalMoves[0];
+    const panel = mapPanel.getBoundingClientRect();
+    const center = hexCenter(move);
+    return {
+      selectedId,
+      original: `${unit.q},${unit.r}`,
+      q: move.q,
+      r: move.r,
+      x: panel.left + viewport.offsetX + center.x * viewport.scale,
+      y: panel.top + viewport.offsetY + center.y * viewport.scale,
+    };
+  });
+  await page.mouse.click(movePoint.x, movePoint.y, { button: "right" });
+  await expect(page.locator("#context-menu [data-action='move-here']")).toHaveText("Move here");
+  await page.locator("#context-menu [data-action='move-here']").click();
+  await expect.poll(() => page.evaluate((selectedId) => {
+    const unit = currentMap.units.find((candidate) => candidate.id === selectedId);
+    return `${unit.q},${unit.r}`;
+  }, movePoint.selectedId)).not.toBe(movePoint.original);
+});
+
 test("mobile play mode keeps the map usable below the unit roster", async ({ page, isMobile }) => {
   test.skip(!isMobile, "mobile-only layout assertion");
 
