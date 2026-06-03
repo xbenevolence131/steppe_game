@@ -249,7 +249,7 @@ double steppe_center_r_for_x(const GenerateArgs& args, double x) {
 }
 
 double steppe_average_half_width(const GenerateArgs& args) {
-    return std::max(1.0, args.height * (0.18 + unit_noise(args.seed, 5) * 0.1));
+    return std::max(1.0, args.height * (0.230 + unit_noise(args.seed, 5) * 0.068));
 }
 
 int steppe_pinch_pass_count(const GenerateArgs& args) {
@@ -311,13 +311,13 @@ bool is_steppe_hex(int q, int r, const GenerateArgs& args) {
     const double average_half_width = steppe_average_half_width(args);
     const double width_phase = unit_noise(args.seed, 6) * 2.0 * 3.14159265358979323846;
     const double width_variation = std::sin((x * 2.0 + 0.25) * 3.14159265358979323846 + width_phase)
-        * average_half_width * 0.22;
+        * average_half_width * 0.18;
     const double half_width = average_half_width + width_variation;
     const double pinch_center_x = seeded_steppe_pinch_center_x(args);
     const double pinch_sigma = 0.052 + unit_noise(args.seed, 69002) * 0.018;
     const double pinch_dx = x - pinch_center_x;
     const double pinch_influence = std::exp(-(pinch_dx * pinch_dx) / (2.0 * pinch_sigma * pinch_sigma));
-    const double pinch_strength = 0.76 + unit_noise(args.seed, 69003) * 0.13;
+    const double pinch_strength = 0.70 + unit_noise(args.seed, 69003) * 0.12;
     const double pinched_half_width = std::max(1.1, half_width * (1.0 - pinch_influence * pinch_strength));
     const bool pass = in_steppe_pinch_pass(args, q, r, x, center_r, average_half_width, pinch_influence);
 
@@ -1686,16 +1686,16 @@ const char* wild_terrain_for_distance(const GenerateArgs& args, const Coord& coo
     const double fine_roll = unit_noise(args.seed, static_cast<std::uint32_t>(75200 + coord.q * 197 + coord.r * 431));
     const double adjusted_distance = std::max(1.0, static_cast<double>(grassland_distance) + coarse_texture);
 
-    if (adjusted_distance <= 1.8) {
-        return fine_roll < 0.58 ? "hill" : "forest";
+    if (adjusted_distance <= 2.0) {
+        return fine_roll < 0.54 ? "hill" : "forest";
     }
-    if (adjusted_distance <= 2.6) {
-        return fine_roll < 0.76 ? "hill" : "forest";
+    if (adjusted_distance <= 3.0) {
+        return fine_roll < 0.66 ? "hill" : "forest";
     }
-    if (adjusted_distance <= 4.2) {
-        return fine_roll < 0.84 ? "mountain" : "hill";
+    if (adjusted_distance <= 4.8) {
+        return fine_roll < 0.58 ? "mountain" : "hill";
     }
-    return fine_roll < 0.96 ? "mountain" : "hill";
+    return fine_roll < 0.88 ? "mountain" : "hill";
 }
 
 bool coord_adjacent_to_lake(
@@ -3249,6 +3249,7 @@ struct WallRouteOptions {
     double terminal_projection_min = 0.75;
     double mountain_terminal_bonus = -7.0;
     double map_edge_terminal_bonus = 2.0;
+    bool require_map_edge_terminal = false;
 };
 
 double wall_edge_mid_q(const BoundaryEdge& edge) {
@@ -3410,11 +3411,17 @@ std::vector<RiverEdge> route_bowed_wall_edge_path(
         }
         return false;
     };
+    const auto touches_left_edge = [&](const BoundaryEdge& edge) {
+        return edge.edge.a.q == 1 || edge.edge.b.q == 1;
+    };
+    const auto touches_right_edge = [&](const BoundaryEdge& edge) {
+        return edge.edge.a.q == args.width || edge.edge.b.q == args.width;
+    };
     const auto touches_mountain = [&](const BoundaryEdge& edge) {
         return terrain_at(edge.edge.a) == Terrain::Mountain || terrain_at(edge.edge.b) == Terrain::Mountain;
     };
     const auto is_terminal_edge = [&](const BoundaryEdge& edge) {
-        return touches_mountain(edge) || touches_map_edge(edge);
+        return touches_map_edge(edge) || (!options.require_map_edge_terminal && touches_mountain(edge));
     };
 
     const auto terminal_edge_outward_from = [&](const Coord& anchor, const Coord& inward) {
@@ -3430,6 +3437,14 @@ std::vector<RiverEdge> route_bowed_wall_edge_path(
             const BoundaryEdge& edge = boundaries[i];
             if (!is_terminal_edge(edge)) {
                 continue;
+            }
+            if (options.require_map_edge_terminal) {
+                if (coord_equal(anchor, start) && !touches_left_edge(edge)) {
+                    continue;
+                }
+                if (coord_equal(anchor, end) && !touches_right_edge(edge)) {
+                    continue;
+                }
             }
             const double dq = wall_edge_mid_q(edge) - static_cast<double>(anchor.q);
             const double dr = wall_edge_mid_r(edge) - static_cast<double>(anchor.r);
@@ -3609,10 +3624,12 @@ std::vector<Wall> generate_walls(
 
     const WallRouteOptions attempts[] = {
         {},
-        {1.2, 0.55, 1.0, -8.0},
-        {1.45, 0.35, 2.5, -11.0},
-        {1.75, 0.15, 4.0, -13.0},
-        {2.1, 0.0, 6.0, -16.0},
+        {1.2, 0.55, 1.0, -8.0, false},
+        {1.45, 0.35, 2.5, -11.0, false},
+        {1.75, 0.15, 4.0, -13.0, false},
+        {2.1, 0.0, 6.0, -16.0, false},
+        {1.85, 0.0, 0.0, -20.0, true},
+        {2.25, 0.0, 0.0, -24.0, true},
     };
     std::vector<RiverEdge> fallback_path;
     for (const WallRouteOptions& options : attempts) {
