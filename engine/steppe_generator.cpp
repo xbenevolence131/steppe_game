@@ -1556,6 +1556,56 @@ std::set<Coord, decltype(coord_less)*> derive_eastern_desert_hexes(
 
 int hex_grid_distance(const Coord& first, const Coord& second);
 
+std::set<Coord, decltype(coord_less)*> derive_dzungarian_pass_hill_hexes(
+    const GenerateArgs& args,
+    const std::set<Coord, decltype(coord_less)*>& lake_hexes,
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes,
+    const std::set<Coord, decltype(coord_less)*>& eastern_desert_hexes,
+    const std::vector<Town>& towns
+) {
+    std::set<Coord, decltype(coord_less)*> hill_hexes(coord_less);
+    const Coord gate = dzungarian_gate_target(args);
+    std::set<Coord, decltype(coord_less)*> protected_hexes(coord_less);
+    for (const Town& town : towns) {
+        protected_hexes.insert(town.coord);
+    }
+
+    const int radius_q = std::max(5, args.width / 18);
+    const int radius_r = std::max(4, args.height / 16);
+    for (int r = std::max(1, gate.r - radius_r); r <= std::min(args.height, gate.r + radius_r); ++r) {
+        for (int q = std::max(1, gate.q - radius_q); q <= std::min(args.width, gate.q + radius_q); ++q) {
+            const Coord coord{q, r};
+            if (lake_hexes.find(coord) != lake_hexes.end()
+                || eastern_desert_hexes.find(coord) != eastern_desert_hexes.end()
+                || protected_hexes.find(coord) != protected_hexes.end()) {
+                continue;
+            }
+            if (!is_steppe_hex(q, r, args) && valley_hexes.find(coord) == valley_hexes.end()) {
+                continue;
+            }
+
+            const double dq = static_cast<double>(q - gate.q) / static_cast<double>(radius_q);
+            const double dr = static_cast<double>(r - gate.r) / static_cast<double>(radius_r);
+            const double distance = std::sqrt(dq * dq + dr * dr);
+            if (distance > 1.0) {
+                continue;
+            }
+
+            const double shoulder = std::abs(dr) + std::abs(dq) * 0.35;
+            const double roughness = unit_noise(args.seed, static_cast<std::uint32_t>(82800 + q * 197 + r * 389));
+            const double ridge_noise = signed_noise(args.seed, static_cast<std::uint32_t>(82900 + (q / 2) * 431 + (r / 2) * 719));
+            const bool near_gate = hex_grid_distance(coord, gate) <= 2;
+            const bool pass_shoulder = shoulder > 0.28 && shoulder < 1.05;
+            const double threshold = near_gate ? 0.42 : 0.25;
+            if (pass_shoulder && roughness + std::max(0.0, ridge_noise) * 0.22 > threshold + distance * 0.28) {
+                hill_hexes.insert(coord);
+            }
+        }
+    }
+
+    return hill_hexes;
+}
+
 std::map<Coord, std::string, decltype(coord_less)*> derive_desert_river_corridor_hexes(
     const GenerateArgs& args,
     const std::set<Coord, decltype(coord_less)*>& desert_hexes,
@@ -4063,8 +4113,16 @@ GeneratedMap generate_map(const GenerateArgs& args) {
     });
     const std::vector<Road> roads = generate_roads(args, towns, all_lakes, valley_hexes);
     const std::set<Coord, decltype(coord_less)*> eastern_desert_hexes = derive_eastern_desert_hexes(args, all_lakes, valley_hexes, towns);
+    const std::set<Coord, decltype(coord_less)*> dzungarian_pass_hill_hexes = derive_dzungarian_pass_hill_hexes(
+        args,
+        all_lakes,
+        valley_hexes,
+        eastern_desert_hexes,
+        towns
+    );
     const std::map<Coord, std::string, decltype(coord_less)*> desert_river_corridor_hexes = derive_desert_river_corridor_hexes(args, eastern_desert_hexes, all_river_edges);
     std::set<Coord, decltype(coord_less)*> forest_blocked_hexes = eastern_desert_hexes;
+    forest_blocked_hexes.insert(dzungarian_pass_hill_hexes.begin(), dzungarian_pass_hill_hexes.end());
     for (const Town& town : towns) {
         forest_blocked_hexes.insert(town.coord);
     }
@@ -4098,6 +4156,7 @@ GeneratedMap generate_map(const GenerateArgs& args) {
             const auto desert_river_corridor = desert_river_corridor_hexes.find(coord);
             const bool eastern_desert = eastern_desert_hexes.find(coord) != eastern_desert_hexes.end()
                 && desert_river_corridor == desert_river_corridor_hexes.end();
+            const bool dzungarian_pass_hill = dzungarian_pass_hill_hexes.find(coord) != dzungarian_pass_hill_hexes.end();
             const bool forest_blob = forest_blob_hexes.find(coord) != forest_blob_hexes.end();
             const auto steppe_texture = steppe_texture_hexes.find(coord);
             const auto town = std::find_if(towns.begin(), towns.end(), [&coord](const Town& candidate) {
@@ -4127,6 +4186,8 @@ GeneratedMap generate_map(const GenerateArgs& args) {
                 }
             } else if (eastern_desert) {
                 terrain = Terrain::Desert;
+            } else if (dzungarian_pass_hill) {
+                terrain = Terrain::Hill;
             } else if (steppe_texture != steppe_texture_hexes.end()) {
                 if (steppe_texture->second == "steppe_hill") {
                     terrain = Terrain::Hill;
@@ -4171,6 +4232,9 @@ GeneratedMap generate_map(const GenerateArgs& args) {
             }
             if (eastern_desert) {
                 labels.push_back("eastern_desert");
+            }
+            if (dzungarian_pass_hill) {
+                labels.push_back("dzungarian_pass_hill");
             }
             if (desert_river_corridor != desert_river_corridor_hexes.end()) {
                 labels.push_back("desert_river_corridor");
