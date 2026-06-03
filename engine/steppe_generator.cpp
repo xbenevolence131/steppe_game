@@ -2708,37 +2708,145 @@ std::vector<Road> build_region_roads(
     const std::string& feature,
     int& next_id
 ) {
-    std::vector<Coord> remaining;
+    std::vector<Coord> region_towns;
     for (const Town& town : towns) {
         if (town.feature == feature) {
-            remaining.push_back(town.coord);
+            region_towns.push_back(town.coord);
         }
     }
-    if (remaining.size() < 2) {
+    if (region_towns.size() < 2) {
         return {};
     }
 
-    std::sort(remaining.begin(), remaining.end(), coord_less);
-    std::vector<Road> roads;
-    Coord current = remaining.front();
-    remaining.erase(remaining.begin());
-
-    while (!remaining.empty()) {
-        const auto next = std::min_element(remaining.begin(), remaining.end(), [&](const Coord& first, const Coord& second) {
-            const int first_distance = hex_grid_distance(current, first);
-            const int second_distance = hex_grid_distance(current, second);
-            if (first_distance != second_distance) {
-                return first_distance < second_distance;
-            }
-            return coord_less(first, second);
-        });
-
-        const std::vector<Coord> path = route_road_path(args, current, *next, lake_hexes);
-        if (!path.empty()) {
-            roads.push_back({next_id++, feature, path});
+    const auto q_range = std::minmax_element(region_towns.begin(), region_towns.end(), [](const Coord& first, const Coord& second) {
+        return first.q < second.q;
+    });
+    const auto r_range = std::minmax_element(region_towns.begin(), region_towns.end(), [](const Coord& first, const Coord& second) {
+        return first.r < second.r;
+    });
+    const bool east_west_axis = (q_range.second->q - q_range.first->q) >= (r_range.second->r - r_range.first->r);
+    std::sort(region_towns.begin(), region_towns.end(), [&](const Coord& first, const Coord& second) {
+        if (east_west_axis && first.q != second.q) {
+            return first.q < second.q;
         }
-        current = *next;
-        remaining.erase(next);
+        if (!east_west_axis && first.r != second.r) {
+            return first.r < second.r;
+        }
+        return coord_less(first, second);
+    });
+    std::vector<Road> roads;
+    std::set<RiverEdge, decltype(edge_less)*> selected_pairs(edge_less);
+
+    const auto add_region_road = [&](const Coord& first, const Coord& second) {
+        const RiverEdge pair = canonical_edge(first, second);
+        if (selected_pairs.find(pair) != selected_pairs.end()) {
+            return false;
+        }
+        const std::vector<Coord> path = route_road_path(args, first, second, lake_hexes);
+        if (path.empty()) {
+            return false;
+        }
+        selected_pairs.insert(pair);
+        roads.push_back({next_id++, feature, path});
+        return true;
+    };
+
+    for (std::size_t i = 1; i < region_towns.size(); ++i) {
+        add_region_road(region_towns[i - 1], region_towns[i]);
+    }
+
+    const auto selected_graph_distance = [&](const Coord& start, const Coord& end) {
+        std::queue<Coord> frontier;
+        std::map<Coord, int, decltype(coord_less)*> distances(coord_less);
+        frontier.push(start);
+        distances[start] = 0;
+
+        while (!frontier.empty()) {
+            const Coord current = frontier.front();
+            frontier.pop();
+            const int current_distance = distances[current];
+            if (coord_equal(current, end)) {
+                return current_distance;
+            }
+
+            for (const RiverEdge& pair : selected_pairs) {
+                std::optional<Coord> next;
+                if (coord_equal(pair.a, current)) {
+                    next = pair.b;
+                } else if (coord_equal(pair.b, current)) {
+                    next = pair.a;
+                }
+                if (!next.has_value() || distances.find(next.value()) != distances.end()) {
+                    continue;
+                }
+                distances[next.value()] = current_distance + 1;
+                frontier.push(next.value());
+            }
+        }
+
+        return std::numeric_limits<int>::max();
+    };
+
+    struct RoadCandidate {
+        Coord first;
+        Coord second;
+        int distance = 0;
+        double score = 0.0;
+    };
+
+    std::vector<RoadCandidate> candidates;
+    for (std::size_t i = 0; i < region_towns.size(); ++i) {
+        for (std::size_t j = i + 1; j < region_towns.size(); ++j) {
+            const RiverEdge pair = canonical_edge(region_towns[i], region_towns[j]);
+            if (selected_pairs.find(pair) != selected_pairs.end()) {
+                continue;
+            }
+            const int distance = hex_grid_distance(region_towns[i], region_towns[j]);
+            const double axis_span = east_west_axis
+                ? std::abs(region_towns[j].q - region_towns[i].q)
+                : std::abs(region_towns[j].r - region_towns[i].r);
+            candidates.push_back({
+                region_towns[i],
+                region_towns[j],
+                distance,
+                static_cast<double>(distance)
+                    - axis_span * 0.2
+                    + unit_noise(args.seed, static_cast<std::uint32_t>(
+                        82600
+                        + region_towns[i].q * 193
+                        + region_towns[i].r * 389
+                        + region_towns[j].q * 577
+                        + region_towns[j].r * 761
+                    )) * 0.35
+            });
+        }
+    }
+    std::sort(candidates.begin(), candidates.end(), [](const RoadCandidate& first, const RoadCandidate& second) {
+        if (first.score != second.score) {
+            return first.score < second.score;
+        }
+        if (first.distance != second.distance) {
+            return first.distance < second.distance;
+        }
+        if (!coord_equal(first.first, second.first)) {
+            return coord_less(first.first, second.first);
+        }
+        return coord_less(first.second, second.second);
+    });
+
+    const int maximum_pairs = static_cast<int>(region_towns.size() * (region_towns.size() - 1) / 2);
+    const int target_pairs = std::min(
+        maximum_pairs,
+        static_cast<int>(region_towns.size()) + (region_towns.size() >= 5 ? 1 : 0)
+    );
+    for (const RoadCandidate& candidate : candidates) {
+        if (static_cast<int>(roads.size()) >= target_pairs) {
+            break;
+        }
+        if (selected_graph_distance(candidate.first, candidate.second) < 3) {
+            continue;
+        }
+        add_region_road(candidate.first, candidate.second);
     }
 
     return roads;
