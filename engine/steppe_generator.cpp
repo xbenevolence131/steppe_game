@@ -2932,6 +2932,55 @@ std::optional<Coord> easternmost_town_for_feature(const std::vector<Town>& towns
     return result;
 }
 
+std::optional<Coord> silk_road_anchor_for_feature(
+    const GenerateArgs& args,
+    const std::vector<Town>& towns,
+    const std::string& feature,
+    bool prefer_west,
+    int target_row
+) {
+    std::vector<Coord> candidates;
+    for (const Town& town : towns) {
+        if (town.feature == feature) {
+            candidates.push_back(town.coord);
+        }
+    }
+    if (candidates.empty()) {
+        return std::nullopt;
+    }
+
+    const auto extreme = prefer_west
+        ? std::min_element(candidates.begin(), candidates.end(), [](const Coord& first, const Coord& second) {
+            return first.q == second.q ? first.r < second.r : first.q < second.q;
+        })
+        : std::max_element(candidates.begin(), candidates.end(), [](const Coord& first, const Coord& second) {
+            return first.q == second.q ? first.r > second.r : first.q < second.q;
+        });
+    const int extreme_q = extreme->q;
+    const int axis_slack = std::max(8, std::min(12, args.width / 10));
+
+    std::optional<Coord> best;
+    double best_score = std::numeric_limits<double>::max();
+    for (const Coord& candidate : candidates) {
+        const int axis_shortfall = prefer_west
+            ? candidate.q - extreme_q
+            : extreme_q - candidate.q;
+        if (axis_shortfall < 0 || axis_shortfall > axis_slack) {
+            continue;
+        }
+        const double row_error = std::abs(static_cast<double>(candidate.r - target_row));
+        const double score = row_error * 1.0 + static_cast<double>(axis_shortfall) * 1.20;
+        if (!best.has_value()
+            || score < best_score
+            || (score == best_score && (prefer_west ? candidate.q < best->q : candidate.q > best->q))) {
+            best = candidate;
+            best_score = score;
+        }
+    }
+
+    return best.has_value() ? best : std::optional<Coord>(*extreme);
+}
+
 std::optional<Road> build_silk_road(
     const GenerateArgs& args,
     const std::vector<Town>& towns,
@@ -2939,15 +2988,20 @@ std::optional<Road> build_silk_road(
     const std::set<Coord, decltype(coord_less)*>& valley_hexes,
     int& next_id
 ) {
-    const std::optional<Coord> chinese_anchor = westernmost_town_for_feature(towns, "chinese_town");
-    const std::optional<Coord> persian_anchor = easternmost_town_for_feature(towns, "persian_town");
     const auto oasis = std::find_if(towns.begin(), towns.end(), [](const Town& town) {
         return town.feature == "oasis";
     });
     const auto dzungarian_gate = std::find_if(towns.begin(), towns.end(), [](const Town& town) {
         return town.feature == "dzungarian_gate";
     });
-    if (!chinese_anchor.has_value() || !persian_anchor.has_value() || oasis == towns.end() || dzungarian_gate == towns.end()) {
+    if (oasis == towns.end() || dzungarian_gate == towns.end()) {
+        return std::nullopt;
+    }
+
+    const int corridor_row = static_cast<int>(std::round((static_cast<double>(dzungarian_gate->coord.r) + static_cast<double>(oasis->coord.r)) * 0.5));
+    const std::optional<Coord> chinese_anchor = silk_road_anchor_for_feature(args, towns, "chinese_town", true, corridor_row);
+    const std::optional<Coord> persian_anchor = silk_road_anchor_for_feature(args, towns, "persian_town", false, corridor_row);
+    if (!chinese_anchor.has_value() || !persian_anchor.has_value()) {
         return std::nullopt;
     }
 
