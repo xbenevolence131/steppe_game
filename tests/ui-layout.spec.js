@@ -136,6 +136,29 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
 
   await openPlayMode(page);
 
+  await page.evaluate(() => {
+    for (const unit of currentMap.units) {
+      if (unit.kind !== "horde") {
+        continue;
+      }
+      if (unit.faction === "mongol") {
+        unit.population = 11;
+        unit.horses = 5;
+        unit.metal = 2;
+      } else if (unit.faction === "chinese") {
+        unit.population = 7;
+        unit.horses = 3;
+        unit.metal = 4;
+      }
+    }
+    syncPlayControls();
+  });
+  await expect(page.locator("#faction-status-bar")).toBeVisible();
+  await expect(page.locator("#faction-status-name")).toHaveText("Mongol");
+  await expect(page.locator("#faction-population-total")).toHaveText("11");
+  await expect(page.locator("#faction-horses-total")).toHaveText("5");
+  await expect(page.locator("#faction-metal-total")).toHaveText("2");
+
   const rosterItems = page.locator(".unit-roster-item");
   await expect(rosterItems.first()).toContainText("Mongol Cavalry");
   await expect(rosterItems.first()).toContainText("Cavalry - HP 10/10");
@@ -155,6 +178,10 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   await page.locator("#status-end-turn-button").click();
   await expect(page.locator("#status-active-faction-name")).toHaveText("Chinese");
   await expect(page.locator("#turn-status-readout")).toHaveText("Chinese turn");
+  await expect(page.locator("#faction-status-name")).toHaveText("Chinese");
+  await expect(page.locator("#faction-population-total")).toHaveText("0");
+  await expect(page.locator("#faction-horses-total")).toHaveText("0");
+  await expect(page.locator("#faction-metal-total")).toHaveText("0");
 
   const layout = await page.evaluate(() => {
     const sidebar = document.querySelector("#play-controls").getBoundingClientRect();
@@ -239,6 +266,7 @@ test("mobile play mode keeps the map usable below the unit roster", async ({ pag
 
   await openPlayMode(page);
 
+  await expect(page.locator("#faction-status-bar")).toBeVisible();
   await expect(page.locator("#play-details-bar")).toBeHidden();
   await expect(page.locator(".unit-roster-item")).toHaveCount(8);
 

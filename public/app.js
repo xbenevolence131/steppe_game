@@ -41,6 +41,10 @@ const statusEndTurnButton = document.querySelector("#status-end-turn-button");
 const turnCounter = document.querySelector(".turn-counter");
 const activeFactionName = document.querySelector("#active-faction-name");
 const statusActiveFactionName = document.querySelector("#status-active-faction-name");
+const factionStatusName = document.querySelector("#faction-status-name");
+const factionPopulationTotal = document.querySelector("#faction-population-total");
+const factionHorsesTotal = document.querySelector("#faction-horses-total");
+const factionMetalTotal = document.querySelector("#faction-metal-total");
 const roundCount = document.querySelector("#round-count");
 const turnStatusReadout = document.querySelector("#turn-status-readout");
 const campCount = document.querySelector("#camp-count");
@@ -664,6 +668,22 @@ function countUnits(kind, owner = null) {
     : 0;
 }
 
+function activeFactionResources(owner) {
+  const totals = { population: 0, horses: 0, metal: 0 };
+  if (!currentMap || !Array.isArray(currentMap.units)) {
+    return totals;
+  }
+  for (const unit of currentMap.units) {
+    if (unit.owner !== owner || unit.kind !== "horde") {
+      continue;
+    }
+    totals.population += Number.isInteger(unit.population) ? unit.population : 0;
+    totals.horses += Number.isInteger(unit.horses) ? unit.horses : 0;
+    totals.metal += Number.isInteger(unit.metal) ? unit.metal : 0;
+  }
+  return totals;
+}
+
 function selectedUnit() {
   const selectedUnitId = currentMap && currentMap.game && Number.isInteger(currentMap.game.selectedUnitId)
     ? currentMap.game.selectedUnitId
@@ -887,12 +907,17 @@ function syncPlayControls() {
   turnCounter.textContent = `Round ${currentTurn} · ${faction.name} turn`;
   activeFactionName.textContent = faction.name;
   statusActiveFactionName.textContent = faction.name;
+  factionStatusName.textContent = faction.name;
   roundCount.textContent = String(currentTurn);
   turnStatusReadout.textContent = `${faction.name} turn`;
   campCount.textContent = String(countUnits("camp", owner));
   herdCount.textContent = String(countUnits("herd", owner));
   cavalryCount.textContent = String(countUnits("cavalry", owner));
   hordeCount.textContent = String(countUnits("horde", owner));
+  const resources = activeFactionResources(owner);
+  factionPopulationTotal.textContent = String(resources.population);
+  factionHorsesTotal.textContent = String(resources.horses);
+  factionMetalTotal.textContent = String(resources.metal);
   syncUnitRoster();
   syncUnitInspector();
 }
