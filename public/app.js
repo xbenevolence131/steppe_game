@@ -187,7 +187,7 @@ const factionTurnOrder = ["mongol", "chinese", "persian"].slice(0, factionCount)
 
 const unitTypeDefaults = {
   camp: { hp: 1, move: 0 },
-  herd: { hp: 1, move: 0 },
+  herd: { hp: 1, move: 3 },
   cavalry: { hp: 10, move: 4 },
   infantry: { hp: 10, move: 2 },
   horde: { hp: 10, move: 3, projectsZoc: true, respectsZoc: true },
@@ -1202,9 +1202,21 @@ function drawUnitCounters(units) {
       ctx.lineTo(left, bottom);
       ctx.closePath();
       ctx.stroke();
-    } else {
+    } else if (unit.kind === "herd") {
+      const ovalY = y + counterHeight / 2;
+      const ovalCenters = [7.2, 10.2, 13.2].map((offset) => x + offset / viewport.scale);
+      for (const ovalX of ovalCenters) {
+        ctx.beginPath();
+        ctx.ellipse(ovalX, ovalY, 4.4 / viewport.scale, 2.7 / viewport.scale, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    } else if (unit.kind === "cavalry") {
       ctx.beginPath();
       ctx.ellipse(x + 9.5 / viewport.scale, y + counterHeight / 2, 5.5 / viewport.scale, 3.1 / viewport.scale, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.rect(x + 5.5 / viewport.scale, y + 6 / viewport.scale, 8 / viewport.scale, 8 / viewport.scale);
       ctx.fillStyle = faction.color;
       ctx.fill();
     }

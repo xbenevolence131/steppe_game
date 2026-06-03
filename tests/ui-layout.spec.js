@@ -5,7 +5,7 @@ test.describe.configure({ mode: "serial" });
 async function openPlayMode(page) {
   await page.goto("/");
   await page.getByRole("button", { name: "Play" }).click();
-  await expect(page.locator(".unit-roster-item")).toHaveCount(6);
+  await expect(page.locator(".unit-roster-item")).toHaveCount(8);
 }
 
 test("scenario controls sit above the shared map", async ({ page }) => {
@@ -147,6 +147,7 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   await expect(page.locator("#unit-hp")).toHaveText("10/10");
   await expect(page.locator("#unit-move")).toHaveText("4/4");
   await expect(page.locator("#play-details-bar")).toBeVisible();
+  await expect(page.locator("#herd-count")).toHaveText("1");
   await expect(page.locator("#status-active-faction-name")).toHaveText("Mongol");
   await expect(page.locator("#status-end-turn-button")).toBeVisible();
 
@@ -178,7 +179,7 @@ test("mobile play mode keeps the map usable below the unit roster", async ({ pag
   await openPlayMode(page);
 
   await expect(page.locator("#play-details-bar")).toBeHidden();
-  await expect(page.locator(".unit-roster-item")).toHaveCount(6);
+  await expect(page.locator(".unit-roster-item")).toHaveCount(8);
 
   const layout = await page.evaluate(() => {
     const sidebar = document.querySelector("#play-controls").getBoundingClientRect();
@@ -270,4 +271,11 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect.poll(() => page.evaluate(() => currentMap.units[0].respectsZoc)).toBe(true);
   await page.mouse.click(point.x, point.y);
   await expect.poll(() => page.evaluate(() => currentMap.units.length)).toBe(0);
+
+  await page.locator("#editor-unit-type").selectOption("herd");
+  point = await hexPoint({ q: 4, r: 3 });
+  await page.mouse.click(point.x, point.y);
+  await expect.poll(() => page.evaluate(() => currentMap.units.length)).toBe(1);
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].kind)).toBe("herd");
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].move)).toBe(3);
 });

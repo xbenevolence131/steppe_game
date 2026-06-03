@@ -175,6 +175,9 @@ int default_hp(UnitKind kind) {
 }
 
 int default_move(UnitKind kind) {
+    if (kind == UnitKind::Herd) {
+        return 3;
+    }
     if (kind == UnitKind::Cavalry) {
         return 4;
     }
@@ -193,6 +196,10 @@ bool default_projects_zoc(UnitKind kind) {
 
 bool default_respects_zoc(UnitKind kind) {
     return kind == UnitKind::Infantry || kind == UnitKind::Horde;
+}
+
+bool can_attack(UnitKind kind) {
+    return kind == UnitKind::Cavalry || kind == UnitKind::Infantry || kind == UnitKind::Horde;
 }
 
 constexpr int move_scale = 8;
@@ -589,9 +596,11 @@ GameState create_default_play_sandbox(int width, int height, int faction_count) 
         make_unit(1, mongol_owner, UnitKind::Cavalry, {3, 5}),
         make_unit(2, mongol_owner, UnitKind::Infantry, {3, 7}),
         make_unit(3, mongol_owner, UnitKind::Horde, {3, 6}),
-        make_unit(4, chinese_owner, UnitKind::Cavalry, {8, 5}),
-        make_unit(5, chinese_owner, UnitKind::Infantry, {8, 7}),
-        make_unit(6, chinese_owner, UnitKind::Horde, {8, 6}),
+        make_unit(4, mongol_owner, UnitKind::Herd, {2, 6}),
+        make_unit(5, chinese_owner, UnitKind::Cavalry, {8, 5}),
+        make_unit(6, chinese_owner, UnitKind::Infantry, {8, 7}),
+        make_unit(7, chinese_owner, UnitKind::Horde, {8, 6}),
+        make_unit(8, chinese_owner, UnitKind::Herd, {9, 6}),
     };
     return state;
 }
@@ -712,7 +721,7 @@ std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id) {
 std::vector<AttackableUnit> attackable_units(const GameState& state, int unit_id) {
     std::vector<AttackableUnit> attackable;
     const Unit* attacker = find_unit(state, unit_id);
-    if (attacker == nullptr || attacker->owner != active_faction(state) || attacker->combat_done) {
+    if (attacker == nullptr || attacker->owner != active_faction(state) || attacker->combat_done || !can_attack(attacker->kind)) {
         return attackable;
     }
 
@@ -780,6 +789,7 @@ bool attack_unit(GameState& state, int attacker_id, int defender_id) {
         || defender == nullptr
         || attacker->owner != active_faction(state)
         || attacker->combat_done
+        || !can_attack(attacker->kind)
         || attacker->owner == defender->owner
         || !adjacent(attacker->coord, defender->coord)) {
         return false;
