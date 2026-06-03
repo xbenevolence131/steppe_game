@@ -1,6 +1,7 @@
 #include "game_state.h"
 #include "steppe_generator.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <exception>
 #include <iostream>
@@ -94,6 +95,29 @@ int main(int argc, char** argv) {
                 state,
                 int_arg(argc, argv, "--attacker", 0),
                 int_arg(argc, argv, "--defender", 0)
+            );
+            steppe::game::print_game_patch_json(state, ok, std::cout);
+            return ok ? EXIT_SUCCESS : EXIT_FAILURE;
+        }
+        if (command == "game-detach-herd-options") {
+            const steppe::game::GameState state = steppe::game::parse_game_state_json(read_stdin());
+            steppe::game::print_detach_herd_options_json(
+                steppe::game::detach_herd_options(
+                    state,
+                    int_arg(argc, argv, "--unit", 0),
+                    std::max(0, int_arg(argc, argv, "--horses", 0))
+                ),
+                std::cout
+            );
+            return EXIT_SUCCESS;
+        }
+        if (command == "game-detach-herd") {
+            steppe::game::GameState state = steppe::game::parse_game_state_json(read_stdin());
+            const bool ok = steppe::game::detach_herd(
+                state,
+                int_arg(argc, argv, "--unit", 0),
+                std::max(0, int_arg(argc, argv, "--horses", 0)),
+                {int_arg(argc, argv, "--q", 0), int_arg(argc, argv, "--r", 0)}
             );
             steppe::game::print_game_patch_json(state, ok, std::cout);
             return ok ? EXIT_SUCCESS : EXIT_FAILURE;

@@ -199,6 +199,15 @@
           <div id="map-panel" class="map-panel" tabindex="0">
             <canvas id="map-canvas"></canvas>
             <div id="context-menu" class="context-menu" role="menu" hidden></div>
+            <div id="detach-herd-popover" class="detach-herd-popover" hidden>
+              <form id="detach-herd-form">
+                <label>
+                  <span>Horses</span>
+                  <input id="detach-herd-horses" type="number" min="1" step="1" value="1">
+                </label>
+                <button id="detach-herd-confirm" type="submit">OK</button>
+              </form>
+            </div>
           </div>
           <div id="play-details-bar" class="play-details-bar" aria-label="Play details">
             <section class="unit-inspector" aria-label="Unit inspector">

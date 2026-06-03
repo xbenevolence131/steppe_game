@@ -121,6 +121,12 @@ struct AttackableUnit {
     Coord coord;
 };
 
+struct DetachHerdOptions {
+    int unit_id = 0;
+    int horses = 0;
+    std::vector<Coord> deployable_hexes;
+};
+
 struct GameState {
     int width = 0;
     int height = 0;
@@ -164,11 +170,14 @@ std::vector<AttackableUnit> attackable_units(const GameState& state, int unit_id
 bool select_unit(GameState& state, int unit_id);
 bool move_unit(GameState& state, int unit_id, Coord destination);
 bool attack_unit(GameState& state, int attacker_id, int defender_id);
+DetachHerdOptions detach_herd_options(const GameState& state, int unit_id, int horses);
+bool detach_herd(GameState& state, int unit_id, int horses, Coord destination);
 void end_turn(GameState& state);
 
 void print_game_state_json(const GameState& state, std::ostream& out);
 void print_reachable_json(const std::vector<ReachableHex>& reachable, std::ostream& out);
 void print_attackable_json(const std::vector<AttackableUnit>& attackable, std::ostream& out);
+void print_detach_herd_options_json(const DetachHerdOptions& options, std::ostream& out);
 void print_game_patch_json(const GameState& state, bool ok, std::ostream& out);
 GameState parse_game_state_json(const std::string& json);
 

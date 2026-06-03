@@ -202,6 +202,14 @@ bool can_attack(UnitKind kind) {
     return kind == UnitKind::Cavalry || kind == UnitKind::Infantry || kind == UnitKind::Horde;
 }
 
+int next_unit_id(const GameState& state) {
+    int next_id = 1;
+    for (const Unit& unit : state.units) {
+        next_id = std::max(next_id, unit.id + 1);
+    }
+    return next_id;
+}
+
 constexpr int move_scale = 8;
 
 int to_scaled_move(int ref_move) {
@@ -587,6 +595,9 @@ GameState create_default_play_sandbox(int width, int height, int faction_count) 
         unit.max_hp = unit.hp;
         unit.scaled_move = to_scaled_move(default_move(unit.kind));
         unit.remaining_scaled_move = unit.scaled_move;
+        if (unit.kind == UnitKind::Horde) {
+            unit.horses = 12;
+        }
         unit.projects_zoc = default_projects_zoc(kind);
         unit.respects_zoc = default_respects_zoc(kind);
         return unit;
@@ -811,6 +822,69 @@ bool attack_unit(GameState& state, int attacker_id, int defender_id) {
     return true;
 }
 
+DetachHerdOptions detach_herd_options(const GameState& state, int unit_id, int horses) {
+    DetachHerdOptions options;
+    options.unit_id = unit_id;
+    options.horses = horses;
+    const Unit* horde = find_unit(state, unit_id);
+    if (horde == nullptr
+        || horde->kind != UnitKind::Horde
+        || horde->owner != active_faction(state)
+        || horses <= 0
+        || horses > horde->horses) {
+        return options;
+    }
+
+    for (int direction = 0; direction < 6; ++direction) {
+        const Coord candidate = neighbor_in_direction(horde->coord, direction);
+        if (!in_bounds(state, candidate) || occupied_by_other_unit(state, candidate, 0)) {
+            continue;
+        }
+        const GameHex* hex = find_hex(state, candidate);
+        if (hex == nullptr || movement_cost(state, horde->coord, *hex) == blocked_movement_cost()) {
+            continue;
+        }
+        options.deployable_hexes.push_back(candidate);
+    }
+    std::sort(options.deployable_hexes.begin(), options.deployable_hexes.end(), coord_less);
+    return options;
+}
+
+bool detach_herd(GameState& state, int unit_id, int horses, Coord destination) {
+    DetachHerdOptions options = detach_herd_options(state, unit_id, horses);
+    const bool valid_destination = std::find_if(
+        options.deployable_hexes.begin(),
+        options.deployable_hexes.end(),
+        [&](const Coord& coord) { return coord_equal(coord, destination); }
+    ) != options.deployable_hexes.end();
+    if (!valid_destination) {
+        return false;
+    }
+
+    Unit* horde = find_unit(state, unit_id);
+    if (horde == nullptr) {
+        return false;
+    }
+    horde->horses -= horses;
+
+    Unit herd;
+    herd.id = next_unit_id(state);
+    herd.owner = horde->owner;
+    herd.kind = UnitKind::Herd;
+    herd.coord = destination;
+    herd.hp = default_hp(herd.kind);
+    herd.max_hp = herd.hp;
+    herd.scaled_move = to_scaled_move(default_move(herd.kind));
+    herd.remaining_scaled_move = herd.scaled_move;
+    herd.horses = horses;
+    herd.projects_zoc = default_projects_zoc(herd.kind);
+    herd.respects_zoc = default_respects_zoc(herd.kind);
+    state.units.push_back(herd);
+    state.selected_unit_id = unit_id;
+    refresh_legal_actions(state);
+    return true;
+}
+
 void end_turn(GameState& state) {
     state.selected_unit_id = 0;
     state.legal_moves.clear();
@@ -875,6 +949,8 @@ void print_unit_json(const Unit& unit, std::ostream& out) {
         out << ",\"population\":" << unit.population
             << ",\"metal\":" << unit.metal
             << ",\"horses\":" << unit.horses;
+    } else if (unit.kind == UnitKind::Herd) {
+        out << ",\"horses\":" << unit.horses;
     }
     out << ",\"moveDone\":" << (unit.move_done ? "true" : "false")
         << ",\"combatDone\":" << (unit.combat_done ? "true" : "false")
@@ -1058,6 +1134,19 @@ void print_attackable_json(const std::vector<AttackableUnit>& attackable, std::o
     out << "{\"attackable\":";
     print_attackable_array_json(attackable, out);
     out << "}\n";
+}
+
+void print_detach_herd_options_json(const DetachHerdOptions& options, std::ostream& out) {
+    out << "{\"unitId\":" << options.unit_id
+        << ",\"horses\":" << options.horses
+        << ",\"deployableHexes\":[";
+    for (std::size_t i = 0; i < options.deployable_hexes.size(); ++i) {
+        if (i > 0) {
+            out << ",";
+        }
+        print_coord_json(options.deployable_hexes[i], out);
+    }
+    out << "]}\n";
 }
 
 void print_game_patch_json(const GameState& state, bool ok, std::ostream& out) {

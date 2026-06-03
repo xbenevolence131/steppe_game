@@ -4536,6 +4536,8 @@ void print_usage() {
     std::cerr << "  steppe_engine game-attackable --unit <id> < game-state.json\n";
     std::cerr << "  steppe_engine game-move --unit <id> --q <q> --r <r> < game-state.json\n";
     std::cerr << "  steppe_engine game-attack --attacker <id> --defender <id> < game-state.json\n";
+    std::cerr << "  steppe_engine game-detach-herd-options --unit <id> --horses <n> < game-state.json\n";
+    std::cerr << "  steppe_engine game-detach-herd --unit <id> --horses <n> --q <q> --r <r> < game-state.json\n";
     std::cerr << "  steppe_engine game-end-turn < game-state.json\n";
 }
 

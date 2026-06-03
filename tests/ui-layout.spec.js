@@ -180,7 +180,7 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   await expect(page.locator("#turn-status-readout")).toHaveText("Chinese turn");
   await expect(page.locator("#faction-status-name")).toHaveText("Chinese");
   await expect(page.locator("#faction-population-total")).toHaveText("0");
-  await expect(page.locator("#faction-horses-total")).toHaveText("0");
+  await expect(page.locator("#faction-horses-total")).toHaveText("12");
   await expect(page.locator("#faction-metal-total")).toHaveText("0");
 
   const layout = await page.evaluate(() => {
@@ -211,7 +211,59 @@ test("horde inspector shows resource counters", async ({ page, isMobile }) => {
   await expect(page.locator("#unit-resources")).toBeVisible();
   await expect(page.locator("#unit-population")).toHaveText("0");
   await expect(page.locator("#unit-metal")).toHaveText("0");
-  await expect(page.locator("#unit-horses")).toHaveText("0");
+  await expect(page.locator("#unit-horses")).toHaveText("12");
+});
+
+test("detach herd creates a herd from horde horses", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop pointer geometry is simpler for detach assertions");
+
+  await openPlayMode(page);
+
+  const hordePoint = await page.evaluate(() => {
+    const unit = currentMap.units.find((candidate) => candidate.kind === "horde" && candidate.faction === "mongol");
+    const panel = mapPanel.getBoundingClientRect();
+    const center = hexCenter(unit);
+    return {
+      unitId: unit.id,
+      x: panel.left + viewport.offsetX + center.x * viewport.scale,
+      y: panel.top + viewport.offsetY + center.y * viewport.scale,
+    };
+  });
+
+  await page.mouse.click(hordePoint.x, hordePoint.y, { button: "right" });
+  await expect(page.locator("#context-menu [data-action='detach-herd']")).toHaveText("Detach herd");
+  await page.locator("#context-menu [data-action='detach-herd']").click();
+  await expect(page.locator("#detach-herd-popover")).toBeVisible();
+  await page.locator("#detach-herd-horses").fill("3");
+  await page.locator("#detach-herd-form").press("Enter");
+
+  await expect.poll(() => page.evaluate(() => detachHerdPlacement && detachHerdPlacement.deployableHexes.length)).toBeGreaterThan(0);
+  const deployPoint = await page.evaluate(() => {
+    const hex = detachHerdPlacement.deployableHexes[0];
+    const panel = mapPanel.getBoundingClientRect();
+    const center = hexCenter(hex);
+    return {
+      q: hex.q,
+      r: hex.r,
+      x: panel.left + viewport.offsetX + center.x * viewport.scale,
+      y: panel.top + viewport.offsetY + center.y * viewport.scale,
+    };
+  });
+
+  await page.mouse.click(deployPoint.x, deployPoint.y);
+  await expect.poll(() => page.evaluate((unitId) => {
+    const horde = currentMap.units.find((unit) => unit.id === unitId);
+    const detached = currentMap.units.find((unit) => unit.kind === "herd" && unit.horses === 3);
+    return {
+      hordeHorses: horde.horses,
+      detachedAt: detached ? `${detached.q},${detached.r}` : "",
+      statusHorses: document.querySelector("#faction-horses-total").textContent,
+    };
+  }, hordePoint.unitId)).toEqual({
+    hordeHorses: 9,
+    detachedAt: `${deployPoint.q},${deployPoint.r}`,
+    statusHorses: "9",
+  });
 });
 
 test("play context menu exposes unit actions", async ({ page, isMobile }) => {

@@ -492,6 +492,39 @@ button.is-active {
   opacity: 0.58;
 }
 
+.detach-herd-popover {
+  position: absolute;
+  z-index: 21;
+  min-width: 176px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  background: #f8f3e8;
+  box-shadow: 0 10px 24px rgba(33, 31, 27, 0.18);
+}
+
+.detach-herd-popover[hidden] {
+  display: none;
+}
+
+.detach-herd-popover form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.detach-herd-popover label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.detach-herd-popover input {
+  width: 100%;
+  min-height: 34px;
+}
+
 .play-details-bar {
   display: none;
   grid-template-columns: minmax(220px, 280px) minmax(180px, 1fr) minmax(180px, 1fr);

@@ -3,6 +3,9 @@ const ctx = canvas.getContext("2d");
 const appShell = document.querySelector("#app-shell");
 const mapPanel = document.querySelector("#map-panel");
 const contextMenu = document.querySelector("#context-menu");
+const detachHerdPopover = document.querySelector("#detach-herd-popover");
+const detachHerdForm = document.querySelector("#detach-herd-form");
+const detachHerdHorsesInput = document.querySelector("#detach-herd-horses");
 const scenarioModeButton = document.querySelector("#scenario-mode-button");
 const playModeButton = document.querySelector("#play-mode-button");
 const widthInput = document.querySelector("#map-width");
@@ -73,6 +76,8 @@ let terrainUndo = new Map();
 let currentTurn = 1;
 let activeFactionIndex = 0;
 let activeContextMenu = null;
+let detachHerdAmountContext = null;
+let detachHerdPlacement = null;
 
 const viewport = {
   scale: 1,
@@ -812,6 +817,19 @@ const contextActionDefinitions = [
     enabled: ({ unit }) => Boolean(unit && legalAttackForUnit(unit)),
     run: async ({ unit }) => attackSelectedUnit(unit),
   },
+  {
+    id: "detach-herd",
+    label: "Detach herd",
+    visible: ({ unit }) => Boolean(
+      unit
+      && unit.kind === "horde"
+      && unit.owner === activeOwner()
+      && Number.isInteger(unit.horses)
+      && unit.horses > 0
+    ),
+    enabled: ({ unit }) => Boolean(unit && unit.horses > 0),
+    run: async (context) => showDetachHerdAmount(context),
+  },
 ];
 
 function unitDisplayName(unit) {
@@ -1325,6 +1343,33 @@ function drawReachableHexes() {
   ctx.restore();
 }
 
+function drawDetachDeploymentHexes() {
+  if (!detachHerdPlacement || !Array.isArray(detachHerdPlacement.deployableHexes)) {
+    return;
+  }
+
+  ctx.save();
+  for (const hex of detachHerdPlacement.deployableHexes) {
+    const center = hexCenter(hex);
+    const points = hexPoints(center.x, center.y, geometry.size * 0.84);
+    ctx.beginPath();
+    points.forEach(([x, y], index) => {
+      if (index === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    });
+    ctx.closePath();
+    ctx.fillStyle = "rgba(83, 148, 91, 0.42)";
+    ctx.fill();
+    ctx.strokeStyle = "#2d6936";
+    ctx.lineWidth = 2 / viewport.scale;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function findUnitAtPoint(point) {
   if (!currentMap || !Array.isArray(currentMap.units)) {
     return null;
@@ -1354,8 +1399,11 @@ function hideContextMenu() {
 
 function contextForPointer(event) {
   const point = panelToWorld(event);
+  const rect = mapPanel.getBoundingClientRect();
   return {
     point,
+    panelX: event.clientX - rect.left,
+    panelY: event.clientY - rect.top,
     hex: findNearestHex(point),
     unit: findUnitAtPoint(point),
     selected: selectedUnit(),
@@ -1410,6 +1458,96 @@ function showContextMenu(event) {
   }
   contextMenu.hidden = false;
   positionContextMenu(event);
+  return true;
+}
+
+function hideDetachHerdAmount() {
+  detachHerdAmountContext = null;
+  detachHerdPopover.hidden = true;
+}
+
+function cancelDetachHerdPlacement() {
+  detachHerdPlacement = null;
+  drawMap();
+}
+
+function positionDetachHerdPopover(context) {
+  const margin = 8;
+  detachHerdPopover.hidden = false;
+  const maxLeft = Math.max(margin, mapPanel.clientWidth - detachHerdPopover.offsetWidth - margin);
+  const maxTop = Math.max(margin, mapPanel.clientHeight - detachHerdPopover.offsetHeight - margin);
+  detachHerdPopover.style.left = `${clamp(context.panelX, margin, maxLeft)}px`;
+  detachHerdPopover.style.top = `${clamp(context.panelY, margin, maxTop)}px`;
+}
+
+function showDetachHerdAmount(context) {
+  if (!context.unit || context.unit.kind !== "horde" || !Number.isInteger(context.unit.horses) || context.unit.horses <= 0) {
+    return false;
+  }
+  cancelDetachHerdPlacement();
+  detachHerdAmountContext = context;
+  detachHerdHorsesInput.min = "1";
+  detachHerdHorsesInput.max = String(context.unit.horses);
+  detachHerdHorsesInput.value = String(Math.min(1, context.unit.horses));
+  positionDetachHerdPopover(context);
+  detachHerdHorsesInput.focus();
+  detachHerdHorsesInput.select();
+  return true;
+}
+
+async function confirmDetachHerdAmount() {
+  if (!detachHerdAmountContext || !detachHerdAmountContext.unit) {
+    return;
+  }
+  const unit = selectedUnit() && selectedUnit().id === detachHerdAmountContext.unit.id
+    ? selectedUnit()
+    : detachHerdAmountContext.unit;
+  const maxHorses = Number.isInteger(unit.horses) ? unit.horses : 0;
+  const horses = Math.trunc(clamp(Number(detachHerdHorsesInput.value), 1, maxHorses));
+  if (!Number.isInteger(horses) || horses <= 0) {
+    return;
+  }
+  try {
+    const options = await postAppCommand({
+      type: "detach_herd_options",
+      unitId: unit.id,
+      horses,
+    });
+    if (!Array.isArray(options.deployableHexes) || options.deployableHexes.length === 0) {
+      window.alert("No adjacent deployment hex is available.");
+      hideDetachHerdAmount();
+      return;
+    }
+    detachHerdPlacement = {
+      unitId: unit.id,
+      horses,
+      deployableHexes: options.deployableHexes,
+    };
+    hideDetachHerdAmount();
+    drawMap();
+  } catch (error) {
+    window.alert(error.message);
+  }
+}
+
+function detachDeployableAt(coord) {
+  return detachHerdPlacement && detachHerdPlacement.deployableHexes.find((hex) => hex.q === coord.q && hex.r === coord.r);
+}
+
+async function deployDetachedHerdAt(coord) {
+  if (!detachHerdPlacement || !detachDeployableAt(coord)) {
+    return false;
+  }
+  const payload = await postAppCommand({
+    type: "detach_herd",
+    unitId: detachHerdPlacement.unitId,
+    horses: detachHerdPlacement.horses,
+    to: { q: coord.q, r: coord.r },
+  });
+  detachHerdPlacement = null;
+  applyGamePatch(payload);
+  syncModeControls();
+  drawMap();
   return true;
 }
 
@@ -1499,6 +1637,7 @@ function drawMap() {
   drawMapMarkers(currentMap.merge_points, terrainStyles.river.merge, 5);
   drawMapMarkers(currentMap.river_destinations, terrainStyles.river.destination, 5);
   drawReachableHexes();
+  drawDetachDeploymentHexes();
   drawUnitCounters(currentMap.units);
 
   ctx.restore();
@@ -2038,6 +2177,14 @@ loadFileInput.addEventListener("change", () => loadMapFile(loadFileInput.files[0
 endTurnButton.addEventListener("click", advanceTurn);
 controlEndTurnButton.addEventListener("click", advanceTurn);
 statusEndTurnButton.addEventListener("click", advanceTurn);
+detachHerdForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  confirmDetachHerdAmount();
+});
+contextMenu.addEventListener("pointerdown", (event) => event.stopPropagation());
+contextMenu.addEventListener("click", (event) => event.stopPropagation());
+detachHerdPopover.addEventListener("pointerdown", (event) => event.stopPropagation());
+detachHerdPopover.addEventListener("click", (event) => event.stopPropagation());
 zoomInButton.addEventListener("click", () => zoomFromCenter(1.25));
 zoomOutButton.addEventListener("click", () => zoomFromCenter(0.8));
 fitButton.addEventListener("click", fitMap);
@@ -2055,11 +2202,23 @@ mapPanel.addEventListener("pointerdown", async (event) => {
   mapPanel.focus();
   if (event.button === 2) {
     event.preventDefault();
+    hideDetachHerdAmount();
     showContextMenu(event);
     return;
   }
   hideContextMenu();
+  hideDetachHerdAmount();
   const point = panelToWorld(event);
+  if (appMode === "play" && event.button === 0 && detachHerdPlacement) {
+    const hex = findNearestHex(point);
+    if (hex && detachDeployableAt(hex)) {
+      event.preventDefault();
+      await deployDetachedHerdAt(hex);
+      return;
+    }
+    event.preventDefault();
+    return;
+  }
   if (appMode === "play" && event.button === 0) {
     const unit = findUnitAtPoint(point);
     if (unit) {
@@ -2144,6 +2303,8 @@ mapPanel.addEventListener("contextmenu", (event) => {
 mapPanel.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     hideContextMenu();
+    hideDetachHerdAmount();
+    cancelDetachHerdPlacement();
     return;
   }
   const step = event.shiftKey ? 80 : 32;
