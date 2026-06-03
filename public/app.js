@@ -52,6 +52,10 @@ const unitRoster = document.querySelector("#unit-roster");
 const unitName = document.querySelector("#unit-name");
 const unitHp = document.querySelector("#unit-hp");
 const unitMove = document.querySelector("#unit-move");
+const unitResources = document.querySelector("#unit-resources");
+const unitPopulation = document.querySelector("#unit-population");
+const unitMetal = document.querySelector("#unit-metal");
+const unitHorses = document.querySelector("#unit-horses");
 
 let currentMap = null;
 let appMode = "intro";
@@ -192,7 +196,7 @@ const unitTypeDefaults = {
   herd: { hp: 1, move: 3 },
   cavalry: { hp: 10, move: 4 },
   infantry: { hp: 10, move: 2 },
-  horde: { hp: 10, move: 3, projectsZoc: true, respectsZoc: true },
+  horde: { hp: 10, move: 3, projectsZoc: true, respectsZoc: true, population: 0, metal: 0, horses: 0 },
 };
 
 function terrainStyle(key) {
@@ -695,6 +699,9 @@ function normalizeUnit(unit, index) {
   if (owner !== null) normalized.owner = owner;
   if (Number.isFinite(unit.hp)) normalized.hp = unit.hp;
   if (Number.isFinite(unit.maxHp)) normalized.maxHp = unit.maxHp;
+  if (Number.isFinite(unit.population)) normalized.population = Math.max(0, Math.trunc(unit.population));
+  if (Number.isFinite(unit.metal)) normalized.metal = Math.max(0, Math.trunc(unit.metal));
+  if (Number.isFinite(unit.horses)) normalized.horses = Math.max(0, Math.trunc(unit.horses));
   if (Number.isFinite(unit.scaledMove)) normalized.scaledMove = unit.scaledMove;
   if (Number.isFinite(unit.remainingScaledMove)) normalized.remainingScaledMove = unit.remainingScaledMove;
   if (Number.isFinite(unit.refMove)) {
@@ -856,12 +863,21 @@ function syncUnitInspector() {
     unitName.textContent = "None";
     unitHp.textContent = "-";
     unitMove.textContent = "-";
+    unitResources.hidden = true;
+    unitPopulation.textContent = "0";
+    unitMetal.textContent = "0";
+    unitHorses.textContent = "0";
     return;
   }
   sidebarSelectionReadout.textContent = unitDisplayName(unit);
   unitName.textContent = unitDisplayName(unit);
   unitHp.textContent = Number.isFinite(unit.hp) && Number.isFinite(unit.maxHp) ? `${unit.hp}/${unit.maxHp}` : "-";
   unitMove.textContent = Number.isFinite(unit.remainingMove) && Number.isFinite(unit.move) ? `${unit.remainingMove}/${unit.move}` : "-";
+  const showResources = unit.kind === "horde";
+  unitResources.hidden = !showResources;
+  unitPopulation.textContent = String(Number.isInteger(unit.population) ? unit.population : 0);
+  unitMetal.textContent = String(Number.isInteger(unit.metal) ? unit.metal : 0);
+  unitHorses.textContent = String(Number.isInteger(unit.horses) ? unit.horses : 0);
 }
 
 function syncPlayControls() {
@@ -1573,6 +1589,9 @@ function makeEditorUnit(coord) {
     maxHp: defaults.hp,
     move: defaults.move,
     remainingMove: defaults.move,
+    population: Number.isInteger(defaults.population) ? defaults.population : 0,
+    metal: Number.isInteger(defaults.metal) ? defaults.metal : 0,
+    horses: Number.isInteger(defaults.horses) ? defaults.horses : 0,
     projectsZoc: Boolean(defaults.projectsZoc),
     respectsZoc: Boolean(defaults.respectsZoc),
   };

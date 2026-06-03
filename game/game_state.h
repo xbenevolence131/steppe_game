@@ -102,6 +102,9 @@ struct Unit {
     int max_hp = 10;
     int scaled_move = 32;
     int remaining_scaled_move = 32;
+    int population = 0;
+    int metal = 0;
+    int horses = 0;
     bool move_done = false;
     bool combat_done = false;
     bool projects_zoc = false;

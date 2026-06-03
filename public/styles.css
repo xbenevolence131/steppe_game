@@ -256,6 +256,10 @@ select {
   margin: 0;
 }
 
+.unit-resources[hidden] {
+  display: none;
+}
+
 .status-list div {
   display: grid;
   grid-template-columns: 1fr auto;

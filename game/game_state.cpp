@@ -870,8 +870,13 @@ void print_unit_json(const Unit& unit, std::ostream& out) {
         << ",\"refMove\":" << to_ref_move(unit.scaled_move)
         << ",\"remainingRefMove\":" << to_ref_move(unit.remaining_scaled_move)
         << ",\"move\":" << to_ref_move(unit.scaled_move)
-        << ",\"remainingMove\":" << to_ref_move(unit.remaining_scaled_move)
-        << ",\"moveDone\":" << (unit.move_done ? "true" : "false")
+        << ",\"remainingMove\":" << to_ref_move(unit.remaining_scaled_move);
+    if (unit.kind == UnitKind::Horde) {
+        out << ",\"population\":" << unit.population
+            << ",\"metal\":" << unit.metal
+            << ",\"horses\":" << unit.horses;
+    }
+    out << ",\"moveDone\":" << (unit.move_done ? "true" : "false")
         << ",\"combatDone\":" << (unit.combat_done ? "true" : "false")
         << ",\"projectsZoc\":" << (unit.projects_zoc ? "true" : "false")
         << ",\"respectsZoc\":" << (unit.respects_zoc ? "true" : "false")
@@ -1194,6 +1199,9 @@ GameState parse_game_state_json(const std::string& json) {
             unit.scaled_move = default_scaled_move;
         }
         unit.remaining_scaled_move = std::max(0, std::min(unit.remaining_scaled_move, unit.scaled_move));
+        unit.population = std::max(0, int_field(unit_json, "population", 0));
+        unit.metal = std::max(0, int_field(unit_json, "metal", 0));
+        unit.horses = std::max(0, int_field(unit_json, "horses", 0));
         unit.move_done = bool_field(unit_json, "moveDone", false);
         unit.combat_done = bool_field(unit_json, "combatDone", false);
         unit.projects_zoc = bool_field(unit_json, "projectsZoc", default_projects_zoc(unit.kind));

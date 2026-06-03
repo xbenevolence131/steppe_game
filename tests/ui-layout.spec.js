@@ -146,6 +146,7 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   await expect(page.locator("#unit-name")).toHaveText("Mongol Cavalry");
   await expect(page.locator("#unit-hp")).toHaveText("10/10");
   await expect(page.locator("#unit-move")).toHaveText("4/4");
+  await expect(page.locator("#unit-resources")).toBeHidden();
   await expect(page.locator("#play-details-bar")).toBeVisible();
   await expect(page.locator("#herd-count")).toHaveText("1");
   await expect(page.locator("#status-active-faction-name")).toHaveText("Mongol");
@@ -171,6 +172,19 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   expect(layout.mapLeft).toBeGreaterThanOrEqual(layout.sidebarRight - 1);
   expect(layout.inspectorHeight).toBeGreaterThan(0);
   expect(layout.scrollWidth).toBeLessThanOrEqual(layout.viewportWidth);
+});
+
+test("horde inspector shows resource counters", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop-only bottom panel assertion");
+
+  await openPlayMode(page);
+
+  await page.locator(".unit-roster-item").filter({ hasText: "Mongol Horde" }).click();
+  await expect(page.locator("#unit-name")).toHaveText("Mongol Horde");
+  await expect(page.locator("#unit-resources")).toBeVisible();
+  await expect(page.locator("#unit-population")).toHaveText("0");
+  await expect(page.locator("#unit-metal")).toHaveText("0");
+  await expect(page.locator("#unit-horses")).toHaveText("0");
 });
 
 test("play context menu exposes unit actions", async ({ page, isMobile }) => {
@@ -316,6 +330,9 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect.poll(() => page.evaluate(() => currentMap.units[0].move)).toBe(3);
   await expect.poll(() => page.evaluate(() => currentMap.units[0].projectsZoc)).toBe(true);
   await expect.poll(() => page.evaluate(() => currentMap.units[0].respectsZoc)).toBe(true);
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].population)).toBe(0);
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].metal)).toBe(0);
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].horses)).toBe(0);
   await page.mouse.click(point.x, point.y);
   await expect.poll(() => page.evaluate(() => currentMap.units.length)).toBe(0);
 
