@@ -103,25 +103,32 @@ test("combat uses unit stats terrain defense and retaliation", async ({ isMobile
   expect(preview.valid).toBe(true);
   expect(preview.defenderRetaliates).toBe(true);
   expect(preview.attacker.effectiveAttack).toBe(4);
-  expect(preview.attacker.damageDealt).toBe(4);
-  expect(preview.attacker.damageTaken).toBe(3);
-  expect(preview.attacker.resultHp).toBe(7);
+  expect(preview.baseDifferential).toBe(1);
+  expect(preview.hpRatioPercent).toBe(100);
+  expect(preview.readinessRatioPercent).toBe(100);
+  expect(preview.crtIndex).toBe(1);
+  expect(preview.retreatOption).toBe("none");
+  expect(preview.readinessImpact).toBe("Even readiness");
+  expect(preview.retreatImpact).toBe("No retreat");
+  expect(preview.attacker.damageDealt).toBe(3);
+  expect(preview.attacker.damageTaken).toBe(2);
+  expect(preview.attacker.resultHp).toBe(8);
   expect(preview.attacker.readiness).toBe(100);
   expect(preview.attacker.readinessPercent).toBe(100);
   expect(preview.defender.effectiveDefense).toBe(3);
-  expect(preview.defender.damageTaken).toBe(4);
-  expect(preview.defender.resultHp).toBe(6);
+  expect(preview.defender.damageTaken).toBe(3);
+  expect(preview.defender.resultHp).toBe(7);
 
   const grass = runEngineJson(["game-attack", "--attacker", "1", "--defender", "2"], combatGameState("grassland"));
   const grassAttacker = grass.units.find((unit) => unit.id === 1);
   const grassDefender = grass.units.find((unit) => unit.id === 2);
   expect(grass.ok).toBe(true);
-  expect(grassAttacker.hp).toBe(7);
+  expect(grassAttacker.hp).toBe(8);
   expect(grassAttacker.remainingScaledMove).toBe(0);
   expect(grassAttacker.moveDone).toBe(true);
   expect(grassAttacker.combatDone).toBe(true);
   expect(grassAttacker.readiness).toBe(70);
-  expect(grassDefender.hp).toBe(6);
+  expect(grassDefender.hp).toBe(7);
   expect(grassDefender.readiness).toBe(80);
 
   const recovered = runEngineJson(["game-end-turn"], grass);
@@ -134,10 +141,12 @@ test("combat uses unit stats terrain defense and retaliation", async ({ isMobile
   const hillDefender = hill.units.find((unit) => unit.id === 2);
   expect(hillPreview.defender.terrainDefensePercent).toBe(125);
   expect(hillPreview.defender.effectiveDefense).toBe(4);
-  expect(hillPreview.defender.damageTaken).toBe(3);
+  expect(hillPreview.baseDifferential).toBe(0);
+  expect(hillPreview.crtIndex).toBe(0);
+  expect(hillPreview.defender.damageTaken).toBe(2);
   expect(hill.ok).toBe(true);
-  expect(hillAttacker.hp).toBe(7);
-  expect(hillDefender.hp).toBe(7);
+  expect(hillAttacker.hp).toBe(8);
+  expect(hillDefender.hp).toBe(8);
 });
 
 test("movement spends readiness in proportion to movement cost", async ({ isMobile }) => {
@@ -693,6 +702,10 @@ test("horde resource actions are unavailable next to enemies", async ({ page, is
   await expect(page.locator("#combat-preview")).toContainText("Attacker");
   await expect(page.locator("#combat-preview")).toContainText("Defender");
   await expect(page.locator("#combat-preview")).toContainText("Readiness");
+  await expect(page.locator("#combat-preview")).toContainText("Readiness impact");
+  await expect(page.locator("#combat-preview")).toContainText("Retreat impact");
+  await expect(page.locator("#combat-preview")).toContainText("CRT");
+  await expect(page.locator("#combat-preview")).toContainText("Retreat");
   await expect(page.locator("#combat-preview")).toContainText("Result");
   await page.mouse.click(result.x, result.y, { button: "right" });
   await expect(page.locator("#context-menu [data-action='detach-herd']")).toHaveCount(0);

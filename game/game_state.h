@@ -152,6 +152,13 @@ struct CombatantPreview {
 struct CombatPreview {
     bool valid = false;
     bool defender_retaliates = false;
+    int base_differential = 0;
+    int hp_ratio_percent = 100;
+    int readiness_ratio_percent = 100;
+    int crt_index = 0;
+    std::string retreat_option = "none";
+    std::string readiness_impact = "Even readiness";
+    std::string retreat_impact = "No retreat";
     CombatantPreview attacker;
     CombatantPreview defender;
 };

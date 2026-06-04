@@ -878,11 +878,22 @@ function renderCombatPreview(preview, clientX, clientY) {
   const title = document.createElement("div");
   title.className = "combat-preview-title";
   title.textContent = preview.defenderRetaliates ? "Combat Preview" : "Combat Preview - No Retaliation";
+  const summary = document.createElement("div");
+  summary.className = "combat-preview-summary";
+  appendCombatRow(summary, "A-D", String(preview.baseDifferential));
+  appendCombatRow(summary, "HP ratio", `${preview.hpRatioPercent}%`);
+  appendCombatRow(summary, "RDY ratio", `${preview.readinessRatioPercent}%`);
+  appendCombatRow(summary, "CRT", String(preview.crtIndex));
+  appendCombatRow(summary, "Retreat", preview.retreatOption === "none" ? "-" : preview.retreatOption);
+  const impacts = document.createElement("div");
+  impacts.className = "combat-preview-impact";
+  appendCombatRow(impacts, "Readiness impact", preview.readinessImpact || "-");
+  appendCombatRow(impacts, "Retreat impact", preview.retreatImpact || "-");
   const grid = document.createElement("div");
   grid.className = "combat-preview-grid";
   appendCombatSide(grid, "Attacker", preview.attacker, "attack");
   appendCombatSide(grid, "Defender", preview.defender, "defense");
-  combatPreview.append(title, grid);
+  combatPreview.append(title, summary, impacts, grid);
   combatPreview.hidden = false;
   positionCombatPreview(clientX, clientY);
 }

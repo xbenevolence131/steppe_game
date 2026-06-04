@@ -521,6 +521,44 @@ button.is-active {
   gap: 8px;
 }
 
+.combat-preview-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.combat-preview-summary .combat-preview-row {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  min-height: 0;
+  padding: 5px;
+  border: 1px solid rgba(92, 83, 68, 0.24);
+  background: rgba(255, 252, 246, 0.62);
+}
+
+.combat-preview-summary .combat-preview-row strong {
+  text-align: left;
+}
+
+.combat-preview-impact {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.combat-preview-impact .combat-preview-row {
+  grid-template-columns: minmax(96px, 0.7fr) minmax(0, 1.3fr);
+  min-height: 16px;
+  padding: 4px 6px;
+  border-left: 2px solid rgba(47, 111, 115, 0.65);
+  background: rgba(232, 241, 239, 0.56);
+}
+
+.combat-preview-impact .combat-preview-row strong {
+  text-align: left;
+}
+
 .combat-preview-side {
   min-width: 0;
   border: 1px solid rgba(92, 83, 68, 0.32);

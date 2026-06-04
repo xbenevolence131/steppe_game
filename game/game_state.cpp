@@ -744,17 +744,6 @@ int combat_readiness_percent(const Unit& unit) {
     return std::max(minimum_combat_readiness_percent, readiness_percent(unit));
 }
 
-int readiness_scaled_strength(int strength, const Unit& unit) {
-    if (strength <= 0) {
-        return 0;
-    }
-    const int hp_strength = hp_scaled_strength(strength, unit);
-    if (hp_strength <= 0) {
-        return 0;
-    }
-    return std::max(1, (hp_strength * combat_readiness_percent(unit) + 99) / 100);
-}
-
 int move_readiness_cost(const Unit& unit, int scaled_cost) {
     if (scaled_cost <= 0 || unit.scaled_move <= 0) {
         return 0;
@@ -772,11 +761,11 @@ void recover_readiness(Unit& unit, int amount) {
 }
 
 int effective_attack_score(const Unit& attacker) {
-    return readiness_scaled_strength(attacker.attack, attacker);
+    return std::max(0, attacker.attack);
 }
 
 int effective_defense_score(const GameState& state, const Unit& defender) {
-    const int defense_strength = readiness_scaled_strength(defender.defense, defender);
+    const int defense_strength = std::max(1, defender.defense);
     if (defense_strength <= 0) {
         return 0;
     }
@@ -786,13 +775,85 @@ int effective_defense_score(const GameState& state, const Unit& defender) {
     );
 }
 
-int combat_damage(const GameState& state, const Unit& attacker, const Unit& defender) {
-    const int attack_strength = effective_attack_score(attacker);
-    const int defense_strength = effective_defense_score(state, defender);
-    if (attack_strength <= 0 || defense_strength <= 0) {
-        return 0;
+double hp_ratio(const Unit& attacker, const Unit& defender) {
+    if (attacker.hp <= 0 || attacker.max_hp <= 0 || defender.hp <= 0 || defender.max_hp <= 0) {
+        return 1.0;
     }
-    return std::max(1, std::min(7, (attack_strength * 3 + defense_strength - 1) / defense_strength));
+    const double attacker_ratio = static_cast<double>(attacker.hp) / attacker.max_hp;
+    const double defender_ratio = static_cast<double>(defender.hp) / defender.max_hp;
+    return defender_ratio <= 0.0 ? 1.0 : attacker_ratio / defender_ratio;
+}
+
+double readiness_ratio_for_combat(const Unit& attacker, const Unit& defender) {
+    const int defender_percent = combat_readiness_percent(defender);
+    if (defender_percent <= 0) {
+        return 1.0;
+    }
+    return static_cast<double>(combat_readiness_percent(attacker)) / defender_percent;
+}
+
+int ratio_percent(double ratio) {
+    return std::max(0, static_cast<int>(std::lround(ratio * 100.0)));
+}
+
+struct CrtOutcome {
+    int attacker_damage = 0;
+    int defender_damage = 0;
+    std::string retreat_option = "none";
+};
+
+CrtOutcome crt_outcome(int index) {
+    if (index <= -5) {
+        return {5, 0, "attacker"};
+    }
+    if (index == -4) {
+        return {4, 0, "attacker"};
+    }
+    if (index == -3) {
+        return {4, 1, "attacker"};
+    }
+    if (index == -2) {
+        return {3, 1, "attacker"};
+    }
+    if (index == -1) {
+        return {3, 2, "none"};
+    }
+    if (index == 0) {
+        return {2, 2, "none"};
+    }
+    if (index == 1) {
+        return {2, 3, "none"};
+    }
+    if (index == 2) {
+        return {1, 3, "defender"};
+    }
+    if (index == 3) {
+        return {1, 4, "defender"};
+    }
+    if (index == 4) {
+        return {0, 4, "defender"};
+    }
+    return {0, 5, "defender"};
+}
+
+std::string readiness_impact_text(int readiness_ratio_percent) {
+    if (readiness_ratio_percent >= 115) {
+        return "Attacker readiness improves CRT";
+    }
+    if (readiness_ratio_percent <= 85) {
+        return "Defender readiness suppresses CRT";
+    }
+    return "Even readiness";
+}
+
+std::string retreat_impact_text(const std::string& retreat_option) {
+    if (retreat_option == "attacker") {
+        return "Attacker may retreat";
+    }
+    if (retreat_option == "defender") {
+        return "Defender may retreat";
+    }
+    return "No retreat";
 }
 
 const Unit* unit_at(const GameState& state, const Coord& coord) {
@@ -997,25 +1058,30 @@ CombatPreview combat_preview(const GameState& state, int attacker_id, int defend
     preview.attacker = combatant_preview(state, *attacker);
     preview.defender = combatant_preview(state, *defender);
 
-    const int defender_damage = combat_damage(state, *attacker, *defender);
-    preview.attacker.damage_dealt = defender_damage;
-    preview.defender.damage_taken = defender_damage;
-    preview.defender.result_hp = std::max(0, defender->hp - defender_damage);
+    preview.base_differential = preview.attacker.effective_attack - preview.defender.effective_defense;
+    const double hp_multiplier = hp_ratio(*attacker, *defender);
+    const double readiness_multiplier = readiness_ratio_for_combat(*attacker, *defender);
+    preview.hp_ratio_percent = ratio_percent(hp_multiplier);
+    preview.readiness_ratio_percent = ratio_percent(readiness_multiplier);
+    preview.crt_index = std::max(
+        -6,
+        std::min(6, static_cast<int>(std::lround(preview.base_differential * hp_multiplier * readiness_multiplier)))
+    );
+    const CrtOutcome outcome = crt_outcome(preview.crt_index);
+    preview.retreat_option = outcome.retreat_option;
+    preview.readiness_impact = readiness_impact_text(preview.readiness_ratio_percent);
+    preview.retreat_impact = retreat_impact_text(preview.retreat_option);
+
+    preview.attacker.damage_dealt = outcome.defender_damage;
+    preview.defender.damage_taken = outcome.defender_damage;
+    preview.defender.result_hp = std::max(0, defender->hp - outcome.defender_damage);
     preview.defender.destroyed = preview.defender.result_hp <= 0;
 
-    preview.defender_retaliates = !preview.defender.destroyed
-        && can_attack(defender->kind)
-        && defender->attack > 0
-        && adjacent(attacker->coord, defender->coord);
-    if (preview.defender_retaliates) {
-        Unit retaliation_defender = *defender;
-        retaliation_defender.hp = preview.defender.result_hp;
-        const int attacker_damage = combat_damage(state, retaliation_defender, *attacker);
-        preview.defender.damage_dealt = attacker_damage;
-        preview.attacker.damage_taken = attacker_damage;
-        preview.attacker.result_hp = std::max(0, attacker->hp - attacker_damage);
-        preview.attacker.destroyed = preview.attacker.result_hp <= 0;
-    }
+    preview.defender_retaliates = !preview.defender.destroyed && outcome.attacker_damage > 0;
+    preview.defender.damage_dealt = outcome.attacker_damage;
+    preview.attacker.damage_taken = outcome.attacker_damage;
+    preview.attacker.result_hp = std::max(0, attacker->hp - outcome.attacker_damage);
+    preview.attacker.destroyed = preview.attacker.result_hp <= 0;
     return preview;
 }
 
@@ -1503,6 +1569,13 @@ void print_combatant_preview_json(const CombatantPreview& preview, std::ostream&
 void print_combat_preview_json(const CombatPreview& preview, std::ostream& out) {
     out << "{\"valid\":" << (preview.valid ? "true" : "false")
         << ",\"defenderRetaliates\":" << (preview.defender_retaliates ? "true" : "false")
+        << ",\"baseDifferential\":" << preview.base_differential
+        << ",\"hpRatioPercent\":" << preview.hp_ratio_percent
+        << ",\"readinessRatioPercent\":" << preview.readiness_ratio_percent
+        << ",\"crtIndex\":" << preview.crt_index
+        << ",\"retreatOption\":\"" << escape_json(preview.retreat_option) << "\""
+        << ",\"readinessImpact\":\"" << escape_json(preview.readiness_impact) << "\""
+        << ",\"retreatImpact\":\"" << escape_json(preview.retreat_impact) << "\""
         << ",\"attacker\":";
     print_combatant_preview_json(preview.attacker, out);
     out << ",\"defender\":";
