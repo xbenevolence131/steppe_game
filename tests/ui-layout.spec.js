@@ -1,4 +1,6 @@
 const { test, expect } = require("@playwright/test");
+const { execFileSync, spawnSync } = require("child_process");
+const path = require("path");
 
 test.describe.configure({ mode: "serial" });
 
@@ -7,6 +9,95 @@ async function openPlayMode(page) {
   await page.getByRole("button", { name: "Play" }).click();
   await expect(page.locator(".unit-roster-item")).toHaveCount(8);
 }
+
+function steppeEnginePath() {
+  return path.join(__dirname, "..", "build", process.platform === "win32" ? "steppe_engine.exe" : "steppe_engine");
+}
+
+function runEngineJson(args, input) {
+  return JSON.parse(execFileSync(steppeEnginePath(), args, {
+    cwd: path.join(__dirname, ".."),
+    input: JSON.stringify(input),
+    encoding: "utf8",
+  }));
+}
+
+function runEngineOutputJson(args) {
+  return JSON.parse(execFileSync(steppeEnginePath(), args, {
+    cwd: path.join(__dirname, ".."),
+    encoding: "utf8",
+  }));
+}
+
+function corridorGameState() {
+  const hexes = [];
+  for (let r = 1; r <= 4; r += 1) {
+    for (let q = 1; q <= 5; q += 1) {
+      const corridor = r === 2 && q >= 2 && q <= 4;
+      hexes.push({ q, r, terrain: corridor ? "grassland" : "mountain", labels: [] });
+    }
+  }
+  return {
+    width: 5,
+    height: 4,
+    seed: 0,
+    hexes,
+    units: [
+      { id: 1, owner: 1, faction: "mongol", kind: "cavalry", q: 2, r: 2, hp: 5, maxHp: 5, remainingScaledMove: 24 },
+      { id: 2, owner: 1, faction: "mongol", kind: "herd", q: 3, r: 2, hp: 1, maxHp: 1, remainingScaledMove: 24 },
+    ],
+    game: {
+      round: 1,
+      activeFactionIndex: 0,
+      selectedUnitId: 1,
+      turnOrder: [1],
+    },
+  };
+}
+
+test("movement can pass through friendly units without stacking", async ({ isMobile }) => {
+  test.skip(isMobile, "engine rule is covered once on desktop");
+
+  const reachable = runEngineJson(["game-reachable", "--unit", "1"], corridorGameState()).reachable;
+  expect(reachable.some((hex) => hex.q === 3 && hex.r === 2)).toBe(false);
+  expect(reachable.some((hex) => hex.q === 4 && hex.r === 2)).toBe(true);
+
+  const moveToFriendly = spawnSync(steppeEnginePath(), ["game-move", "--unit", "1", "--q", "3", "--r", "2"], {
+    cwd: path.join(__dirname, ".."),
+    input: JSON.stringify(corridorGameState()),
+    encoding: "utf8",
+  });
+  expect(moveToFriendly.status).not.toBe(0);
+  expect(JSON.parse(moveToFriendly.stdout).ok).toBe(false);
+});
+
+test("great wall avoids the southwest corner on southern access seeds", async ({ isMobile }) => {
+  test.skip(isMobile, "engine generation invariant is covered once on desktop");
+
+  for (const seed of ["3385919878", "55555"]) {
+    const map = runEngineOutputJson(["generate", "--width", "120", "--height", "80", "--seed", seed]);
+    const terrain = new Map(map.hexes.map((hex) => [`${hex.q},${hex.r}`, hex.terrain]));
+    const wall = map.walls.find((candidate) => candidate.feature === "great_wall");
+    const firstEdge = wall.edge_path[0];
+    const firstEdgeTerrain = [firstEdge.a, firstEdge.b].map((coord) => terrain.get(`${coord.q},${coord.r}`));
+    const wallRows = wall.edge_path.flatMap((edge) => [edge.a.r, edge.b.r]);
+    const wallQs = wall.edge_path.flatMap((edge) => [edge.a.q, edge.b.q]);
+    const wallSouthwestEdges = wall.edge_path.filter((edge) => (
+      Math.min(edge.a.q, edge.b.q) <= 6 && Math.max(edge.a.r, edge.b.r) >= 72
+    ));
+    const chineseRows = map.towns
+      .filter((town) => town.feature === "chinese_town")
+      .map((town) => town.r);
+
+    expect(wallSouthwestEdges).toHaveLength(0);
+    expect(firstEdgeTerrain).toContain("mountain");
+    expect(Math.min(firstEdge.a.q, firstEdge.b.q)).toBeGreaterThanOrEqual(40);
+    expect(Math.max(firstEdge.a.q, firstEdge.b.q)).toBeLessThanOrEqual(80);
+    expect(Math.min(...wallQs)).toBeGreaterThan(1);
+    expect(Math.max(...wallRows)).toBeLessThanOrEqual(72);
+    expect(Math.max(...chineseRows)).toBeLessThanOrEqual(66);
+  }
+});
 
 test("scenario controls sit above the shared map", async ({ page }) => {
   await page.goto("/");
@@ -69,6 +160,9 @@ test("generated great wall contains Chinese towns from outside", async ({ page, 
 
     const wall = map.walls && map.walls[0];
     const wallEdges = new Set((wall ? wall.edge_path : []).map(edgeKey));
+    const leftWallRows = (wall ? wall.edge_path : [])
+      .flatMap((edge) => [edge.a, edge.b].filter((coord) => coord.q === 1).map((coord) => coord.r));
+    const maxLeftSeedRow = leftWallRows.length > 0 ? Math.min(...leftWallRows) : map.height;
     const terrain = new Map(map.hexes.map((hex) => [coordKey(hex), hex.terrain]));
     const chineseTowns = new Set(map.towns
       .filter((town) => town.feature === "chinese_town")
@@ -91,7 +185,7 @@ test("generated great wall contains Chinese towns from outside", async ({ page, 
     for (let q = 1; q <= map.width; q += 1) {
       add({ q, r: 1 });
     }
-    for (let r = 1; r <= map.height; r += 1) {
+    for (let r = 1; r <= maxLeftSeedRow; r += 1) {
       add({ q: 1, r });
     }
 

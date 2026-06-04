@@ -645,10 +645,16 @@ const Unit* find_unit(const GameState& state, int unit_id) {
     return found == state.units.end() ? nullptr : &*found;
 }
 
+const Unit* unit_at(const GameState& state, const Coord& coord) {
+    const auto found = std::find_if(state.units.begin(), state.units.end(), [&](const Unit& unit) {
+        return coord_equal(unit.coord, coord);
+    });
+    return found == state.units.end() ? nullptr : &*found;
+}
+
 bool occupied_by_other_unit(const GameState& state, const Coord& coord, int moving_unit_id) {
-    return std::find_if(state.units.begin(), state.units.end(), [&](const Unit& unit) {
-        return unit.id != moving_unit_id && coord_equal(unit.coord, coord);
-    }) != state.units.end();
+    const Unit* unit = unit_at(state, coord);
+    return unit != nullptr && unit->id != moving_unit_id;
 }
 
 void refresh_legal_actions(GameState& state) {
@@ -693,9 +699,14 @@ std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id) {
         const int current_cost = best_costs[current];
         for (int direction = 0; direction < 6; ++direction) {
             const Coord next = neighbor_in_direction(current, direction);
-            if (!in_bounds(state, next) || occupied_by_other_unit(state, next, unit->id)) {
+            if (!in_bounds(state, next)) {
                 continue;
             }
+            const Unit* occupant = unit_at(state, next);
+            if (occupant != nullptr && occupant->id != unit->id && occupant->owner != unit->owner) {
+                continue;
+            }
+            const bool friendly_occupied = occupant != nullptr && occupant->id != unit->id && occupant->owner == unit->owner;
             const GameHex* hex = find_hex(state, next);
             if (hex == nullptr) {
                 continue;
@@ -713,7 +724,9 @@ std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id) {
                 continue;
             }
             best_costs[next] = next_cost;
-            reachable.push_back({next, next_cost});
+            if (!friendly_occupied) {
+                reachable.push_back({next, next_cost});
+            }
             if (!unit->respects_zoc || !enemy_zoc_at(state, next, *unit)) {
                 queue.push_back(next);
             }
