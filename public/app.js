@@ -76,6 +76,7 @@ let terrainUndo = new Map();
 let currentTurn = 1;
 let activeFactionIndex = 0;
 let activeContextMenu = null;
+let contextMenuRequestId = 0;
 let detachHerdAmountContext = null;
 let detachHerdPlacement = null;
 let createHorseArchersPlacement = null;
@@ -741,6 +742,7 @@ function normalizeUnit(unit, index) {
     normalized.remainingMove = unit.remainingMove;
   }
   if (unit.moveDone !== undefined) normalized.moveDone = Boolean(unit.moveDone);
+  if (unit.movedThisTurn !== undefined) normalized.movedThisTurn = Boolean(unit.movedThisTurn);
   if (unit.combatDone !== undefined) normalized.combatDone = Boolean(unit.combatDone);
   if (unit.projectsZoc !== undefined) normalized.projectsZoc = Boolean(unit.projectsZoc);
   if (unit.respectsZoc !== undefined) normalized.respectsZoc = Boolean(unit.respectsZoc);
@@ -821,23 +823,29 @@ const contextActionDefinitions = [
   {
     id: "detach-herd",
     label: "Detach herd",
-    visible: ({ unit }) => Boolean(
+    visible: ({ unit, actionAvailability }) => Boolean(
       unit
-      && unit.kind === "horde"
-      && unit.owner === activeOwner()
+      && actionAvailability
+      && actionAvailability.detachHerd
       && Number.isInteger(unit.horses)
       && unit.horses > 0
     ),
-    enabled: ({ unit }) => Boolean(unit && unit.horses > 0),
+    enabled: ({ unit, actionAvailability }) => Boolean(
+      unit
+      && actionAvailability
+      && actionAvailability.detachHerd
+      && Number.isInteger(unit.horses)
+      && unit.horses > 0
+    ),
     run: async (context) => showDetachHerdAmount(context),
   },
   {
     id: "create-horse-archers",
     label: "Create Horse Archers",
-    visible: ({ unit }) => Boolean(
+    visible: ({ unit, actionAvailability }) => Boolean(
       unit
-      && unit.kind === "horde"
-      && unit.owner === activeOwner()
+      && actionAvailability
+      && actionAvailability.createHorseArchers
       && Number.isInteger(unit.population)
       && Number.isInteger(unit.metal)
       && Number.isInteger(unit.horses)
@@ -845,7 +853,17 @@ const contextActionDefinitions = [
       && unit.metal >= 1
       && unit.horses >= 3
     ),
-    enabled: ({ unit }) => Boolean(unit && unit.population >= 1 && unit.metal >= 1 && unit.horses >= 3),
+    enabled: ({ unit, actionAvailability }) => Boolean(
+      unit
+      && actionAvailability
+      && actionAvailability.createHorseArchers
+      && Number.isInteger(unit.population)
+      && Number.isInteger(unit.metal)
+      && Number.isInteger(unit.horses)
+      && unit.population >= 1
+      && unit.metal >= 1
+      && unit.horses >= 3
+    ),
     run: async (context) => startCreateHorseArchersPlacement(context),
   },
 ];
@@ -1411,6 +1429,7 @@ function findUnitAtPoint(point) {
 }
 
 function hideContextMenu() {
+  contextMenuRequestId += 1;
   activeContextMenu = null;
   contextMenu.hidden = true;
   contextMenu.replaceChildren();
@@ -1440,16 +1459,72 @@ function positionContextMenu(event) {
   contextMenu.style.top = `${clamp(rawTop, margin, maxTop)}px`;
 }
 
-function showContextMenu(event) {
+async function hydrateContextActionAvailability(context) {
+  context.actionAvailability = {
+    detachHerd: false,
+    createHorseArchers: false,
+  };
+
+  const unit = context.unit;
+  if (!unit || unit.kind !== "horde" || unit.owner !== activeOwner()) {
+    return;
+  }
+
+  const checks = [];
+  if (Number.isInteger(unit.horses) && unit.horses > 0) {
+    checks.push(postAppCommand({
+      type: "detach_herd_options",
+      unitId: unit.id,
+      horses: 1,
+    }).then((options) => {
+      context.actionAvailability.detachHerd = Array.isArray(options.deployableHexes)
+        && options.deployableHexes.length > 0;
+    }).catch(() => {
+      context.actionAvailability.detachHerd = false;
+    }));
+  }
+
+  if (
+    Number.isInteger(unit.population)
+    && Number.isInteger(unit.metal)
+    && Number.isInteger(unit.horses)
+    && unit.population >= 1
+    && unit.metal >= 1
+    && unit.horses >= 3
+  ) {
+    checks.push(postAppCommand({
+      type: "create_horse_archers_options",
+      unitId: unit.id,
+    }).then((options) => {
+      context.actionAvailability.createHorseArchers = Array.isArray(options.deployableHexes)
+        && options.deployableHexes.length > 0;
+    }).catch(() => {
+      context.actionAvailability.createHorseArchers = false;
+    }));
+  }
+
+  await Promise.all(checks);
+}
+
+async function showContextMenu(event) {
+  const requestId = contextMenuRequestId + 1;
+  contextMenuRequestId = requestId;
+  activeContextMenu = null;
+  contextMenu.hidden = true;
+  contextMenu.replaceChildren();
+
   if (appMode !== "play" || !currentMap) {
-    hideContextMenu();
     return false;
   }
 
   const context = contextForPointer(event);
+  await hydrateContextActionAvailability(context);
+  if (requestId !== contextMenuRequestId) {
+    return false;
+  }
+
   const actions = contextActionDefinitions.filter((action) => action.visible(context));
   if (actions.length === 0) {
-    hideContextMenu();
     return false;
   }
 
@@ -2283,7 +2358,7 @@ mapPanel.addEventListener("pointerdown", async (event) => {
     hideDetachHerdAmount();
     cancelDetachHerdPlacement();
     cancelCreateHorseArchersPlacement();
-    showContextMenu(event);
+    await showContextMenu(event);
     return;
   }
   hideContextMenu();

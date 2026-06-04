@@ -106,6 +106,7 @@ struct Unit {
     int metal = 0;
     int horses = 0;
     bool move_done = false;
+    bool moved_this_turn = false;
     bool combat_done = false;
     bool projects_zoc = false;
     bool respects_zoc = false;

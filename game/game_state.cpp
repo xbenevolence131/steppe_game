@@ -705,6 +705,14 @@ bool enemy_zoc_at(const GameState& state, const Coord& coord, const Unit& moving
     }) != state.units.end();
 }
 
+bool enemy_unit_adjacent_to(const GameState& state, const Unit& source) {
+    return std::find_if(state.units.begin(), state.units.end(), [&](const Unit& unit) {
+        return unit.id != source.id
+            && unit.owner != source.owner
+            && adjacent(unit.coord, source.coord);
+    }) != state.units.end();
+}
+
 std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id) {
     std::vector<ReachableHex> reachable;
     const Unit* unit = find_unit(state, unit_id);
@@ -818,6 +826,7 @@ bool move_unit(GameState& state, int unit_id, Coord destination) {
         return false;
     }
     unit->coord = destination;
+    unit->moved_this_turn = true;
     unit->remaining_scaled_move = std::max(0, unit->remaining_scaled_move - found->scaled_cost);
     if (unit->respects_zoc && enemy_zoc_at(state, destination, *unit)) {
         unit->remaining_scaled_move = 0;
@@ -867,6 +876,9 @@ DetachHerdOptions detach_herd_options(const GameState& state, int unit_id, int h
     if (horde == nullptr
         || horde->kind != UnitKind::Horde
         || horde->owner != active_faction(state)
+        || horde->move_done
+        || horde->moved_this_turn
+        || enemy_unit_adjacent_to(state, *horde)
         || horses <= 0
         || horses > horde->horses) {
         return options;
@@ -892,6 +904,8 @@ bool detach_herd(GameState& state, int unit_id, int horses, Coord destination) {
         return false;
     }
     horde->horses -= horses;
+    horde->remaining_scaled_move = 0;
+    horde->move_done = true;
 
     Unit herd;
     herd.id = next_unit_id(state);
@@ -921,6 +935,9 @@ CreateHorseArchersOptions create_horse_archers_options(const GameState& state, i
     if (horde == nullptr
         || horde->kind != UnitKind::Horde
         || horde->owner != active_faction(state)
+        || horde->move_done
+        || horde->moved_this_turn
+        || enemy_unit_adjacent_to(state, *horde)
         || horde->population < create_horse_archers_population_cost
         || horde->metal < create_horse_archers_metal_cost
         || horde->horses < create_horse_archers_horses_cost) {
@@ -949,6 +966,8 @@ bool create_horse_archers(GameState& state, int unit_id, Coord destination) {
     horde->population -= create_horse_archers_population_cost;
     horde->metal -= create_horse_archers_metal_cost;
     horde->horses -= create_horse_archers_horses_cost;
+    horde->remaining_scaled_move = 0;
+    horde->move_done = true;
 
     Unit horse_archers;
     horse_archers.id = next_unit_id(state);
@@ -983,6 +1002,7 @@ void end_turn(GameState& state) {
         if (unit.owner == owner) {
             unit.remaining_scaled_move = unit.scaled_move;
             unit.move_done = false;
+            unit.moved_this_turn = false;
             unit.combat_done = false;
         }
     }
@@ -1035,6 +1055,7 @@ void print_unit_json(const Unit& unit, std::ostream& out) {
         out << ",\"horses\":" << unit.horses;
     }
     out << ",\"moveDone\":" << (unit.move_done ? "true" : "false")
+        << ",\"movedThisTurn\":" << (unit.moved_this_turn ? "true" : "false")
         << ",\"combatDone\":" << (unit.combat_done ? "true" : "false")
         << ",\"projectsZoc\":" << (unit.projects_zoc ? "true" : "false")
         << ",\"respectsZoc\":" << (unit.respects_zoc ? "true" : "false")
@@ -1389,6 +1410,7 @@ GameState parse_game_state_json(const std::string& json) {
         unit.metal = std::max(0, int_field(unit_json, "metal", 0));
         unit.horses = std::max(0, int_field(unit_json, "horses", 0));
         unit.move_done = bool_field(unit_json, "moveDone", false);
+        unit.moved_this_turn = bool_field(unit_json, "movedThisTurn", false);
         unit.combat_done = bool_field(unit_json, "combatDone", false);
         unit.projects_zoc = bool_field(unit_json, "projectsZoc", default_projects_zoc(unit.kind));
         unit.respects_zoc = bool_field(unit_json, "respectsZoc", default_respects_zoc(unit.kind));
