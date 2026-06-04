@@ -240,6 +240,12 @@ int next_unit_id(const GameState& state) {
 constexpr int create_horse_archers_population_cost = 1;
 constexpr int create_horse_archers_metal_cost = 1;
 constexpr int create_horse_archers_horses_cost = 3;
+constexpr int default_max_readiness = 100;
+constexpr int minimum_combat_readiness_percent = 25;
+constexpr int full_move_readiness_cost = 25;
+constexpr int attack_readiness_cost = 30;
+constexpr int defense_readiness_cost = 20;
+constexpr int turn_readiness_recovery = 25;
 
 constexpr int move_scale = 8;
 
@@ -626,6 +632,8 @@ GameState create_default_play_sandbox(int width, int height, int faction_count) 
         unit.max_hp = unit.hp;
         unit.attack = default_attack(unit.kind);
         unit.defense = default_defense(unit.kind);
+        unit.max_readiness = default_max_readiness;
+        unit.readiness = unit.max_readiness;
         unit.scaled_move = to_scaled_move(default_move(unit.kind));
         unit.remaining_scaled_move = unit.scaled_move;
         if (unit.kind == UnitKind::Horde) {
@@ -719,12 +727,56 @@ int hp_percent(const Unit& unit) {
     return std::max(1, std::min(100, (unit.hp * 100 + unit.max_hp / 2) / unit.max_hp));
 }
 
+int clamped_readiness(const Unit& unit) {
+    const int max_readiness = std::max(1, unit.max_readiness);
+    return std::max(0, std::min(unit.readiness, max_readiness));
+}
+
+int readiness_percent(const Unit& unit) {
+    const int max_readiness = std::max(1, unit.max_readiness);
+    return std::max(0, std::min(100, (clamped_readiness(unit) * 100 + max_readiness / 2) / max_readiness));
+}
+
+int combat_readiness_percent(const Unit& unit) {
+    if (unit.hp <= 0) {
+        return 0;
+    }
+    return std::max(minimum_combat_readiness_percent, readiness_percent(unit));
+}
+
+int readiness_scaled_strength(int strength, const Unit& unit) {
+    if (strength <= 0) {
+        return 0;
+    }
+    const int hp_strength = hp_scaled_strength(strength, unit);
+    if (hp_strength <= 0) {
+        return 0;
+    }
+    return std::max(1, (hp_strength * combat_readiness_percent(unit) + 99) / 100);
+}
+
+int move_readiness_cost(const Unit& unit, int scaled_cost) {
+    if (scaled_cost <= 0 || unit.scaled_move <= 0) {
+        return 0;
+    }
+    return std::max(1, (full_move_readiness_cost * scaled_cost + unit.scaled_move - 1) / unit.scaled_move);
+}
+
+void reduce_readiness(Unit& unit, int amount) {
+    unit.readiness = std::max(0, clamped_readiness(unit) - std::max(0, amount));
+}
+
+void recover_readiness(Unit& unit, int amount) {
+    unit.max_readiness = std::max(1, unit.max_readiness);
+    unit.readiness = std::min(unit.max_readiness, clamped_readiness(unit) + std::max(0, amount));
+}
+
 int effective_attack_score(const Unit& attacker) {
-    return hp_scaled_strength(attacker.attack, attacker);
+    return readiness_scaled_strength(attacker.attack, attacker);
 }
 
 int effective_defense_score(const GameState& state, const Unit& defender) {
-    const int defense_strength = hp_scaled_strength(defender.defense, defender);
+    const int defense_strength = readiness_scaled_strength(defender.defense, defender);
     if (defense_strength <= 0) {
         return 0;
     }
@@ -779,8 +831,11 @@ void refresh_legal_actions(GameState& state) {
         return;
     }
     const Unit* unit = find_unit(state, state.selected_unit_id);
-    if (unit == nullptr || unit->owner != active_faction(state)) {
+    if (unit == nullptr) {
         state.selected_unit_id = 0;
+        return;
+    }
+    if (unit->owner != active_faction(state)) {
         return;
     }
     state.legal_moves = reachable_hexes(state, state.selected_unit_id);
@@ -908,6 +963,9 @@ CombatantPreview combatant_preview(const GameState& state, const Unit& unit) {
     preview.base_attack = unit.attack;
     preview.base_defense = unit.defense;
     preview.hp_percent = hp_percent(unit);
+    preview.readiness = clamped_readiness(unit);
+    preview.max_readiness = std::max(1, unit.max_readiness);
+    preview.readiness_percent = readiness_percent(unit);
     preview.terrain_defense_percent = terrain_defense_percent_at(state, unit.coord);
     preview.effective_attack = effective_attack_score(unit);
     preview.effective_defense = effective_defense_score(state, unit);
@@ -963,7 +1021,7 @@ CombatPreview combat_preview(const GameState& state, int attacker_id, int defend
 
 bool select_unit(GameState& state, int unit_id) {
     const Unit* unit = find_unit(state, unit_id);
-    if (unit == nullptr || unit->owner != active_faction(state)) {
+    if (unit == nullptr) {
         state.selected_unit_id = 0;
         state.legal_moves.clear();
         state.legal_attacks.clear();
@@ -988,6 +1046,7 @@ bool move_unit(GameState& state, int unit_id, Coord destination) {
     }
     unit->coord = destination;
     unit->moved_this_turn = true;
+    reduce_readiness(*unit, move_readiness_cost(*unit, found->scaled_cost));
     unit->remaining_scaled_move = std::max(0, unit->remaining_scaled_move - found->scaled_cost);
     if (unit->respects_zoc && enemy_zoc_at(state, destination, *unit)) {
         unit->remaining_scaled_move = 0;
@@ -1014,6 +1073,8 @@ bool attack_unit(GameState& state, int attacker_id, int defender_id) {
 
     defender->hp = preview.defender.result_hp;
     attacker->hp = preview.attacker.result_hp;
+    reduce_readiness(*attacker, attack_readiness_cost);
+    reduce_readiness(*defender, defense_readiness_cost);
     attacker = find_unit(state, attacker_id);
     if (attacker != nullptr) {
         attacker->remaining_scaled_move = 0;
@@ -1076,6 +1137,8 @@ bool detach_herd(GameState& state, int unit_id, int horses, Coord destination) {
     herd.max_hp = herd.hp;
     herd.attack = default_attack(herd.kind);
     herd.defense = default_defense(herd.kind);
+    herd.max_readiness = default_max_readiness;
+    herd.readiness = herd.max_readiness;
     herd.scaled_move = to_scaled_move(default_move(herd.kind));
     herd.remaining_scaled_move = herd.scaled_move;
     herd.horses = horses;
@@ -1140,6 +1203,8 @@ bool create_horse_archers(GameState& state, int unit_id, Coord destination) {
     horse_archers.max_hp = horse_archers.hp;
     horse_archers.attack = default_attack(horse_archers.kind);
     horse_archers.defense = default_defense(horse_archers.kind);
+    horse_archers.max_readiness = default_max_readiness;
+    horse_archers.readiness = horse_archers.max_readiness;
     horse_archers.scaled_move = to_scaled_move(default_move(horse_archers.kind));
     horse_archers.remaining_scaled_move = horse_archers.scaled_move;
     horse_archers.projects_zoc = default_projects_zoc(horse_archers.kind);
@@ -1168,6 +1233,7 @@ void end_turn(GameState& state) {
             unit.move_done = false;
             unit.moved_this_turn = false;
             unit.combat_done = false;
+            recover_readiness(unit, turn_readiness_recovery);
         }
     }
 }
@@ -1207,6 +1273,8 @@ void print_unit_json(const Unit& unit, std::ostream& out) {
         << ",\"maxHp\":" << unit.max_hp
         << ",\"attack\":" << unit.attack
         << ",\"defense\":" << unit.defense
+        << ",\"readiness\":" << clamped_readiness(unit)
+        << ",\"maxReadiness\":" << std::max(1, unit.max_readiness)
         << ",\"scaledMove\":" << unit.scaled_move
         << ",\"remainingScaledMove\":" << unit.remaining_scaled_move
         << ",\"refMove\":" << to_ref_move(unit.scaled_move)
@@ -1419,6 +1487,9 @@ void print_combatant_preview_json(const CombatantPreview& preview, std::ostream&
         << ",\"baseAttack\":" << preview.base_attack
         << ",\"baseDefense\":" << preview.base_defense
         << ",\"hpPercent\":" << preview.hp_percent
+        << ",\"readiness\":" << preview.readiness
+        << ",\"maxReadiness\":" << preview.max_readiness
+        << ",\"readinessPercent\":" << preview.readiness_percent
         << ",\"terrainDefensePercent\":" << preview.terrain_defense_percent
         << ",\"effectiveAttack\":" << preview.effective_attack
         << ",\"effectiveDefense\":" << preview.effective_defense
@@ -1593,6 +1664,8 @@ GameState parse_game_state_json(const std::string& json) {
         unit.max_hp = int_field(unit_json, "maxHp", unit.hp);
         unit.attack = std::max(0, int_field(unit_json, "attack", default_attack(unit.kind)));
         unit.defense = std::max(1, int_field(unit_json, "defense", default_defense(unit.kind)));
+        unit.max_readiness = std::max(1, int_field(unit_json, "maxReadiness", default_max_readiness));
+        unit.readiness = std::max(0, std::min(int_field(unit_json, "readiness", unit.max_readiness), unit.max_readiness));
         const int default_scaled_move = to_scaled_move(default_move(unit.kind));
         unit.scaled_move = int_field(
             unit_json,

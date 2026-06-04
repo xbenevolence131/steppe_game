@@ -61,6 +61,7 @@ const unitName = document.querySelector("#unit-name");
 const unitHp = document.querySelector("#unit-hp");
 const unitAttack = document.querySelector("#unit-attack");
 const unitDefense = document.querySelector("#unit-defense");
+const unitReadiness = document.querySelector("#unit-readiness");
 const unitMove = document.querySelector("#unit-move");
 const unitResources = document.querySelector("#unit-resources");
 const unitPopulation = document.querySelector("#unit-population");
@@ -208,11 +209,11 @@ const factionCount = 2;
 const factionTurnOrder = ["mongol", "chinese", "persian"].slice(0, factionCount);
 
 const unitTypeDefaults = {
-  camp: { hp: 1, attack: 0, defense: 1, move: 0 },
-  herd: { hp: 1, attack: 0, defense: 1, move: 3 },
-  horse_archer: { hp: 10, attack: 4, defense: 3, move: 4 },
-  infantry: { hp: 10, attack: 3, defense: 5, move: 2 },
-  horde: { hp: 10, attack: 2, defense: 3, move: 3, projectsZoc: true, respectsZoc: true, population: 0, metal: 0, horses: 0 },
+  camp: { hp: 1, attack: 0, defense: 1, readiness: 100, move: 0 },
+  herd: { hp: 1, attack: 0, defense: 1, readiness: 100, move: 3 },
+  horse_archer: { hp: 10, attack: 4, defense: 3, readiness: 100, move: 4 },
+  infantry: { hp: 10, attack: 3, defense: 5, readiness: 100, move: 2 },
+  horde: { hp: 10, attack: 2, defense: 3, readiness: 100, move: 3, projectsZoc: true, respectsZoc: true, population: 0, metal: 0, horses: 0 },
 };
 
 function terrainStyle(key) {
@@ -734,6 +735,10 @@ function normalizeUnit(unit, index) {
   if (Number.isFinite(unit.maxHp)) normalized.maxHp = unit.maxHp;
   normalized.attack = Number.isFinite(unit.attack) ? Math.max(0, Math.trunc(unit.attack)) : defaults.attack;
   normalized.defense = Number.isFinite(unit.defense) ? Math.max(1, Math.trunc(unit.defense)) : defaults.defense;
+  normalized.maxReadiness = Number.isFinite(unit.maxReadiness) ? Math.max(1, Math.trunc(unit.maxReadiness)) : 100;
+  normalized.readiness = Number.isFinite(unit.readiness)
+    ? Math.max(0, Math.min(Math.trunc(unit.readiness), normalized.maxReadiness))
+    : defaults.readiness;
   if (Number.isFinite(unit.population)) normalized.population = Math.max(0, Math.trunc(unit.population));
   if (Number.isFinite(unit.metal)) normalized.metal = Math.max(0, Math.trunc(unit.metal));
   if (Number.isFinite(unit.horses)) normalized.horses = Math.max(0, Math.trunc(unit.horses));
@@ -854,6 +859,7 @@ function appendCombatSide(parent, title, combatant, mode) {
     mode === "attack" ? combatant.baseAttack : combatant.baseDefense
   ));
   appendCombatRow(side, "HP factor", `${combatant.hpPercent}%`);
+  appendCombatRow(side, "Readiness", `${combatant.readiness}/${combatant.maxReadiness} (${combatant.readinessPercent}%)`);
   appendCombatRow(side, "Terrain", mode === "attack" ? "-" : `${combatant.terrainDefensePercent}%`);
   appendCombatRow(side, "Score", String(mode === "attack" ? combatant.effectiveAttack : combatant.effectiveDefense));
   appendCombatRow(side, mode === "attack" ? "Damage" : "Taken", String(
@@ -1070,6 +1076,7 @@ function syncUnitInspector() {
     unitHp.textContent = "-";
     unitAttack.textContent = "-";
     unitDefense.textContent = "-";
+    unitReadiness.textContent = "-";
     unitMove.textContent = "-";
     unitResources.hidden = true;
     unitPopulation.textContent = "0";
@@ -1082,6 +1089,9 @@ function syncUnitInspector() {
   unitHp.textContent = Number.isFinite(unit.hp) && Number.isFinite(unit.maxHp) ? `${unit.hp}/${unit.maxHp}` : "-";
   unitAttack.textContent = Number.isFinite(unit.attack) ? String(unit.attack) : "-";
   unitDefense.textContent = Number.isFinite(unit.defense) ? String(unit.defense) : "-";
+  unitReadiness.textContent = Number.isFinite(unit.readiness) && Number.isFinite(unit.maxReadiness)
+    ? `${unit.readiness}/${unit.maxReadiness}`
+    : "-";
   unitMove.textContent = Number.isFinite(unit.remainingMove) && Number.isFinite(unit.move) ? `${unit.remainingMove}/${unit.move}` : "-";
   const showResources = unit.kind === "horde";
   unitResources.hidden = !showResources;
@@ -1396,6 +1406,24 @@ function roundedRectPath(x, y, width, height, radius) {
   ctx.closePath();
 }
 
+function readinessPercentForUnit(unit) {
+  if (!unit || !Number.isFinite(unit.readiness) || !Number.isFinite(unit.maxReadiness) || unit.maxReadiness <= 0) {
+    return 100;
+  }
+  return clamp(Math.round((unit.readiness / unit.maxReadiness) * 100), 0, 100);
+}
+
+function unitHpReadinessColor(unit) {
+  const readinessPercent = readinessPercentForUnit(unit);
+  if (readinessPercent >= 65) {
+    return "#237a3b";
+  }
+  if (readinessPercent >= 30) {
+    return "#a97800";
+  }
+  return "#c93632";
+}
+
 function drawUnitCounters(units) {
   if (!units || units.length === 0) {
     return;
@@ -1479,7 +1507,7 @@ function drawUnitCounters(units) {
       ctx.fill();
     }
 
-    ctx.fillStyle = "#22201b";
+    ctx.fillStyle = unitHpReadinessColor(unit);
     ctx.font = `${12 / viewport.scale}px Segoe UI, Arial, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -2047,6 +2075,8 @@ function makeEditorUnit(coord) {
     maxHp: defaults.hp,
     attack: defaults.attack,
     defense: defaults.defense,
+    readiness: defaults.readiness,
+    maxReadiness: 100,
     move: defaults.move,
     remainingMove: defaults.move,
     population: Number.isInteger(defaults.population) ? defaults.population : 0,
@@ -2532,7 +2562,7 @@ mapPanel.addEventListener("pointerdown", async (event) => {
     const unit = findUnitAtPoint(point);
     if (unit) {
       event.preventDefault();
-      if (await attackSelectedUnit(unit)) {
+      if (legalAttackForUnit(unit) && await attackSelectedUnit(unit)) {
         return;
       }
       await selectUnit(unit);

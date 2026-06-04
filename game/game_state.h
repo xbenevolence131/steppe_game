@@ -102,6 +102,8 @@ struct Unit {
     int max_hp = 10;
     int attack = 0;
     int defense = 1;
+    int readiness = 100;
+    int max_readiness = 100;
     int scaled_move = 32;
     int remaining_scaled_move = 32;
     int population = 0;
@@ -135,6 +137,9 @@ struct CombatantPreview {
     int base_attack = 0;
     int base_defense = 0;
     int hp_percent = 0;
+    int readiness = 100;
+    int max_readiness = 100;
+    int readiness_percent = 100;
     int terrain_defense_percent = 100;
     int effective_attack = 0;
     int effective_defense = 0;
