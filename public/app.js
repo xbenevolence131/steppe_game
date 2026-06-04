@@ -78,6 +78,7 @@ let activeFactionIndex = 0;
 let activeContextMenu = null;
 let detachHerdAmountContext = null;
 let detachHerdPlacement = null;
+let createHorseArchersPlacement = null;
 
 const viewport = {
   scale: 1,
@@ -830,6 +831,23 @@ const contextActionDefinitions = [
     enabled: ({ unit }) => Boolean(unit && unit.horses > 0),
     run: async (context) => showDetachHerdAmount(context),
   },
+  {
+    id: "create-horse-archers",
+    label: "Create Horse Archers",
+    visible: ({ unit }) => Boolean(
+      unit
+      && unit.kind === "horde"
+      && unit.owner === activeOwner()
+      && Number.isInteger(unit.population)
+      && Number.isInteger(unit.metal)
+      && Number.isInteger(unit.horses)
+      && unit.population >= 1
+      && unit.metal >= 1
+      && unit.horses >= 3
+    ),
+    enabled: ({ unit }) => Boolean(unit && unit.population >= 1 && unit.metal >= 1 && unit.horses >= 3),
+    run: async (context) => startCreateHorseArchersPlacement(context),
+  },
 ];
 
 function unitDisplayName(unit) {
@@ -1344,12 +1362,13 @@ function drawReachableHexes() {
 }
 
 function drawDetachDeploymentHexes() {
-  if (!detachHerdPlacement || !Array.isArray(detachHerdPlacement.deployableHexes)) {
+  const placement = detachHerdPlacement || createHorseArchersPlacement;
+  if (!placement || !Array.isArray(placement.deployableHexes)) {
     return;
   }
 
   ctx.save();
-  for (const hex of detachHerdPlacement.deployableHexes) {
+  for (const hex of placement.deployableHexes) {
     const center = hexCenter(hex);
     const points = hexPoints(center.x, center.y, geometry.size * 0.84);
     ctx.beginPath();
@@ -1471,6 +1490,11 @@ function cancelDetachHerdPlacement() {
   drawMap();
 }
 
+function cancelCreateHorseArchersPlacement() {
+  createHorseArchersPlacement = null;
+  drawMap();
+}
+
 function positionDetachHerdPopover(context) {
   const margin = 8;
   detachHerdPopover.hidden = false;
@@ -1485,6 +1509,7 @@ function showDetachHerdAmount(context) {
     return false;
   }
   cancelDetachHerdPlacement();
+  cancelCreateHorseArchersPlacement();
   detachHerdAmountContext = context;
   detachHerdHorsesInput.min = "1";
   detachHerdHorsesInput.max = String(context.unit.horses);
@@ -1534,6 +1559,11 @@ function detachDeployableAt(coord) {
   return detachHerdPlacement && detachHerdPlacement.deployableHexes.find((hex) => hex.q === coord.q && hex.r === coord.r);
 }
 
+function createHorseArchersDeployableAt(coord) {
+  return createHorseArchersPlacement
+    && createHorseArchersPlacement.deployableHexes.find((hex) => hex.q === coord.q && hex.r === coord.r);
+}
+
 async function deployDetachedHerdAt(coord) {
   if (!detachHerdPlacement || !detachDeployableAt(coord)) {
     return false;
@@ -1545,6 +1575,54 @@ async function deployDetachedHerdAt(coord) {
     to: { q: coord.q, r: coord.r },
   });
   detachHerdPlacement = null;
+  applyGamePatch(payload);
+  syncModeControls();
+  drawMap();
+  return true;
+}
+
+async function startCreateHorseArchersPlacement(context) {
+  if (!context.unit || context.unit.kind !== "horde") {
+    return false;
+  }
+  cancelDetachHerdPlacement();
+  hideDetachHerdAmount();
+  try {
+    const options = await postAppCommand({
+      type: "create_horse_archers_options",
+      unitId: context.unit.id,
+    });
+    if (!Array.isArray(options.deployableHexes) || options.deployableHexes.length === 0) {
+      window.alert("No adjacent deployment hex is available.");
+      createHorseArchersPlacement = null;
+      drawMap();
+      return false;
+    }
+    createHorseArchersPlacement = {
+      unitId: context.unit.id,
+      deployableHexes: options.deployableHexes,
+      populationCost: options.populationCost,
+      metalCost: options.metalCost,
+      horsesCost: options.horsesCost,
+    };
+    drawMap();
+    return true;
+  } catch (error) {
+    window.alert(error.message);
+    return false;
+  }
+}
+
+async function deployCreatedHorseArchersAt(coord) {
+  if (!createHorseArchersPlacement || !createHorseArchersDeployableAt(coord)) {
+    return false;
+  }
+  const payload = await postAppCommand({
+    type: "create_horse_archers",
+    unitId: createHorseArchersPlacement.unitId,
+    to: { q: coord.q, r: coord.r },
+  });
+  createHorseArchersPlacement = null;
   applyGamePatch(payload);
   syncModeControls();
   drawMap();
@@ -2203,6 +2281,8 @@ mapPanel.addEventListener("pointerdown", async (event) => {
   if (event.button === 2) {
     event.preventDefault();
     hideDetachHerdAmount();
+    cancelDetachHerdPlacement();
+    cancelCreateHorseArchersPlacement();
     showContextMenu(event);
     return;
   }
@@ -2214,6 +2294,16 @@ mapPanel.addEventListener("pointerdown", async (event) => {
     if (hex && detachDeployableAt(hex)) {
       event.preventDefault();
       await deployDetachedHerdAt(hex);
+      return;
+    }
+    event.preventDefault();
+    return;
+  }
+  if (appMode === "play" && event.button === 0 && createHorseArchersPlacement) {
+    const hex = findNearestHex(point);
+    if (hex && createHorseArchersDeployableAt(hex)) {
+      event.preventDefault();
+      await deployCreatedHorseArchersAt(hex);
       return;
     }
     event.preventDefault();
@@ -2305,6 +2395,7 @@ mapPanel.addEventListener("keydown", (event) => {
     hideContextMenu();
     hideDetachHerdAmount();
     cancelDetachHerdPlacement();
+    cancelCreateHorseArchersPlacement();
     return;
   }
   const step = event.shiftKey ? 80 : 32;

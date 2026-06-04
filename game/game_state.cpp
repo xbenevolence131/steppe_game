@@ -211,6 +211,10 @@ int next_unit_id(const GameState& state) {
     return next_id;
 }
 
+constexpr int create_horse_archers_population_cost = 1;
+constexpr int create_horse_archers_metal_cost = 1;
+constexpr int create_horse_archers_horses_cost = 3;
+
 constexpr int move_scale = 8;
 
 int to_scaled_move(int ref_move) {
@@ -597,6 +601,8 @@ GameState create_default_play_sandbox(int width, int height, int faction_count) 
         unit.scaled_move = to_scaled_move(default_move(unit.kind));
         unit.remaining_scaled_move = unit.scaled_move;
         if (unit.kind == UnitKind::Horde) {
+            unit.population = 4;
+            unit.metal = 4;
             unit.horses = 12;
         }
         unit.projects_zoc = default_projects_zoc(kind);
@@ -656,6 +662,23 @@ const Unit* unit_at(const GameState& state, const Coord& coord) {
 bool occupied_by_other_unit(const GameState& state, const Coord& coord, int moving_unit_id) {
     const Unit* unit = unit_at(state, coord);
     return unit != nullptr && unit->id != moving_unit_id;
+}
+
+std::vector<Coord> adjacent_deployable_hexes(const GameState& state, const Unit& source) {
+    std::vector<Coord> deployable;
+    for (int direction = 0; direction < 6; ++direction) {
+        const Coord candidate = neighbor_in_direction(source.coord, direction);
+        if (!in_bounds(state, candidate) || occupied_by_other_unit(state, candidate, 0)) {
+            continue;
+        }
+        const GameHex* hex = find_hex(state, candidate);
+        if (hex == nullptr || movement_cost(state, source.coord, *hex) == blocked_movement_cost()) {
+            continue;
+        }
+        deployable.push_back(candidate);
+    }
+    std::sort(deployable.begin(), deployable.end(), coord_less);
+    return deployable;
 }
 
 void refresh_legal_actions(GameState& state) {
@@ -849,18 +872,7 @@ DetachHerdOptions detach_herd_options(const GameState& state, int unit_id, int h
         return options;
     }
 
-    for (int direction = 0; direction < 6; ++direction) {
-        const Coord candidate = neighbor_in_direction(horde->coord, direction);
-        if (!in_bounds(state, candidate) || occupied_by_other_unit(state, candidate, 0)) {
-            continue;
-        }
-        const GameHex* hex = find_hex(state, candidate);
-        if (hex == nullptr || movement_cost(state, horde->coord, *hex) == blocked_movement_cost()) {
-            continue;
-        }
-        options.deployable_hexes.push_back(candidate);
-    }
-    std::sort(options.deployable_hexes.begin(), options.deployable_hexes.end(), coord_less);
+    options.deployable_hexes = adjacent_deployable_hexes(state, *horde);
     return options;
 }
 
@@ -894,6 +906,62 @@ bool detach_herd(GameState& state, int unit_id, int horses, Coord destination) {
     herd.projects_zoc = default_projects_zoc(herd.kind);
     herd.respects_zoc = default_respects_zoc(herd.kind);
     state.units.push_back(herd);
+    state.selected_unit_id = unit_id;
+    refresh_legal_actions(state);
+    return true;
+}
+
+CreateHorseArchersOptions create_horse_archers_options(const GameState& state, int unit_id) {
+    CreateHorseArchersOptions options;
+    options.unit_id = unit_id;
+    options.population_cost = create_horse_archers_population_cost;
+    options.metal_cost = create_horse_archers_metal_cost;
+    options.horses_cost = create_horse_archers_horses_cost;
+    const Unit* horde = find_unit(state, unit_id);
+    if (horde == nullptr
+        || horde->kind != UnitKind::Horde
+        || horde->owner != active_faction(state)
+        || horde->population < create_horse_archers_population_cost
+        || horde->metal < create_horse_archers_metal_cost
+        || horde->horses < create_horse_archers_horses_cost) {
+        return options;
+    }
+
+    options.deployable_hexes = adjacent_deployable_hexes(state, *horde);
+    return options;
+}
+
+bool create_horse_archers(GameState& state, int unit_id, Coord destination) {
+    CreateHorseArchersOptions options = create_horse_archers_options(state, unit_id);
+    const bool valid_destination = std::find_if(
+        options.deployable_hexes.begin(),
+        options.deployable_hexes.end(),
+        [&](const Coord& coord) { return coord_equal(coord, destination); }
+    ) != options.deployable_hexes.end();
+    if (!valid_destination) {
+        return false;
+    }
+
+    Unit* horde = find_unit(state, unit_id);
+    if (horde == nullptr) {
+        return false;
+    }
+    horde->population -= create_horse_archers_population_cost;
+    horde->metal -= create_horse_archers_metal_cost;
+    horde->horses -= create_horse_archers_horses_cost;
+
+    Unit horse_archers;
+    horse_archers.id = next_unit_id(state);
+    horse_archers.owner = horde->owner;
+    horse_archers.kind = UnitKind::HorseArcher;
+    horse_archers.coord = destination;
+    horse_archers.hp = default_hp(horse_archers.kind);
+    horse_archers.max_hp = horse_archers.hp;
+    horse_archers.scaled_move = to_scaled_move(default_move(horse_archers.kind));
+    horse_archers.remaining_scaled_move = horse_archers.scaled_move;
+    horse_archers.projects_zoc = default_projects_zoc(horse_archers.kind);
+    horse_archers.respects_zoc = default_respects_zoc(horse_archers.kind);
+    state.units.push_back(horse_archers);
     state.selected_unit_id = unit_id;
     refresh_legal_actions(state);
     return true;
@@ -1153,6 +1221,21 @@ void print_attackable_json(const std::vector<AttackableUnit>& attackable, std::o
 void print_detach_herd_options_json(const DetachHerdOptions& options, std::ostream& out) {
     out << "{\"unitId\":" << options.unit_id
         << ",\"horses\":" << options.horses
+        << ",\"deployableHexes\":[";
+    for (std::size_t i = 0; i < options.deployable_hexes.size(); ++i) {
+        if (i > 0) {
+            out << ",";
+        }
+        print_coord_json(options.deployable_hexes[i], out);
+    }
+    out << "]}\n";
+}
+
+void print_create_horse_archers_options_json(const CreateHorseArchersOptions& options, std::ostream& out) {
+    out << "{\"unitId\":" << options.unit_id
+        << ",\"populationCost\":" << options.population_cost
+        << ",\"metalCost\":" << options.metal_cost
+        << ",\"horsesCost\":" << options.horses_cost
         << ",\"deployableHexes\":[";
     for (std::size_t i = 0; i < options.deployable_hexes.size(); ++i) {
         if (i > 0) {

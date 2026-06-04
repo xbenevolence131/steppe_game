@@ -273,9 +273,9 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   await expect(page.locator("#status-active-faction-name")).toHaveText("Chinese");
   await expect(page.locator("#turn-status-readout")).toHaveText("Chinese turn");
   await expect(page.locator("#faction-status-name")).toHaveText("Chinese");
-  await expect(page.locator("#faction-population-total")).toHaveText("0");
+  await expect(page.locator("#faction-population-total")).toHaveText("4");
   await expect(page.locator("#faction-horses-total")).toHaveText("12");
-  await expect(page.locator("#faction-metal-total")).toHaveText("0");
+  await expect(page.locator("#faction-metal-total")).toHaveText("4");
 
   const layout = await page.evaluate(() => {
     const sidebar = document.querySelector("#play-controls").getBoundingClientRect();
@@ -303,8 +303,8 @@ test("horde inspector shows resource counters", async ({ page, isMobile }) => {
   await page.locator(".unit-roster-item").filter({ hasText: "Mongol Horde" }).click();
   await expect(page.locator("#unit-name")).toHaveText("Mongol Horde");
   await expect(page.locator("#unit-resources")).toBeVisible();
-  await expect(page.locator("#unit-population")).toHaveText("0");
-  await expect(page.locator("#unit-metal")).toHaveText("0");
+  await expect(page.locator("#unit-population")).toHaveText("4");
+  await expect(page.locator("#unit-metal")).toHaveText("4");
   await expect(page.locator("#unit-horses")).toHaveText("12");
 });
 
@@ -357,6 +357,71 @@ test("detach herd creates a herd from horde horses", async ({ page, isMobile }) 
     hordeHorses: 9,
     detachedAt: `${deployPoint.q},${deployPoint.r}`,
     statusHorses: "9",
+  });
+});
+
+test("create horse archers spends horde resources and deploys adjacent unit", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop pointer geometry is simpler for deployment assertions");
+
+  await openPlayMode(page);
+
+  const hordePoint = await page.evaluate(() => {
+    const unit = currentMap.units.find((candidate) => candidate.kind === "horde" && candidate.faction === "mongol");
+    const panel = mapPanel.getBoundingClientRect();
+    const center = hexCenter(unit);
+    return {
+      unitId: unit.id,
+      x: panel.left + viewport.offsetX + center.x * viewport.scale,
+      y: panel.top + viewport.offsetY + center.y * viewport.scale,
+    };
+  });
+
+  await page.mouse.click(hordePoint.x, hordePoint.y, { button: "right" });
+  await expect(page.locator("#context-menu [data-action='create-horse-archers']")).toHaveText("Create Horse Archers");
+  await page.locator("#context-menu [data-action='create-horse-archers']").click();
+
+  await expect.poll(() => page.evaluate(() => (
+    createHorseArchersPlacement && createHorseArchersPlacement.deployableHexes.length
+  ))).toBeGreaterThan(0);
+  const deployPoint = await page.evaluate(() => {
+    const hex = createHorseArchersPlacement.deployableHexes[0];
+    const panel = mapPanel.getBoundingClientRect();
+    const center = hexCenter(hex);
+    return {
+      q: hex.q,
+      r: hex.r,
+      x: panel.left + viewport.offsetX + center.x * viewport.scale,
+      y: panel.top + viewport.offsetY + center.y * viewport.scale,
+    };
+  });
+
+  await page.mouse.click(deployPoint.x, deployPoint.y);
+  await expect.poll(() => page.evaluate(({ unitId, q, r }) => {
+    const horde = currentMap.units.find((unit) => unit.id === unitId);
+    const created = currentMap.units.find((unit) => (
+      unit.kind === "horse_archer" && unit.q === q && unit.r === r
+    ));
+    return {
+      population: horde.population,
+      metal: horde.metal,
+      horses: horde.horses,
+      createdKind: created ? created.kind : "",
+      createdMove: created ? created.move : 0,
+      statusPopulation: document.querySelector("#faction-population-total").textContent,
+      statusHorses: document.querySelector("#faction-horses-total").textContent,
+      statusMetal: document.querySelector("#faction-metal-total").textContent,
+    };
+  }, { unitId: hordePoint.unitId, q: deployPoint.q, r: deployPoint.r }), {
+    message: "horde resources should be spent and horse archers should deploy",
+  }).toEqual({
+    population: 3,
+    metal: 3,
+    horses: 9,
+    createdKind: "horse_archer",
+    createdMove: 4,
+    statusPopulation: "3",
+    statusHorses: "9",
+    statusMetal: "3",
   });
 });
 

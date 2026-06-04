@@ -11,7 +11,7 @@ Each Generate click sends a seed and parameters to the C++ engine. Terrain, hydr
 - Coherent steppe-first terrain generation with peripheral hills, forests, mountains, desert, marshes, and lake/river valleys.
 - Edge-based rivers, roads, walls, bridges, fords, and Great Wall gates.
 - Persian and Chinese town regions with cleaner local road meshes and a Silk Road route biased toward useful central anchors.
-- Single strategic map state with units, owners, turn state, selectable units, reachable movement, ZOC flags, integer-scaled movement costs, horde resource counters, and the first horde-to-herd resource action. The first combat units are horse-archers, infantry, and horde; herds are the first movable resource unit.
+- Single strategic map state with units, owners, turn state, selectable units, reachable movement, ZOC flags, integer-scaled movement costs, horde resource counters, horde-to-herd detachment, and horde creation of horse-archers. The first combat units are horse-archers, infantry, and horde; herds are the first movable resource unit.
 - Browser scenario editor with `Terrain`, `Edges`, and `Units` modes. Terrain paints hexes, Edges toggles roads/rivers, and Units toggles deployed units by side and type.
 - Play UI with an active-faction resource status bar above the shared map, a left unit roster/sidebar, and a bottom unit inspector on desktop.
 

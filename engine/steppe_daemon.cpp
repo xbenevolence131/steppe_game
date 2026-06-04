@@ -189,6 +189,12 @@ std::string detach_herd_options_json(const steppe::game::DetachHerdOptions& opti
     return out.str();
 }
 
+std::string create_horse_archers_options_json(const steppe::game::CreateHorseArchersOptions& options) {
+    std::ostringstream out;
+    steppe::game::print_create_horse_archers_options_json(options, out);
+    return out.str();
+}
+
 std::string generated_map_json(const steppe::GeneratedMap& map) {
     std::ostringstream out;
     std::streambuf* previous = std::cout.rdbuf(out.rdbuf());
@@ -294,6 +300,22 @@ std::string handle_command(const std::string& body) {
             state,
             int_field(command, "unitId", 0),
             std::max(0, int_field(command, "horses", 0)),
+            {int_field(to, "q", 0), int_field(to, "r", 0)}
+        );
+        return command_response(game_id, ok, game_patch_json(state, ok));
+    }
+    if (type == "create_horse_archers_options") {
+        const steppe::game::CreateHorseArchersOptions options = steppe::game::create_horse_archers_options(
+            state,
+            int_field(command, "unitId", 0)
+        );
+        return command_response(game_id, true, create_horse_archers_options_json(options));
+    }
+    if (type == "create_horse_archers") {
+        const std::string to = object_field(command, "to");
+        const bool ok = steppe::game::create_horse_archers(
+            state,
+            int_field(command, "unitId", 0),
             {int_field(to, "q", 0), int_field(to, "r", 0)}
         );
         return command_response(game_id, ok, game_patch_json(state, ok));
