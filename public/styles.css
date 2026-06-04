@@ -492,6 +492,70 @@ button.is-active {
   opacity: 0.58;
 }
 
+.combat-preview {
+  position: absolute;
+  z-index: 19;
+  width: min(420px, calc(100% - 16px));
+  padding: 8px;
+  border: 1px solid var(--line);
+  background: #f8f3e8;
+  box-shadow: 0 12px 28px rgba(33, 31, 27, 0.2);
+  pointer-events: none;
+}
+
+.combat-preview[hidden] {
+  display: none;
+}
+
+.combat-preview-title {
+  margin: 0 0 7px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.combat-preview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.combat-preview-side {
+  min-width: 0;
+  border: 1px solid rgba(92, 83, 68, 0.32);
+  background: rgba(255, 252, 246, 0.72);
+  padding: 7px;
+}
+
+.combat-preview-side h3 {
+  margin: 0 0 6px;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.combat-preview-row {
+  display: grid;
+  grid-template-columns: minmax(72px, 1fr) minmax(42px, auto);
+  gap: 8px;
+  align-items: baseline;
+  min-height: 18px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.combat-preview-row strong {
+  color: var(--ink);
+  font-weight: 700;
+  text-align: right;
+}
+
+.combat-preview-result {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(92, 83, 68, 0.26);
+}
+
 .detach-herd-popover {
   position: absolute;
   z-index: 21;

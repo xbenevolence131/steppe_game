@@ -79,6 +79,18 @@ int main(int argc, char** argv) {
             );
             return EXIT_SUCCESS;
         }
+        if (command == "game-combat-preview") {
+            const steppe::game::GameState state = steppe::game::parse_game_state_json(read_stdin());
+            steppe::game::print_combat_preview_json(
+                steppe::game::combat_preview(
+                    state,
+                    int_arg(argc, argv, "--attacker", 0),
+                    int_arg(argc, argv, "--defender", 0)
+                ),
+                std::cout
+            );
+            return EXIT_SUCCESS;
+        }
         if (command == "game-move") {
             steppe::game::GameState state = steppe::game::parse_game_state_json(read_stdin());
             const bool ok = steppe::game::move_unit(

@@ -195,6 +195,12 @@ std::string create_horse_archers_options_json(const steppe::game::CreateHorseArc
     return out.str();
 }
 
+std::string combat_preview_json(const steppe::game::CombatPreview& preview) {
+    std::ostringstream out;
+    steppe::game::print_combat_preview_json(preview, out);
+    return out.str();
+}
+
 std::string generated_map_json(const steppe::GeneratedMap& map) {
     std::ostringstream out;
     std::streambuf* previous = std::cout.rdbuf(out.rdbuf());
@@ -285,6 +291,14 @@ std::string handle_command(const std::string& body) {
             int_field(command, "defenderId", 0)
         );
         return command_response(game_id, ok, game_patch_json(state, ok));
+    }
+    if (type == "combat_preview") {
+        const steppe::game::CombatPreview preview = steppe::game::combat_preview(
+            state,
+            int_field(command, "attackerId", 0),
+            int_field(command, "defenderId", 0)
+        );
+        return command_response(game_id, preview.valid, combat_preview_json(preview));
     }
     if (type == "detach_herd_options") {
         const steppe::game::DetachHerdOptions options = steppe::game::detach_herd_options(

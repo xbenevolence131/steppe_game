@@ -3,6 +3,7 @@ const ctx = canvas.getContext("2d");
 const appShell = document.querySelector("#app-shell");
 const mapPanel = document.querySelector("#map-panel");
 const contextMenu = document.querySelector("#context-menu");
+const combatPreview = document.querySelector("#combat-preview");
 const detachHerdPopover = document.querySelector("#detach-herd-popover");
 const detachHerdForm = document.querySelector("#detach-herd-form");
 const detachHerdHorsesInput = document.querySelector("#detach-herd-horses");
@@ -58,6 +59,8 @@ const sidebarSelectionReadout = document.querySelector(".sidebar-selection-reado
 const unitRoster = document.querySelector("#unit-roster");
 const unitName = document.querySelector("#unit-name");
 const unitHp = document.querySelector("#unit-hp");
+const unitAttack = document.querySelector("#unit-attack");
+const unitDefense = document.querySelector("#unit-defense");
 const unitMove = document.querySelector("#unit-move");
 const unitResources = document.querySelector("#unit-resources");
 const unitPopulation = document.querySelector("#unit-population");
@@ -77,6 +80,8 @@ let currentTurn = 1;
 let activeFactionIndex = 0;
 let activeContextMenu = null;
 let contextMenuRequestId = 0;
+let combatPreviewRequestId = 0;
+let combatPreviewTargetId = 0;
 let detachHerdAmountContext = null;
 let detachHerdPlacement = null;
 let createHorseArchersPlacement = null;
@@ -203,11 +208,11 @@ const factionCount = 2;
 const factionTurnOrder = ["mongol", "chinese", "persian"].slice(0, factionCount);
 
 const unitTypeDefaults = {
-  camp: { hp: 1, move: 0 },
-  herd: { hp: 1, move: 3 },
-  horse_archer: { hp: 10, move: 4 },
-  infantry: { hp: 10, move: 2 },
-  horde: { hp: 10, move: 3, projectsZoc: true, respectsZoc: true, population: 0, metal: 0, horses: 0 },
+  camp: { hp: 1, attack: 0, defense: 1, move: 0 },
+  herd: { hp: 1, attack: 0, defense: 1, move: 3 },
+  horse_archer: { hp: 10, attack: 4, defense: 3, move: 4 },
+  infantry: { hp: 10, attack: 3, defense: 5, move: 2 },
+  horde: { hp: 10, attack: 2, defense: 3, move: 3, projectsZoc: true, respectsZoc: true, population: 0, metal: 0, horses: 0 },
 };
 
 function terrainStyle(key) {
@@ -711,6 +716,7 @@ function ensureGameMeta() {
 
 function normalizeUnit(unit, index) {
   const kind = typeof unit.kind === "string" ? (unit.kind === "cavalry" ? "horse_archer" : unit.kind) : "horse_archer";
+  const defaults = unitTypeDefaults[kind] || unitTypeDefaults.horse_archer;
   const owner = Number.isInteger(unit.owner) ? unit.owner : null;
   const ownerFaction = Object.entries(factions).find(([, faction]) => faction.owner === owner);
   const faction = typeof unit.faction === "string" && factions[unit.faction]
@@ -726,6 +732,8 @@ function normalizeUnit(unit, index) {
   if (owner !== null) normalized.owner = owner;
   if (Number.isFinite(unit.hp)) normalized.hp = unit.hp;
   if (Number.isFinite(unit.maxHp)) normalized.maxHp = unit.maxHp;
+  normalized.attack = Number.isFinite(unit.attack) ? Math.max(0, Math.trunc(unit.attack)) : defaults.attack;
+  normalized.defense = Number.isFinite(unit.defense) ? Math.max(1, Math.trunc(unit.defense)) : defaults.defense;
   if (Number.isFinite(unit.population)) normalized.population = Math.max(0, Math.trunc(unit.population));
   if (Number.isFinite(unit.metal)) normalized.metal = Math.max(0, Math.trunc(unit.metal));
   if (Number.isFinite(unit.horses)) normalized.horses = Math.max(0, Math.trunc(unit.horses));
@@ -796,6 +804,130 @@ function legalMoveAt(coord) {
 
 function legalAttackForUnit(unit) {
   return unit ? legalAttacks().find((attack) => attack.unitId === unit.id) || null : null;
+}
+
+function hideCombatPreview() {
+  combatPreviewRequestId += 1;
+  combatPreviewTargetId = 0;
+  combatPreview.hidden = true;
+  combatPreview.replaceChildren();
+}
+
+function positionCombatPreview(clientX, clientY) {
+  const rect = mapPanel.getBoundingClientRect();
+  const margin = 8;
+  const rawLeft = clientX - rect.left + 14;
+  const rawTop = clientY - rect.top + 14;
+  const maxLeft = Math.max(margin, rect.width - combatPreview.offsetWidth - margin);
+  const maxTop = Math.max(margin, rect.height - combatPreview.offsetHeight - margin);
+  combatPreview.style.left = `${clamp(rawLeft, margin, maxLeft)}px`;
+  combatPreview.style.top = `${clamp(rawTop, margin, maxTop)}px`;
+}
+
+function combatantTitle(combatant) {
+  return unitDisplayName({
+    faction: combatant.faction,
+    kind: combatant.kind,
+  });
+}
+
+function appendCombatRow(parent, label, value) {
+  const row = document.createElement("div");
+  row.className = "combat-preview-row";
+  const name = document.createElement("span");
+  name.textContent = label;
+  const score = document.createElement("strong");
+  score.textContent = value;
+  row.append(name, score);
+  parent.appendChild(row);
+}
+
+function appendCombatSide(parent, title, combatant, mode) {
+  const side = document.createElement("section");
+  side.className = "combat-preview-side";
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+  side.appendChild(heading);
+  appendCombatRow(side, "Unit", combatantTitle(combatant));
+  appendCombatRow(side, "HP", `${combatant.hp}/${combatant.maxHp}`);
+  appendCombatRow(side, mode === "attack" ? "Base attack" : "Base defense", String(
+    mode === "attack" ? combatant.baseAttack : combatant.baseDefense
+  ));
+  appendCombatRow(side, "HP factor", `${combatant.hpPercent}%`);
+  appendCombatRow(side, "Terrain", mode === "attack" ? "-" : `${combatant.terrainDefensePercent}%`);
+  appendCombatRow(side, "Score", String(mode === "attack" ? combatant.effectiveAttack : combatant.effectiveDefense));
+  appendCombatRow(side, mode === "attack" ? "Damage" : "Taken", String(
+    mode === "attack" ? combatant.damageDealt : combatant.damageTaken
+  ));
+
+  const result = document.createElement("div");
+  result.className = "combat-preview-result";
+  appendCombatRow(result, "Result", `${combatant.resultHp}/${combatant.maxHp}${combatant.destroyed ? " destroyed" : ""}`);
+  side.appendChild(result);
+  parent.appendChild(side);
+}
+
+function renderCombatPreview(preview, clientX, clientY) {
+  combatPreview.replaceChildren();
+  const title = document.createElement("div");
+  title.className = "combat-preview-title";
+  title.textContent = preview.defenderRetaliates ? "Combat Preview" : "Combat Preview - No Retaliation";
+  const grid = document.createElement("div");
+  grid.className = "combat-preview-grid";
+  appendCombatSide(grid, "Attacker", preview.attacker, "attack");
+  appendCombatSide(grid, "Defender", preview.defender, "defense");
+  combatPreview.append(title, grid);
+  combatPreview.hidden = false;
+  positionCombatPreview(clientX, clientY);
+}
+
+async function showCombatPreviewFor(event, defender) {
+  const attacker = selectedUnit();
+  if (!attacker || !defender || !legalAttackForUnit(defender)) {
+    hideCombatPreview();
+    return;
+  }
+
+  if (combatPreviewTargetId === defender.id && !combatPreview.hidden) {
+    positionCombatPreview(event.clientX, event.clientY);
+    return;
+  }
+
+  const requestId = combatPreviewRequestId + 1;
+  combatPreviewRequestId = requestId;
+  combatPreviewTargetId = defender.id;
+  try {
+    const preview = await postAppCommand({
+      type: "combat_preview",
+      attackerId: attacker.id,
+      defenderId: defender.id,
+    });
+    if (requestId !== combatPreviewRequestId || combatPreviewTargetId !== defender.id) {
+      return;
+    }
+    if (!preview || !preview.valid) {
+      hideCombatPreview();
+      return;
+    }
+    renderCombatPreview(preview, event.clientX, event.clientY);
+  } catch {
+    if (requestId === combatPreviewRequestId) {
+      hideCombatPreview();
+    }
+  }
+}
+
+function updateCombatPreviewHover(event) {
+  if (appMode !== "play" || isPanning || isPainting || detachHerdPlacement || createHorseArchersPlacement) {
+    hideCombatPreview();
+    return;
+  }
+  const unit = findUnitAtPoint(panelToWorld(event));
+  if (!unit || !legalAttackForUnit(unit)) {
+    hideCombatPreview();
+    return;
+  }
+  showCombatPreviewFor(event, unit);
 }
 
 const contextActionDefinitions = [
@@ -936,6 +1068,8 @@ function syncUnitInspector() {
     sidebarSelectionReadout.textContent = "None";
     unitName.textContent = "None";
     unitHp.textContent = "-";
+    unitAttack.textContent = "-";
+    unitDefense.textContent = "-";
     unitMove.textContent = "-";
     unitResources.hidden = true;
     unitPopulation.textContent = "0";
@@ -946,6 +1080,8 @@ function syncUnitInspector() {
   sidebarSelectionReadout.textContent = unitDisplayName(unit);
   unitName.textContent = unitDisplayName(unit);
   unitHp.textContent = Number.isFinite(unit.hp) && Number.isFinite(unit.maxHp) ? `${unit.hp}/${unit.maxHp}` : "-";
+  unitAttack.textContent = Number.isFinite(unit.attack) ? String(unit.attack) : "-";
+  unitDefense.textContent = Number.isFinite(unit.defense) ? String(unit.defense) : "-";
   unitMove.textContent = Number.isFinite(unit.remainingMove) && Number.isFinite(unit.move) ? `${unit.remainingMove}/${unit.move}` : "-";
   const showResources = unit.kind === "horde";
   unitResources.hidden = !showResources;
@@ -988,6 +1124,7 @@ function syncModeControls() {
 }
 
 function setAppMode(mode) {
+  hideCombatPreview();
   appMode = mode;
   if (mode !== "scenario") {
     setEditMode(false);
@@ -1708,6 +1845,7 @@ async function selectUnit(unit) {
   if (!unit) {
     return false;
   }
+  hideCombatPreview();
   const payload = await postAppCommand({
     type: "select_unit",
     unitId: unit.id,
@@ -1724,6 +1862,7 @@ async function moveSelectedUnitTo(coord) {
   if (!move) {
     return false;
   }
+  hideCombatPreview();
   const payload = await postAppCommand({
     type: "move_unit",
     unitId: unit.id,
@@ -1740,6 +1879,7 @@ async function attackSelectedUnit(defender) {
   if (!attacker || !defender || !legalAttackForUnit(defender)) {
     return false;
   }
+  hideCombatPreview();
   const payload = await postAppCommand({
     type: "attack_unit",
     attackerId: attacker.id,
@@ -1752,6 +1892,7 @@ async function attackSelectedUnit(defender) {
 }
 
 async function advanceTurn() {
+  hideCombatPreview();
   try {
     applyGamePatch(await postAppCommand({ type: "end_turn" }));
   } catch (error) {
@@ -1904,6 +2045,8 @@ function makeEditorUnit(coord) {
     r: coord.r,
     hp: defaults.hp,
     maxHp: defaults.hp,
+    attack: defaults.attack,
+    defense: defaults.defense,
     move: defaults.move,
     remainingMove: defaults.move,
     population: Number.isInteger(defaults.population) ? defaults.population : 0,
@@ -2353,6 +2496,7 @@ mapPanel.addEventListener("wheel", (event) => {
 
 mapPanel.addEventListener("pointerdown", async (event) => {
   mapPanel.focus();
+  hideCombatPreview();
   if (event.button === 2) {
     event.preventDefault();
     hideDetachHerdAmount();
@@ -2420,13 +2564,16 @@ mapPanel.addEventListener("pointerdown", async (event) => {
 
 mapPanel.addEventListener("pointermove", (event) => {
   if (isPainting) {
+    hideCombatPreview();
     event.preventDefault();
     paintAtPointer(event);
     return;
   }
   if (!isPanning) {
+    updateCombatPreviewHover(event);
     return;
   }
+  hideCombatPreview();
   panBy(event.clientX - lastPointer.x, event.clientY - lastPointer.y);
   lastPointer = { x: event.clientX, y: event.clientY };
 });
@@ -2467,6 +2614,7 @@ mapPanel.addEventListener("contextmenu", (event) => {
 
 mapPanel.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
+    hideCombatPreview();
     hideContextMenu();
     hideDetachHerdAmount();
     cancelDetachHerdPlacement();

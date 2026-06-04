@@ -191,6 +191,32 @@ int default_move(UnitKind kind) {
     return 0;
 }
 
+int default_attack(UnitKind kind) {
+    if (kind == UnitKind::HorseArcher) {
+        return 4;
+    }
+    if (kind == UnitKind::Infantry) {
+        return 3;
+    }
+    if (kind == UnitKind::Horde) {
+        return 2;
+    }
+    return 0;
+}
+
+int default_defense(UnitKind kind) {
+    if (kind == UnitKind::HorseArcher) {
+        return 3;
+    }
+    if (kind == UnitKind::Infantry) {
+        return 5;
+    }
+    if (kind == UnitKind::Horde) {
+        return 3;
+    }
+    return 1;
+}
+
 bool default_projects_zoc(UnitKind kind) {
     return kind == UnitKind::HorseArcher || kind == UnitKind::Infantry || kind == UnitKind::Horde;
 }
@@ -200,7 +226,7 @@ bool default_respects_zoc(UnitKind kind) {
 }
 
 bool can_attack(UnitKind kind) {
-    return kind == UnitKind::HorseArcher || kind == UnitKind::Infantry || kind == UnitKind::Horde;
+    return default_attack(kind) > 0;
 }
 
 int next_unit_id(const GameState& state) {
@@ -598,6 +624,8 @@ GameState create_default_play_sandbox(int width, int height, int faction_count) 
         unit.coord = coord;
         unit.hp = default_hp(unit.kind);
         unit.max_hp = unit.hp;
+        unit.attack = default_attack(unit.kind);
+        unit.defense = default_defense(unit.kind);
         unit.scaled_move = to_scaled_move(default_move(unit.kind));
         unit.remaining_scaled_move = unit.scaled_move;
         if (unit.kind == UnitKind::Horde) {
@@ -650,6 +678,69 @@ const Unit* find_unit(const GameState& state, int unit_id) {
         return unit.id == unit_id;
     });
     return found == state.units.end() ? nullptr : &*found;
+}
+
+int terrain_defense_percent(Terrain terrain) {
+    switch (terrain) {
+        case Terrain::Hill:
+        case Terrain::Forest:
+            return 125;
+        case Terrain::Mountain:
+            return 150;
+        case Terrain::Urban:
+            return 115;
+        case Terrain::Marsh:
+            return 90;
+        case Terrain::Grassland:
+        case Terrain::Desert:
+        case Terrain::None:
+        case Terrain::Lake:
+            return 100;
+    }
+    return 100;
+}
+
+int terrain_defense_percent_at(const GameState& state, const Coord& coord) {
+    const GameHex* hex = find_hex(state, coord);
+    return terrain_defense_percent(hex == nullptr ? Terrain::None : hex->terrain);
+}
+
+int hp_scaled_strength(int strength, const Unit& unit) {
+    if (strength <= 0 || unit.hp <= 0 || unit.max_hp <= 0) {
+        return 0;
+    }
+    return std::max(1, (strength * unit.hp + unit.max_hp - 1) / unit.max_hp);
+}
+
+int hp_percent(const Unit& unit) {
+    if (unit.hp <= 0 || unit.max_hp <= 0) {
+        return 0;
+    }
+    return std::max(1, std::min(100, (unit.hp * 100 + unit.max_hp / 2) / unit.max_hp));
+}
+
+int effective_attack_score(const Unit& attacker) {
+    return hp_scaled_strength(attacker.attack, attacker);
+}
+
+int effective_defense_score(const GameState& state, const Unit& defender) {
+    const int defense_strength = hp_scaled_strength(defender.defense, defender);
+    if (defense_strength <= 0) {
+        return 0;
+    }
+    return std::max(
+        1,
+        (defense_strength * terrain_defense_percent_at(state, defender.coord) + 99) / 100
+    );
+}
+
+int combat_damage(const GameState& state, const Unit& attacker, const Unit& defender) {
+    const int attack_strength = effective_attack_score(attacker);
+    const int defense_strength = effective_defense_score(state, defender);
+    if (attack_strength <= 0 || defense_strength <= 0) {
+        return 0;
+    }
+    return std::max(1, std::min(7, (attack_strength * 3 + defense_strength - 1) / defense_strength));
 }
 
 const Unit* unit_at(const GameState& state, const Coord& coord) {
@@ -777,7 +868,11 @@ std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id) {
 std::vector<AttackableUnit> attackable_units(const GameState& state, int unit_id) {
     std::vector<AttackableUnit> attackable;
     const Unit* attacker = find_unit(state, unit_id);
-    if (attacker == nullptr || attacker->owner != active_faction(state) || attacker->combat_done || !can_attack(attacker->kind)) {
+    if (attacker == nullptr
+        || attacker->owner != active_faction(state)
+        || attacker->combat_done
+        || !can_attack(attacker->kind)
+        || attacker->attack <= 0) {
         return attackable;
     }
 
@@ -798,6 +893,72 @@ std::vector<AttackableUnit> attackable_units(const GameState& state, int unit_id
         return coord_less(first.coord, second.coord);
     });
     return attackable;
+}
+
+CombatantPreview combatant_preview(const GameState& state, const Unit& unit) {
+    CombatantPreview preview;
+    preview.unit_id = unit.id;
+    preview.owner = unit.owner;
+    preview.kind = unit.kind;
+    preview.coord = unit.coord;
+    const GameHex* hex = find_hex(state, unit.coord);
+    preview.terrain = hex == nullptr ? Terrain::None : hex->terrain;
+    preview.hp = unit.hp;
+    preview.max_hp = unit.max_hp;
+    preview.base_attack = unit.attack;
+    preview.base_defense = unit.defense;
+    preview.hp_percent = hp_percent(unit);
+    preview.terrain_defense_percent = terrain_defense_percent_at(state, unit.coord);
+    preview.effective_attack = effective_attack_score(unit);
+    preview.effective_defense = effective_defense_score(state, unit);
+    preview.result_hp = unit.hp;
+    return preview;
+}
+
+bool legal_combat_pair(const GameState& state, const Unit* attacker, const Unit* defender) {
+    return attacker != nullptr
+        && defender != nullptr
+        && attacker->owner == active_faction(state)
+        && !attacker->combat_done
+        && can_attack(attacker->kind)
+        && attacker->attack > 0
+        && attacker->owner != defender->owner
+        && defender->hp > 0
+        && adjacent(attacker->coord, defender->coord);
+}
+
+CombatPreview combat_preview(const GameState& state, int attacker_id, int defender_id) {
+    CombatPreview preview;
+    const Unit* attacker = find_unit(state, attacker_id);
+    const Unit* defender = find_unit(state, defender_id);
+    if (!legal_combat_pair(state, attacker, defender)) {
+        return preview;
+    }
+
+    preview.valid = true;
+    preview.attacker = combatant_preview(state, *attacker);
+    preview.defender = combatant_preview(state, *defender);
+
+    const int defender_damage = combat_damage(state, *attacker, *defender);
+    preview.attacker.damage_dealt = defender_damage;
+    preview.defender.damage_taken = defender_damage;
+    preview.defender.result_hp = std::max(0, defender->hp - defender_damage);
+    preview.defender.destroyed = preview.defender.result_hp <= 0;
+
+    preview.defender_retaliates = !preview.defender.destroyed
+        && can_attack(defender->kind)
+        && defender->attack > 0
+        && adjacent(attacker->coord, defender->coord);
+    if (preview.defender_retaliates) {
+        Unit retaliation_defender = *defender;
+        retaliation_defender.hp = preview.defender.result_hp;
+        const int attacker_damage = combat_damage(state, retaliation_defender, *attacker);
+        preview.defender.damage_dealt = attacker_damage;
+        preview.attacker.damage_taken = attacker_damage;
+        preview.attacker.result_hp = std::max(0, attacker->hp - attacker_damage);
+        preview.attacker.destroyed = preview.attacker.result_hp <= 0;
+    }
+    return preview;
 }
 
 bool select_unit(GameState& state, int unit_id) {
@@ -840,20 +1001,19 @@ bool move_unit(GameState& state, int unit_id, Coord destination) {
 }
 
 bool attack_unit(GameState& state, int attacker_id, int defender_id) {
-    Unit* attacker = find_unit(state, attacker_id);
-    Unit* defender = find_unit(state, defender_id);
-    if (attacker == nullptr
-        || defender == nullptr
-        || attacker->owner != active_faction(state)
-        || attacker->combat_done
-        || !can_attack(attacker->kind)
-        || attacker->owner == defender->owner
-        || !adjacent(attacker->coord, defender->coord)) {
+    const CombatPreview preview = combat_preview(state, attacker_id, defender_id);
+    if (!preview.valid) {
         return false;
     }
 
-    constexpr int attack_damage = 3;
-    defender->hp = std::max(0, defender->hp - attack_damage);
+    Unit* attacker = find_unit(state, attacker_id);
+    Unit* defender = find_unit(state, defender_id);
+    if (attacker == nullptr || defender == nullptr) {
+        return false;
+    }
+
+    defender->hp = preview.defender.result_hp;
+    attacker->hp = preview.attacker.result_hp;
     attacker = find_unit(state, attacker_id);
     if (attacker != nullptr) {
         attacker->remaining_scaled_move = 0;
@@ -863,7 +1023,7 @@ bool attack_unit(GameState& state, int attacker_id, int defender_id) {
     state.units.erase(std::remove_if(state.units.begin(), state.units.end(), [](const Unit& unit) {
         return unit.hp <= 0;
     }), state.units.end());
-    state.selected_unit_id = attacker_id;
+    state.selected_unit_id = find_unit(state, attacker_id) == nullptr ? 0 : attacker_id;
     refresh_legal_actions(state);
     return true;
 }
@@ -914,6 +1074,8 @@ bool detach_herd(GameState& state, int unit_id, int horses, Coord destination) {
     herd.coord = destination;
     herd.hp = default_hp(herd.kind);
     herd.max_hp = herd.hp;
+    herd.attack = default_attack(herd.kind);
+    herd.defense = default_defense(herd.kind);
     herd.scaled_move = to_scaled_move(default_move(herd.kind));
     herd.remaining_scaled_move = herd.scaled_move;
     herd.horses = horses;
@@ -976,6 +1138,8 @@ bool create_horse_archers(GameState& state, int unit_id, Coord destination) {
     horse_archers.coord = destination;
     horse_archers.hp = default_hp(horse_archers.kind);
     horse_archers.max_hp = horse_archers.hp;
+    horse_archers.attack = default_attack(horse_archers.kind);
+    horse_archers.defense = default_defense(horse_archers.kind);
     horse_archers.scaled_move = to_scaled_move(default_move(horse_archers.kind));
     horse_archers.remaining_scaled_move = horse_archers.scaled_move;
     horse_archers.projects_zoc = default_projects_zoc(horse_archers.kind);
@@ -1041,6 +1205,8 @@ void print_unit_json(const Unit& unit, std::ostream& out) {
         << ",\"r\":" << unit.coord.r
         << ",\"hp\":" << unit.hp
         << ",\"maxHp\":" << unit.max_hp
+        << ",\"attack\":" << unit.attack
+        << ",\"defense\":" << unit.defense
         << ",\"scaledMove\":" << unit.scaled_move
         << ",\"remainingScaledMove\":" << unit.remaining_scaled_move
         << ",\"refMove\":" << to_ref_move(unit.scaled_move)
@@ -1239,6 +1405,40 @@ void print_attackable_json(const std::vector<AttackableUnit>& attackable, std::o
     out << "}\n";
 }
 
+void print_combatant_preview_json(const CombatantPreview& preview, std::ostream& out) {
+    const Clan clan = clan_for_owner(preview.owner);
+    out << "{\"unitId\":" << preview.unit_id
+        << ",\"owner\":" << preview.owner
+        << ",\"faction\":\"" << clan.key << "\""
+        << ",\"kind\":\"" << unit_kind_to_string(preview.kind) << "\""
+        << ",\"q\":" << preview.coord.q
+        << ",\"r\":" << preview.coord.r
+        << ",\"terrain\":\"" << terrain_to_string(preview.terrain) << "\""
+        << ",\"hp\":" << preview.hp
+        << ",\"maxHp\":" << preview.max_hp
+        << ",\"baseAttack\":" << preview.base_attack
+        << ",\"baseDefense\":" << preview.base_defense
+        << ",\"hpPercent\":" << preview.hp_percent
+        << ",\"terrainDefensePercent\":" << preview.terrain_defense_percent
+        << ",\"effectiveAttack\":" << preview.effective_attack
+        << ",\"effectiveDefense\":" << preview.effective_defense
+        << ",\"damageDealt\":" << preview.damage_dealt
+        << ",\"damageTaken\":" << preview.damage_taken
+        << ",\"resultHp\":" << preview.result_hp
+        << ",\"destroyed\":" << (preview.destroyed ? "true" : "false")
+        << "}";
+}
+
+void print_combat_preview_json(const CombatPreview& preview, std::ostream& out) {
+    out << "{\"valid\":" << (preview.valid ? "true" : "false")
+        << ",\"defenderRetaliates\":" << (preview.defender_retaliates ? "true" : "false")
+        << ",\"attacker\":";
+    print_combatant_preview_json(preview.attacker, out);
+    out << ",\"defender\":";
+    print_combatant_preview_json(preview.defender, out);
+    out << "}\n";
+}
+
 void print_detach_herd_options_json(const DetachHerdOptions& options, std::ostream& out) {
     out << "{\"unitId\":" << options.unit_id
         << ",\"horses\":" << options.horses
@@ -1391,6 +1591,8 @@ GameState parse_game_state_json(const std::string& json) {
         unit.coord = {int_field(unit_json, "q", 0), int_field(unit_json, "r", 0)};
         unit.hp = int_field(unit_json, "hp", default_hp(unit.kind));
         unit.max_hp = int_field(unit_json, "maxHp", unit.hp);
+        unit.attack = std::max(0, int_field(unit_json, "attack", default_attack(unit.kind)));
+        unit.defense = std::max(1, int_field(unit_json, "defense", default_defense(unit.kind)));
         const int default_scaled_move = to_scaled_move(default_move(unit.kind));
         unit.scaled_move = int_field(
             unit_json,

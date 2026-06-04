@@ -55,6 +55,31 @@ function corridorGameState() {
   };
 }
 
+function combatGameState(defenderTerrain = "grassland") {
+  const hexes = [];
+  for (let r = 1; r <= 2; r += 1) {
+    for (let q = 1; q <= 3; q += 1) {
+      hexes.push({ q, r, terrain: q === 2 && r === 1 ? defenderTerrain : "grassland", labels: [] });
+    }
+  }
+  return {
+    width: 3,
+    height: 2,
+    seed: 0,
+    hexes,
+    units: [
+      { id: 1, owner: 1, faction: "mongol", kind: "horse_archer", q: 1, r: 1, hp: 10, maxHp: 10, remainingScaledMove: 32 },
+      { id: 2, owner: 2, faction: "chinese", kind: "horse_archer", q: 2, r: 1, hp: 10, maxHp: 10, remainingScaledMove: 32 },
+    ],
+    game: {
+      round: 1,
+      activeFactionIndex: 0,
+      selectedUnitId: 1,
+      turnOrder: [1, 2],
+    },
+  };
+}
+
 test("movement can pass through friendly units without stacking", async ({ isMobile }) => {
   test.skip(isMobile, "engine rule is covered once on desktop");
 
@@ -69,6 +94,42 @@ test("movement can pass through friendly units without stacking", async ({ isMob
   });
   expect(moveToFriendly.status).not.toBe(0);
   expect(JSON.parse(moveToFriendly.stdout).ok).toBe(false);
+});
+
+test("combat uses unit stats terrain defense and retaliation", async ({ isMobile }) => {
+  test.skip(isMobile, "engine combat rule is covered once on desktop");
+
+  const preview = runEngineJson(["game-combat-preview", "--attacker", "1", "--defender", "2"], combatGameState("grassland"));
+  expect(preview.valid).toBe(true);
+  expect(preview.defenderRetaliates).toBe(true);
+  expect(preview.attacker.effectiveAttack).toBe(4);
+  expect(preview.attacker.damageDealt).toBe(4);
+  expect(preview.attacker.damageTaken).toBe(3);
+  expect(preview.attacker.resultHp).toBe(7);
+  expect(preview.defender.effectiveDefense).toBe(3);
+  expect(preview.defender.damageTaken).toBe(4);
+  expect(preview.defender.resultHp).toBe(6);
+
+  const grass = runEngineJson(["game-attack", "--attacker", "1", "--defender", "2"], combatGameState("grassland"));
+  const grassAttacker = grass.units.find((unit) => unit.id === 1);
+  const grassDefender = grass.units.find((unit) => unit.id === 2);
+  expect(grass.ok).toBe(true);
+  expect(grassAttacker.hp).toBe(7);
+  expect(grassAttacker.remainingScaledMove).toBe(0);
+  expect(grassAttacker.moveDone).toBe(true);
+  expect(grassAttacker.combatDone).toBe(true);
+  expect(grassDefender.hp).toBe(6);
+
+  const hill = runEngineJson(["game-attack", "--attacker", "1", "--defender", "2"], combatGameState("hill"));
+  const hillPreview = runEngineJson(["game-combat-preview", "--attacker", "1", "--defender", "2"], combatGameState("hill"));
+  const hillAttacker = hill.units.find((unit) => unit.id === 1);
+  const hillDefender = hill.units.find((unit) => unit.id === 2);
+  expect(hillPreview.defender.terrainDefensePercent).toBe(125);
+  expect(hillPreview.defender.effectiveDefense).toBe(4);
+  expect(hillPreview.defender.damageTaken).toBe(3);
+  expect(hill.ok).toBe(true);
+  expect(hillAttacker.hp).toBe(7);
+  expect(hillDefender.hp).toBe(7);
 });
 
 test("great wall avoids the southwest corner on southern access seeds", async ({ isMobile }) => {
@@ -262,6 +323,8 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   await expect(page.locator(".sidebar-selection-readout")).toHaveText("Mongol Horse Archers");
   await expect(page.locator("#unit-name")).toHaveText("Mongol Horse Archers");
   await expect(page.locator("#unit-hp")).toHaveText("10/10");
+  await expect(page.locator("#unit-attack")).toHaveText("4");
+  await expect(page.locator("#unit-defense")).toHaveText("3");
   await expect(page.locator("#unit-move")).toHaveText("4/4");
   await expect(page.locator("#unit-resources")).toBeHidden();
   await expect(page.locator("#play-details-bar")).toBeVisible();
@@ -494,6 +557,7 @@ test("horde resource actions are unavailable next to enemies", async ({ page, is
     const activeHorde = currentMap.units.find((unit) => unit.id === horde.id);
     const panel = mapPanel.getBoundingClientRect();
     const center = hexCenter(activeHorde);
+    const enemyCenter = hexCenter(movedEnemy);
     return {
       enemyAdjacent: hordeNeighbors.some((neighbor) => neighbor.q === movedEnemy.q && neighbor.r === movedEnemy.r),
       attackable: currentMap.game.legalAttacks.some((attack) => attack.unitId === enemy.id),
@@ -501,6 +565,8 @@ test("horde resource actions are unavailable next to enemies", async ({ page, is
       detachDeployable: detachOptions.deployableHexes.length,
       x: panel.left + viewport.offsetX + center.x * viewport.scale,
       y: panel.top + viewport.offsetY + center.y * viewport.scale,
+      enemyX: panel.left + viewport.offsetX + enemyCenter.x * viewport.scale,
+      enemyY: panel.top + viewport.offsetY + enemyCenter.y * viewport.scale,
     };
   });
 
@@ -508,6 +574,12 @@ test("horde resource actions are unavailable next to enemies", async ({ page, is
   expect(result.attackable).toBe(true);
   expect(result.createDeployable).toBe(0);
   expect(result.detachDeployable).toBe(0);
+  await page.mouse.move(result.enemyX, result.enemyY);
+  await expect(page.locator("#combat-preview")).toBeVisible();
+  await expect(page.locator("#combat-preview")).toContainText("Combat Preview");
+  await expect(page.locator("#combat-preview")).toContainText("Attacker");
+  await expect(page.locator("#combat-preview")).toContainText("Defender");
+  await expect(page.locator("#combat-preview")).toContainText("Result");
   await page.mouse.click(result.x, result.y, { button: "right" });
   await expect(page.locator("#context-menu [data-action='detach-herd']")).toHaveCount(0);
   await expect(page.locator("#context-menu [data-action='create-horse-archers']")).toHaveCount(0);

@@ -100,6 +100,8 @@ struct Unit {
     Coord coord;
     int hp = 10;
     int max_hp = 10;
+    int attack = 0;
+    int defense = 1;
     int scaled_move = 32;
     int remaining_scaled_move = 32;
     int population = 0;
@@ -120,6 +122,33 @@ struct ReachableHex {
 struct AttackableUnit {
     int unit_id = 0;
     Coord coord;
+};
+
+struct CombatantPreview {
+    int unit_id = 0;
+    OwnerId owner = neutral_owner;
+    UnitKind kind = UnitKind::HorseArcher;
+    Coord coord;
+    Terrain terrain = Terrain::None;
+    int hp = 0;
+    int max_hp = 0;
+    int base_attack = 0;
+    int base_defense = 0;
+    int hp_percent = 0;
+    int terrain_defense_percent = 100;
+    int effective_attack = 0;
+    int effective_defense = 0;
+    int damage_dealt = 0;
+    int damage_taken = 0;
+    int result_hp = 0;
+    bool destroyed = false;
+};
+
+struct CombatPreview {
+    bool valid = false;
+    bool defender_retaliates = false;
+    CombatantPreview attacker;
+    CombatantPreview defender;
 };
 
 struct DetachHerdOptions {
@@ -176,6 +205,7 @@ GameState create_default_play_sandbox(int width = 10, int height = 10, int facti
 OwnerId active_faction(const GameState& state);
 std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id);
 std::vector<AttackableUnit> attackable_units(const GameState& state, int unit_id);
+CombatPreview combat_preview(const GameState& state, int attacker_id, int defender_id);
 bool select_unit(GameState& state, int unit_id);
 bool move_unit(GameState& state, int unit_id, Coord destination);
 bool attack_unit(GameState& state, int attacker_id, int defender_id);
@@ -188,6 +218,7 @@ void end_turn(GameState& state);
 void print_game_state_json(const GameState& state, std::ostream& out);
 void print_reachable_json(const std::vector<ReachableHex>& reachable, std::ostream& out);
 void print_attackable_json(const std::vector<AttackableUnit>& attackable, std::ostream& out);
+void print_combat_preview_json(const CombatPreview& preview, std::ostream& out);
 void print_detach_herd_options_json(const DetachHerdOptions& options, std::ostream& out);
 void print_create_horse_archers_options_json(const CreateHorseArchersOptions& options, std::ostream& out);
 void print_game_patch_json(const GameState& state, bool ok, std::ostream& out);
