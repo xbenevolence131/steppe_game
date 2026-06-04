@@ -52,7 +52,7 @@ const roundCount = document.querySelector("#round-count");
 const turnStatusReadout = document.querySelector("#turn-status-readout");
 const campCount = document.querySelector("#camp-count");
 const herdCount = document.querySelector("#herd-count");
-const cavalryCount = document.querySelector("#cavalry-count");
+const horseArcherCount = document.querySelector("#horse-archer-count");
 const hordeCount = document.querySelector("#horde-count");
 const sidebarSelectionReadout = document.querySelector(".sidebar-selection-readout");
 const unitRoster = document.querySelector("#unit-roster");
@@ -203,7 +203,7 @@ const factionTurnOrder = ["mongol", "chinese", "persian"].slice(0, factionCount)
 const unitTypeDefaults = {
   camp: { hp: 1, move: 0 },
   herd: { hp: 1, move: 3 },
-  cavalry: { hp: 10, move: 4 },
+  horse_archer: { hp: 10, move: 4 },
   infantry: { hp: 10, move: 2 },
   horde: { hp: 10, move: 3, projectsZoc: true, respectsZoc: true, population: 0, metal: 0, horses: 0 },
 };
@@ -708,7 +708,7 @@ function ensureGameMeta() {
 }
 
 function normalizeUnit(unit, index) {
-  const kind = typeof unit.kind === "string" ? unit.kind : "cavalry";
+  const kind = typeof unit.kind === "string" ? (unit.kind === "cavalry" ? "horse_archer" : unit.kind) : "horse_archer";
   const owner = Number.isInteger(unit.owner) ? unit.owner : null;
   const ownerFaction = Object.entries(factions).find(([, faction]) => faction.owner === owner);
   const faction = typeof unit.faction === "string" && factions[unit.faction]
@@ -835,7 +835,7 @@ const contextActionDefinitions = [
 function unitDisplayName(unit) {
   const faction = factions[unit.faction] || factions.mongol;
   const kindNames = {
-    cavalry: "Cavalry",
+    horse_archer: "Horse Archers",
     infantry: "Infantry",
     horde: "Horde",
   };
@@ -847,7 +847,7 @@ function unitKindLabel(unit) {
   const kindNames = {
     camp: "Camp",
     herd: "Herd",
-    cavalry: "Cavalry",
+    horse_archer: "Horse Archers",
     infantry: "Infantry",
     horde: "Horde",
   };
@@ -930,7 +930,7 @@ function syncPlayControls() {
   turnStatusReadout.textContent = `${faction.name} turn`;
   campCount.textContent = String(countUnits("camp", owner));
   herdCount.textContent = String(countUnits("herd", owner));
-  cavalryCount.textContent = String(countUnits("cavalry", owner));
+  horseArcherCount.textContent = String(countUnits("horse_archer", owner));
   hordeCount.textContent = String(countUnits("horde", owner));
   const resources = activeFactionResources(owner);
   factionPopulationTotal.textContent = String(resources.population);
@@ -1295,7 +1295,7 @@ function drawUnitCounters(units) {
         ctx.ellipse(ovalX, ovalY, 4.4 / viewport.scale, 2.7 / viewport.scale, 0, 0, Math.PI * 2);
         ctx.stroke();
       }
-    } else if (unit.kind === "cavalry") {
+    } else if (unit.kind === "horse_archer") {
       ctx.beginPath();
       ctx.ellipse(x + 9.5 / viewport.scale, y + counterHeight / 2, 5.5 / viewport.scale, 3.1 / viewport.scale, 0, 0, Math.PI * 2);
       ctx.stroke();
@@ -1741,7 +1741,7 @@ function makeEditorUnit(coord) {
   const kind = editorUnitTypeSelect.value;
   const factionKey = editorUnitSideSelect.value;
   const faction = factions[factionKey] || factions.mongol;
-  const defaults = unitTypeDefaults[kind] || unitTypeDefaults.cavalry;
+  const defaults = unitTypeDefaults[kind] || unitTypeDefaults.horse_archer;
   return {
     id: nextUnitId(),
     owner: faction.owner,

@@ -57,7 +57,7 @@ enum class SettlementKind {
 enum class UnitKind {
     Camp,
     Herd,
-    Cavalry,
+    HorseArcher,
     Infantry,
     Horde,
 };
@@ -96,7 +96,7 @@ struct Clan {
 struct Unit {
     int id = 0;
     OwnerId owner = neutral_owner;
-    UnitKind kind = UnitKind::Cavalry;
+    UnitKind kind = UnitKind::HorseArcher;
     Coord coord;
     int hp = 10;
     int max_hp = 10;
