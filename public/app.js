@@ -847,7 +847,12 @@ function appendCombatRow(parent, label, value) {
   parent.appendChild(row);
 }
 
-function appendCombatSide(parent, title, combatant, mode) {
+function retreatStatusForSide(preview, mode) {
+  const retreatSide = mode === "attack" ? "attacker" : "defender";
+  return preview.retreatOption === retreatSide ? "May retreat" : "No";
+}
+
+function appendCombatSide(parent, title, combatant, mode, preview) {
   const side = document.createElement("section");
   side.className = "combat-preview-side";
   const heading = document.createElement("h3");
@@ -860,6 +865,8 @@ function appendCombatSide(parent, title, combatant, mode) {
   ));
   appendCombatRow(side, "HP factor", `${combatant.hpPercent}%`);
   appendCombatRow(side, "Readiness", `${combatant.readiness}/${combatant.maxReadiness} (${combatant.readinessPercent}%)`);
+  appendCombatRow(side, "RDY factor", `${combatant.readinessPercent}%`);
+  appendCombatRow(side, "Retreat", retreatStatusForSide(preview, mode));
   appendCombatRow(side, "Terrain", mode === "attack" ? "-" : `${combatant.terrainDefensePercent}%`);
   appendCombatRow(side, "Score", String(mode === "attack" ? combatant.effectiveAttack : combatant.effectiveDefense));
   appendCombatRow(side, mode === "attack" ? "Damage" : "Taken", String(
@@ -891,8 +898,8 @@ function renderCombatPreview(preview, clientX, clientY) {
   appendCombatRow(impacts, "Retreat impact", preview.retreatImpact || "-");
   const grid = document.createElement("div");
   grid.className = "combat-preview-grid";
-  appendCombatSide(grid, "Attacker", preview.attacker, "attack");
-  appendCombatSide(grid, "Defender", preview.defender, "defense");
+  appendCombatSide(grid, "Attacker", preview.attacker, "attack", preview);
+  appendCombatSide(grid, "Defender", preview.defender, "defense", preview);
   combatPreview.append(title, summary, impacts, grid);
   combatPreview.hidden = false;
   positionCombatPreview(clientX, clientY);

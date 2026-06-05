@@ -702,10 +702,12 @@ test("horde resource actions are unavailable next to enemies", async ({ page, is
   await expect(page.locator("#combat-preview")).toContainText("Attacker");
   await expect(page.locator("#combat-preview")).toContainText("Defender");
   await expect(page.locator("#combat-preview")).toContainText("Readiness");
+  await expect(page.locator("#combat-preview")).toContainText("RDY factor");
   await expect(page.locator("#combat-preview")).toContainText("Readiness impact");
   await expect(page.locator("#combat-preview")).toContainText("Retreat impact");
   await expect(page.locator("#combat-preview")).toContainText("CRT");
   await expect(page.locator("#combat-preview")).toContainText("Retreat");
+  await expect(page.locator("#combat-preview")).toContainText("No");
   await expect(page.locator("#combat-preview")).toContainText("Result");
   await page.mouse.click(result.x, result.y, { button: "right" });
   await expect(page.locator("#context-menu [data-action='detach-herd']")).toHaveCount(0);
