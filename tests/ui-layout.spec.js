@@ -105,6 +105,13 @@ function roadMovementGameState() {
   };
 }
 
+function mountedRoadMovementGameState() {
+  const state = roadMovementGameState();
+  state.units[0].kind = "horse_archer";
+  state.units[0].remainingScaledMove = 32;
+  return state;
+}
+
 function mountainMinimumMoveGameState() {
   const hexes = [
     { q: 1, r: 1, terrain: "grassland", labels: [] },
@@ -449,16 +456,22 @@ test("movement uses road costs and allows one expensive terrain step", async ({ 
 
   const roadReachable = runEngineJson(["game-reachable", "--unit", "1"], roadMovementGameState()).reachable;
   const thirdRoadStep = roadReachable.find((hex) => hex.q === 4 && hex.r === 1);
-  expect(thirdRoadStep).toEqual(expect.objectContaining({ scaledCost: 15 }));
-  expect(roadReachable.some((hex) => hex.q === 5 && hex.r === 1)).toBe(false);
+  expect(thirdRoadStep).toEqual(expect.objectContaining({ scaledCost: 12 }));
+  const fourthRoadStep = roadReachable.find((hex) => hex.q === 5 && hex.r === 1);
+  expect(fourthRoadStep).toEqual(expect.objectContaining({ scaledCost: 16 }));
+
+  const mountedRoadReachable = runEngineJson(["game-reachable", "--unit", "1"], mountedRoadMovementGameState()).reachable;
+  expect(mountedRoadReachable.find((hex) => hex.q === 5 && hex.r === 1))
+    .toEqual(expect.objectContaining({ scaledCost: 20 }));
 
   const roadMoved = runEngineJson(["game-move", "--unit", "1", "--q", "4", "--r", "1"], roadMovementGameState());
   const roadMovedUnit = roadMoved.units.find((candidate) => candidate.id === 1);
   expect(roadMoved.ok).toBe(true);
-  expect(roadMovedUnit.remainingScaledMove).toBe(1);
+  expect(roadMovedUnit.remainingScaledMove).toBe(4);
   expect(roadMovedUnit.moveDone).toBe(false);
   const afterRoadMoveReachable = runEngineJson(["game-reachable", "--unit", "1"], roadMoved).reachable;
-  expect(afterRoadMoveReachable.some((hex) => hex.q === 5 && hex.r === 1)).toBe(false);
+  expect(afterRoadMoveReachable.find((hex) => hex.q === 5 && hex.r === 1))
+    .toEqual(expect.objectContaining({ scaledCost: 4 }));
 
   const mountainReachable = runEngineJson(["game-reachable", "--unit", "1"], mountainMinimumMoveGameState()).reachable;
   const mountainStep = mountainReachable.find((hex) => hex.q === 2 && hex.r === 1);

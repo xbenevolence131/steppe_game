@@ -550,11 +550,11 @@ int terrain_movement_cost(Terrain terrain) {
     switch (terrain) {
         case Terrain::Grassland:
         case Terrain::Desert:
-        case Terrain::Urban:
             return 8;
         case Terrain::Hill:
         case Terrain::Forest:
             return 12;
+        case Terrain::Urban:
         case Terrain::Marsh:
         case Terrain::Mountain:
             return 16;
@@ -577,11 +577,28 @@ bool road_connects(const GameState& state, const Coord& first, const Coord& seco
     return false;
 }
 
-int movement_cost(const GameState& state, const Coord& from, const GameHex& to_hex) {
-    if (road_connects(state, from, to_hex.coord)) {
-        return 5;
+bool uses_mounted_road_cost(UnitKind kind) {
+    return kind == UnitKind::HorseArcher
+        || kind == UnitKind::ChineseCavalry
+        || kind == UnitKind::MongolLancer;
+}
+
+int road_modified_movement_cost(UnitKind kind, int terrain_cost) {
+    if (terrain_cost == blocked_movement_cost()) {
+        return terrain_cost;
     }
-    return terrain_movement_cost(to_hex.terrain);
+    if (uses_mounted_road_cost(kind)) {
+        return ((terrain_cost + 1) / 2) + 1;
+    }
+    return (terrain_cost + 1) / 2;
+}
+
+int movement_cost(const GameState& state, const Unit& unit, const Coord& from, const GameHex& to_hex) {
+    const int terrain_cost = terrain_movement_cost(to_hex.terrain);
+    if (road_connects(state, from, to_hex.coord)) {
+        return road_modified_movement_cost(unit.kind, terrain_cost);
+    }
+    return terrain_cost;
 }
 
 bool adjacent(const Coord& first, const Coord& second) {
@@ -1250,7 +1267,7 @@ std::vector<Coord> adjacent_deployable_hexes(const GameState& state, const Unit&
             continue;
         }
         const GameHex* hex = find_hex(state, candidate);
-        if (hex == nullptr || movement_cost(state, source.coord, *hex) == blocked_movement_cost()) {
+        if (hex == nullptr || movement_cost(state, source, source.coord, *hex) == blocked_movement_cost()) {
             continue;
         }
         deployable.push_back(candidate);
@@ -1327,7 +1344,7 @@ bool defender_flanked_by_separated_unit(const GameState& state, const Unit& atta
 
 bool can_pursue_into_defender_hex(const GameState& state, const Unit& attacker, const Unit& defender) {
     const GameHex* hex = find_hex(state, defender.coord);
-    return hex != nullptr && movement_cost(state, attacker.coord, *hex) != blocked_movement_cost();
+    return hex != nullptr && movement_cost(state, attacker, attacker.coord, *hex) != blocked_movement_cost();
 }
 
 bool find_feigned_retreat_hex(const GameState& state, const Unit& attacker, const Unit& defender, Coord& retreat_to) {
@@ -1339,7 +1356,7 @@ bool find_feigned_retreat_hex(const GameState& state, const Unit& attacker, cons
             continue;
         }
         const GameHex* hex = find_hex(state, candidate);
-        if (hex == nullptr || movement_cost(state, defender.coord, *hex) == blocked_movement_cost()) {
+        if (hex == nullptr || movement_cost(state, defender, defender.coord, *hex) == blocked_movement_cost()) {
             continue;
         }
         if (coord_equal(candidate, attacker.coord) || adjacent(candidate, attacker.coord)) {
@@ -1390,7 +1407,7 @@ std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id) {
             if (hex == nullptr) {
                 continue;
             }
-            const int step_cost = movement_cost(state, current, *hex);
+            const int step_cost = movement_cost(state, *unit, current, *hex);
             if (step_cost == blocked_movement_cost()) {
                 continue;
             }
