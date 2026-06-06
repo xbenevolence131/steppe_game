@@ -21,9 +21,9 @@
           <h2>Scenario Edit</h2>
           <div class="panel-actions">
             <button id="generate-button" type="button">Generate</button>
-            <button id="blank-map-button" class="secondary" type="button">Blank Map</button>
-            <button id="save-button" class="secondary" type="button">Save Terrain</button>
-            <button id="load-button" class="secondary" type="button">Load Terrain</button>
+            <button id="blank-map-button" class="secondary" type="button">New Scenario</button>
+            <button id="save-button" class="secondary" type="button">Save Scenario</button>
+            <button id="load-button" class="secondary" type="button">Load Scenario</button>
             <input id="load-file-input" class="hidden-file-input" type="file" accept="application/json,.json">
           </div>
         </div>
@@ -214,6 +214,20 @@
               </form>
             </div>
           </div>
+          <dialog id="scenario-file-dialog" class="scenario-file-dialog">
+            <form id="scenario-file-form" method="dialog">
+              <h2 id="scenario-file-title">Scenario</h2>
+              <label id="scenario-file-name-field">
+                <span>File name</span>
+                <input id="scenario-file-name" type="text" autocomplete="off" spellcheck="false">
+              </label>
+              <div id="scenario-file-list" class="scenario-file-list" aria-label="Scenario files"></div>
+              <menu class="scenario-file-actions">
+                <button id="scenario-file-cancel" class="secondary" type="button">Cancel</button>
+                <button id="scenario-file-confirm" type="submit">Load</button>
+              </menu>
+            </form>
+          </dialog>
           <div id="play-details-bar" class="play-details-bar" aria-label="Play details">
             <section class="unit-inspector" aria-label="Unit inspector">
               <h2>Unit</h2>

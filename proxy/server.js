@@ -6,6 +6,7 @@ const { spawn } = require("child_process");
 const rootDir = path.resolve(__dirname, "..");
 const publicDir = path.join(rootDir, "public");
 const latestMapPath = path.join(rootDir, "latest-map.json");
+const scenariosDir = path.join(rootDir, "scenarios");
 const trafficLogDir = path.join(rootDir, "logs", "engine-traffic");
 const latestTrafficLogPath = path.join(trafficLogDir, "latest.jsonl");
 const port = Number(process.env.PORT || 3000);
@@ -40,6 +41,10 @@ function daemonPath() {
 function initializeTrafficLogs() {
   fs.mkdirSync(trafficLogDir, { recursive: true });
   fs.writeFileSync(latestTrafficLogPath, "", "utf8");
+}
+
+function ensureScenariosDir() {
+  fs.mkdirSync(scenariosDir, { recursive: true });
 }
 
 function appendTrafficLog(entry) {
@@ -112,6 +117,111 @@ function parseSeed(value) {
     return Math.floor(Math.random() * 0x100000000);
   }
   return result;
+}
+
+function scenarioFilename(rawName) {
+  const requested = String(rawName || "").trim();
+  if (!requested) {
+    throw new Error("scenario filename is required");
+  }
+  const base = path.basename(requested).replace(/[^A-Za-z0-9._ -]/g, "_");
+  const filename = base.toLowerCase().endsWith(".json") ? base : `${base}.json`;
+  if (filename === ".json" || filename.includes("..")) {
+    throw new Error("scenario filename is invalid");
+  }
+  return filename;
+}
+
+function scenarioFilePath(rawName) {
+  const filename = scenarioFilename(rawName);
+  const filePath = path.resolve(scenariosDir, filename);
+  if (!filePath.startsWith(`${scenariosDir}${path.sep}`)) {
+    throw new Error("scenario filename is invalid");
+  }
+  return { filename, filePath };
+}
+
+function powershellString(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function runPowershellJson(script) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("powershell.exe", [
+      "-NoProfile",
+      "-STA",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      script,
+    ], { windowsHide: false });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(stderr.trim() || `PowerShell exited with code ${code}`));
+        return;
+      }
+      const output = stdout.trim();
+      if (!output) {
+        resolve({ canceled: true });
+        return;
+      }
+      try {
+        resolve(JSON.parse(output));
+      } catch {
+        reject(new Error("file dialog returned invalid JSON"));
+      }
+    });
+  });
+}
+
+async function pickScenarioOpenFile() {
+  ensureScenariosDir();
+  const script = `
+Add-Type -AssemblyName System.Windows.Forms
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$dialog = New-Object System.Windows.Forms.OpenFileDialog
+$dialog.Title = 'Load Scenario'
+$dialog.InitialDirectory = ${powershellString(scenariosDir)}
+$dialog.Filter = 'Scenario JSON (*.json)|*.json|All files (*.*)|*.*'
+$dialog.Multiselect = $false
+if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+  @{ path = $dialog.FileName } | ConvertTo-Json -Compress
+} else {
+  @{ canceled = $true } | ConvertTo-Json -Compress
+}
+`;
+  return runPowershellJson(script);
+}
+
+async function pickScenarioSaveFile(suggestedName) {
+  ensureScenariosDir();
+  const script = `
+Add-Type -AssemblyName System.Windows.Forms
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$dialog = New-Object System.Windows.Forms.SaveFileDialog
+$dialog.Title = 'Save Scenario'
+$dialog.InitialDirectory = ${powershellString(scenariosDir)}
+$dialog.FileName = ${powershellString(scenarioFilename(suggestedName || "scenario.json"))}
+$dialog.DefaultExt = 'json'
+$dialog.AddExtension = $true
+$dialog.OverwritePrompt = $true
+$dialog.Filter = 'Scenario JSON (*.json)|*.json|All files (*.*)|*.*'
+if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+  @{ path = $dialog.FileName } | ConvertTo-Json -Compress
+} else {
+  @{ canceled = $true } | ConvertTo-Json -Compress
+}
+`;
+  return runPowershellJson(script);
 }
 
 function delay(ms) {
@@ -378,6 +488,90 @@ async function handleGameEndTurn(req, res) {
   }
 }
 
+async function handleScenarioList(req, res) {
+  try {
+    ensureScenariosDir();
+    const entries = await fs.promises.readdir(scenariosDir, { withFileTypes: true });
+    const files = entries
+      .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".json"))
+      .map((entry) => entry.name)
+      .sort((first, second) => first.localeCompare(second));
+    sendJson(res, 200, { files });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message });
+  }
+}
+
+async function handleScenarioLoad(req, res) {
+  try {
+    ensureScenariosDir();
+    const requestUrl = new URL(req.url, `http://${req.headers.host}`);
+    const { filename, filePath } = scenarioFilePath(requestUrl.searchParams.get("name"));
+    const content = await fs.promises.readFile(filePath, "utf8");
+    sendJson(res, 200, { filename, scenario: JSON.parse(content) });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message });
+  }
+}
+
+async function handleScenarioSave(req, res) {
+  try {
+    ensureScenariosDir();
+    const payload = await readRequestJson(req);
+    const { filename, filePath } = scenarioFilePath(payload.name || payload.filename);
+    const scenario = payload.scenario;
+    if (!scenario || typeof scenario !== "object" || Array.isArray(scenario)) {
+      sendJson(res, 400, { error: "scenario snapshot is required" });
+      return;
+    }
+    await fs.promises.writeFile(filePath, `${JSON.stringify(scenario, null, 2)}\n`, "utf8");
+    sendJson(res, 200, { ok: true, filename });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message });
+  }
+}
+
+async function handleScenarioPickOpen(req, res) {
+  try {
+    const picked = await pickScenarioOpenFile();
+    if (picked.canceled) {
+      sendJson(res, 200, { canceled: true });
+      return;
+    }
+    const content = await fs.promises.readFile(picked.path, "utf8");
+    sendJson(res, 200, {
+      canceled: false,
+      filename: path.basename(picked.path),
+      scenario: JSON.parse(content),
+    });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message });
+  }
+}
+
+async function handleScenarioPickSave(req, res) {
+  try {
+    const payload = await readRequestJson(req);
+    const scenario = payload.scenario;
+    if (!scenario || typeof scenario !== "object" || Array.isArray(scenario)) {
+      sendJson(res, 400, { error: "scenario snapshot is required" });
+      return;
+    }
+    const picked = await pickScenarioSaveFile(payload.suggestedName || payload.name || payload.filename);
+    if (picked.canceled) {
+      sendJson(res, 200, { canceled: true });
+      return;
+    }
+    await fs.promises.writeFile(picked.path, `${JSON.stringify(scenario, null, 2)}\n`, "utf8");
+    sendJson(res, 200, {
+      canceled: false,
+      filename: path.basename(picked.path),
+    });
+  } catch (error) {
+    sendJson(res, 500, { error: error.message });
+  }
+}
+
 function handleLatestTrafficLog(req, res) {
   fs.readFile(latestTrafficLogPath, "utf8", (error, content) => {
     if (error) {
@@ -420,35 +614,56 @@ function serveStatic(req, res) {
 }
 
 const server = http.createServer((req, res) => {
-  if (req.method === "POST" && req.url === "/api/generate") {
+  const requestUrl = new URL(req.url, `http://${req.headers.host}`);
+  if (req.method === "POST" && requestUrl.pathname === "/api/generate") {
     handleGenerate(req, res);
     return;
   }
-  if (req.method === "POST" && req.url === "/api/command") {
+  if (req.method === "POST" && requestUrl.pathname === "/api/command") {
     handleCommand(req, res);
     return;
   }
-  if (req.method === "POST" && req.url === "/api/game/new") {
+  if (req.method === "POST" && requestUrl.pathname === "/api/game/new") {
     handleGameNew(req, res);
     return;
   }
-  if (req.method === "POST" && req.url === "/api/game/select") {
+  if (req.method === "POST" && requestUrl.pathname === "/api/game/select") {
     handleGameSelect(req, res);
     return;
   }
-  if (req.method === "POST" && req.url === "/api/game/move") {
+  if (req.method === "POST" && requestUrl.pathname === "/api/game/move") {
     handleGameMove(req, res);
     return;
   }
-  if (req.method === "POST" && req.url === "/api/game/attack") {
+  if (req.method === "POST" && requestUrl.pathname === "/api/game/attack") {
     handleGameAttack(req, res);
     return;
   }
-  if (req.method === "POST" && req.url === "/api/game/end-turn") {
+  if (req.method === "POST" && requestUrl.pathname === "/api/game/end-turn") {
     handleGameEndTurn(req, res);
     return;
   }
-  if (req.method === "GET" && req.url === "/api/debug/engine-traffic/latest") {
+  if (req.method === "GET" && requestUrl.pathname === "/api/scenarios") {
+    handleScenarioList(req, res);
+    return;
+  }
+  if (req.method === "GET" && requestUrl.pathname === "/api/scenarios/load") {
+    handleScenarioLoad(req, res);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/scenarios/save") {
+    handleScenarioSave(req, res);
+    return;
+  }
+  if (req.method === "GET" && requestUrl.pathname === "/api/scenarios/pick-open") {
+    handleScenarioPickOpen(req, res);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/scenarios/pick-save") {
+    handleScenarioPickSave(req, res);
+    return;
+  }
+  if (req.method === "GET" && requestUrl.pathname === "/api/debug/engine-traffic/latest") {
     handleLatestTrafficLog(req, res);
     return;
   }
@@ -469,6 +684,7 @@ process.on("exit", () => {
 });
 
 initializeTrafficLogs();
+ensureScenariosDir();
 
 server.listen(port, async () => {
   try {

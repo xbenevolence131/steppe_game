@@ -6,4 +6,6 @@ latest-map.json
 logs/engine-traffic/
 test-results/
 playwright-report/
+scenarios/*.json
+!scenarios/.gitkeep
 .DS_Store

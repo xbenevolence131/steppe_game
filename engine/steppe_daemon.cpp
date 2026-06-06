@@ -321,6 +321,16 @@ std::string handle_command(const std::string& body) {
         undo_stacks[game_id].clear();
         return ok_response(game_id, game_state_json(state));
     }
+    if (type == "load_game") {
+        const std::string state_json = object_field(command, "state");
+        if (state_json.empty()) {
+            return error_response("load_game requires command.state");
+        }
+        steppe::game::GameState state = steppe::game::parse_game_state_json(state_json);
+        games[game_id] = state;
+        undo_stacks[game_id].clear();
+        return ok_response(game_id, game_state_json(state));
+    }
 
     auto found = games.find(game_id);
     if (found == games.end()) {

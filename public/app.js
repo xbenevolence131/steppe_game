@@ -30,6 +30,14 @@ const blankMapButton = document.querySelector("#blank-map-button");
 const saveButton = document.querySelector("#save-button");
 const loadButton = document.querySelector("#load-button");
 const loadFileInput = document.querySelector("#load-file-input");
+const scenarioFileDialog = document.querySelector("#scenario-file-dialog");
+const scenarioFileForm = document.querySelector("#scenario-file-form");
+const scenarioFileTitle = document.querySelector("#scenario-file-title");
+const scenarioFileNameField = document.querySelector("#scenario-file-name-field");
+const scenarioFileNameInput = document.querySelector("#scenario-file-name");
+const scenarioFileList = document.querySelector("#scenario-file-list");
+const scenarioFileCancel = document.querySelector("#scenario-file-cancel");
+const scenarioFileConfirm = document.querySelector("#scenario-file-confirm");
 const undoButton = document.querySelector("#undo-button");
 const zoomInButton = document.querySelector("#zoom-in-button");
 const zoomOutButton = document.querySelector("#zoom-out-button");
@@ -90,6 +98,9 @@ let combatPreviewTargetId = 0;
 let detachHerdAmountContext = null;
 let detachHerdPlacement = null;
 let createUnitPlacement = null;
+let scenarioFileMode = "load";
+let selectedScenarioFile = "";
+let appInitialization = null;
 
 const viewport = {
   scale: 1,
@@ -111,6 +122,9 @@ const geometry = {
 };
 
 const maxUndoDepth = 64;
+const scenarioDirectoryDbName = "steppe-scenario-files";
+const scenarioDirectoryStoreName = "handles";
+const scenarioDirectoryHandleKey = "scenario-directory";
 
 const editorTerrains = [
   { key: "grassland", label: "Grassland", fill: "#d8c596", stroke: "#7e735f", labelColor: "#29251d" },
@@ -214,7 +228,8 @@ const factions = {
 };
 
 const factionCount = 2;
-const factionTurnOrder = ["mongol", "chinese", "persian"].slice(0, factionCount);
+const defaultFactionKeys = ["mongol", "chinese", "persian"];
+const factionTurnOrder = defaultFactionKeys.slice(0, factionCount);
 
 const unitTypeDefaults = {};
 const unitDisplayKindNames = {
@@ -806,6 +821,59 @@ function stopPainting() {
   paintUndoRecorded = false;
 }
 
+function normalizeScenarioFaction(faction, fallbackKey = "mongol") {
+  const key = typeof faction === "string"
+    ? faction
+    : (faction && typeof faction.key === "string" ? faction.key : fallbackKey);
+  const defaults = factions[key] || factions[fallbackKey] || factions.mongol;
+  return {
+    id: Number.isInteger(faction && faction.id) ? faction.id : defaults.owner,
+    key,
+    name: typeof (faction && faction.name) === "string" ? faction.name : defaults.name,
+    color: typeof (faction && faction.color) === "string" ? faction.color : defaults.color,
+  };
+}
+
+function defaultScenarioFactions() {
+  return factionTurnOrder.map((key) => normalizeScenarioFaction(key, key));
+}
+
+function normalizeScenarioFactions(rawFactions, units = []) {
+  const normalized = [];
+  const seenOwners = new Set();
+  const addFaction = (entry, fallbackKey = "mongol") => {
+    const faction = normalizeScenarioFaction(entry, fallbackKey);
+    if (faction.id === factions.neutral.owner || seenOwners.has(faction.id)) {
+      return;
+    }
+    seenOwners.add(faction.id);
+    normalized.push(faction);
+  };
+
+  if (Array.isArray(rawFactions)) {
+    rawFactions.forEach((entry) => addFaction(entry));
+  }
+  if (normalized.length === 0 && Array.isArray(units)) {
+    for (const unit of units) {
+      if (!unit || unit.owner === factions.neutral.owner || seenOwners.has(unit.owner)) {
+        continue;
+      }
+      addFaction(unit.faction || Object.keys(factions).find((key) => factions[key].owner === unit.owner) || "mongol");
+    }
+  }
+  return normalized.length > 0 ? normalized : defaultScenarioFactions();
+}
+
+function factionForOwner(owner) {
+  const scenarioFaction = currentMap && Array.isArray(currentMap.factions)
+    ? currentMap.factions.find((candidate) => candidate.id === owner)
+    : null;
+  if (scenarioFaction) {
+    return scenarioFaction;
+  }
+  return Object.values(factions).find((faction) => faction.owner === owner) || factions.neutral;
+}
+
 function activeFactionKey() {
   const clan = activeFaction();
   return clan.key || "neutral";
@@ -815,7 +883,11 @@ function activeOwner() {
   if (currentMap && currentMap.game && Number.isInteger(currentMap.game.activeOwner)) {
     return currentMap.game.activeOwner;
   }
-  return null;
+  const order = currentMap && currentMap.game && Array.isArray(currentMap.game.turnOrder)
+    ? currentMap.game.turnOrder
+    : [];
+  const index = Math.max(0, Math.min(activeFactionIndex, order.length - 1));
+  return Number.isInteger(order[index]) ? order[index] : null;
 }
 
 function activeFaction() {
@@ -826,7 +898,7 @@ function activeFaction() {
   if (clan) {
     return clan;
   }
-  return Object.values(factions).find((faction) => faction.owner === owner) || factions.neutral;
+  return factionForOwner(owner);
 }
 
 function countUnits(kind, owner = null) {
@@ -865,8 +937,23 @@ function ensureGameMeta() {
     return;
   }
   currentMap.game = currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {};
+  currentMap.units = Array.isArray(currentMap.units) ? currentMap.units.map(normalizeUnit) : [];
+  currentMap.factions = normalizeScenarioFactions(currentMap.factions, currentMap.units);
+  currentMap.game.turnOrder = currentMap.factions.map((faction) => faction.id);
+  currentMap.game.clans = currentMap.factions.map((faction) => ({
+    id: faction.id,
+    key: faction.key,
+    name: faction.name,
+    color: faction.color,
+  }));
   currentTurn = Number.isInteger(currentMap.game.round) ? currentMap.game.round : 1;
-  activeFactionIndex = Number.isInteger(currentMap.game.activeFactionIndex) ? currentMap.game.activeFactionIndex : 0;
+  const maxIndex = Math.max(0, currentMap.game.turnOrder.length - 1);
+  activeFactionIndex = Number.isInteger(currentMap.game.activeFactionIndex)
+    ? Math.max(0, Math.min(currentMap.game.activeFactionIndex, maxIndex))
+    : 0;
+  currentMap.game.round = currentTurn;
+  currentMap.game.activeFactionIndex = activeFactionIndex;
+  currentMap.game.activeOwner = currentMap.game.turnOrder[activeFactionIndex] ?? null;
 }
 
 function cloneMapState(map) {
@@ -1514,6 +1601,34 @@ function setAppMode(mode) {
   if (currentMap) {
     requestAnimationFrame(drawMap);
   }
+}
+
+async function enterPlayMode() {
+  appMode = "play";
+  setEditMode(false);
+  syncModeControls();
+  if (appInitialization) {
+    await appInitialization;
+  }
+  if (currentMap) {
+    try {
+      const scenarioFactions = normalizeScenarioFactions(currentMap.factions, currentMap.units);
+      const payload = await postAppCommand({ type: "load_game", state: scenarioSnapshot() });
+      currentMap = payload;
+      currentMap.factions = scenarioFactions;
+      terrainUndo = new Map();
+      clearUndoHistory();
+      ensureGameMeta();
+    } catch (error) {
+      window.alert(error.message);
+      return;
+    }
+  }
+  setAppMode("play");
+}
+
+function enterScenarioMode() {
+  setAppMode("scenario");
 }
 
 function styleForHex(hex) {
@@ -2226,16 +2341,60 @@ function hideContextMenu() {
   contextMenu.replaceChildren();
 }
 
+function unitAdjacentToEnemy(unit) {
+  if (!unit || !currentMap || !Array.isArray(currentMap.units)) {
+    return false;
+  }
+  const neighbors = Array.from({ length: 6 }, (_, direction) => neighborInDirection(unit, direction));
+  return currentMap.units.some((candidate) => (
+    candidate
+    && candidate.id !== unit.id
+    && candidate.owner !== unit.owner
+    && neighbors.some((neighbor) => neighbor.q === candidate.q && neighbor.r === candidate.r)
+  ));
+}
+
 function contextForPointer(event) {
   const point = panelToWorld(event);
   const rect = mapPanel.getBoundingClientRect();
+  const unit = findUnitAtPoint(point);
+  const hordeCanUseResources = Boolean(
+    unit
+    && unit.kind === "horde"
+    && unit.owner === activeOwner()
+    && !unit.moveDone
+    && !unit.movedThisTurn
+    && !unitAdjacentToEnemy(unit)
+  );
   return {
     point,
     panelX: event.clientX - rect.left,
     panelY: event.clientY - rect.top,
     hex: findNearestHex(point),
-    unit: findUnitAtPoint(point),
+    unit,
     selected: selectedUnit(),
+    actionAvailability: {
+      detachHerd: Boolean(hordeCanUseResources && Number.isInteger(unit.horses) && unit.horses > 0),
+      createHorseArchers: Boolean(
+        hordeCanUseResources
+        && Number.isInteger(unit.population)
+        && Number.isInteger(unit.metal)
+        && Number.isInteger(unit.horses)
+        && unit.population >= 1
+        && unit.metal >= 1
+        && unit.horses >= 3
+      ),
+      createMongolLancers: Boolean(
+        hordeCanUseResources
+        && unit.faction === "mongol"
+        && Number.isInteger(unit.population)
+        && Number.isInteger(unit.metal)
+        && Number.isInteger(unit.horses)
+        && unit.population >= 1
+        && unit.metal >= 2
+        && unit.horses >= 3
+      ),
+    },
   };
 }
 
@@ -2250,74 +2409,6 @@ function positionContextMenu(event) {
   contextMenu.style.top = `${clamp(rawTop, margin, maxTop)}px`;
 }
 
-async function hydrateContextActionAvailability(context) {
-  context.actionAvailability = {
-    detachHerd: false,
-    createHorseArchers: false,
-    createMongolLancers: false,
-  };
-
-  const unit = context.unit;
-  if (!unit || unit.kind !== "horde" || unit.owner !== activeOwner()) {
-    return;
-  }
-
-  const checks = [];
-  if (Number.isInteger(unit.horses) && unit.horses > 0) {
-    checks.push(postAppCommand({
-      type: "detach_herd_options",
-      unitId: unit.id,
-      horses: 1,
-    }).then((options) => {
-      context.actionAvailability.detachHerd = Array.isArray(options.deployableHexes)
-        && options.deployableHexes.length > 0;
-    }).catch(() => {
-      context.actionAvailability.detachHerd = false;
-    }));
-  }
-
-  if (
-    Number.isInteger(unit.population)
-    && Number.isInteger(unit.metal)
-    && Number.isInteger(unit.horses)
-    && unit.population >= 1
-    && unit.metal >= 1
-    && unit.horses >= 3
-  ) {
-    checks.push(postAppCommand({
-      type: "create_horse_archers_options",
-      unitId: unit.id,
-    }).then((options) => {
-      context.actionAvailability.createHorseArchers = Array.isArray(options.deployableHexes)
-        && options.deployableHexes.length > 0;
-    }).catch(() => {
-      context.actionAvailability.createHorseArchers = false;
-    }));
-  }
-
-  if (
-    unit.faction === "mongol"
-    && Number.isInteger(unit.population)
-    && Number.isInteger(unit.metal)
-    && Number.isInteger(unit.horses)
-    && unit.population >= 1
-    && unit.metal >= 2
-    && unit.horses >= 3
-  ) {
-    checks.push(postAppCommand({
-      type: "create_mongol_lancers_options",
-      unitId: unit.id,
-    }).then((options) => {
-      context.actionAvailability.createMongolLancers = Array.isArray(options.deployableHexes)
-        && options.deployableHexes.length > 0;
-    }).catch(() => {
-      context.actionAvailability.createMongolLancers = false;
-    }));
-  }
-
-  await Promise.all(checks);
-}
-
 async function showContextMenu(event) {
   const requestId = contextMenuRequestId + 1;
   contextMenuRequestId = requestId;
@@ -2330,7 +2421,6 @@ async function showContextMenu(event) {
   }
 
   const context = contextForPointer(event);
-  await hydrateContextActionAvailability(context);
   if (requestId !== contextMenuRequestId) {
     return false;
   }
@@ -3025,7 +3115,7 @@ function createBlankMap(options = {}) {
   }
 
   currentMap = {
-    schema: "steppe-terrain.v1",
+    schema: "steppe-scenario.v1",
     seed: 0,
     width,
     height,
@@ -3040,9 +3130,10 @@ function createBlankMap(options = {}) {
     walls: [],
     wall_gates: [],
     crossings: [],
+    factions: defaultScenarioFactions(),
     units: [],
     metadata: {
-      generator: typeof options.generator === "string" ? options.generator : "blank-editor",
+      generator: typeof options.generator === "string" ? options.generator : "new-scenario",
       terrain_types: editorTerrains.map((terrain) => terrain.key),
       hex_label_model: "base-plus-generation-role.v1",
     },
@@ -3087,17 +3178,17 @@ async function initializeApp() {
 
 function normalizeLoadedMap(map) {
   if (!map || typeof map !== "object") {
-    throw new Error("Loaded file is not a terrain map.");
+    throw new Error("Loaded file is not a scenario.");
   }
   if (!Number.isInteger(map.width) || !Number.isInteger(map.height) || map.width < 1 || map.height < 1) {
-    throw new Error("Loaded map has invalid dimensions.");
+    throw new Error("Loaded scenario has invalid dimensions.");
   }
   if (!Array.isArray(map.hexes)) {
-    throw new Error("Loaded map is missing hex terrain.");
+    throw new Error("Loaded scenario is missing hex terrain.");
   }
 
   return refreshDerivedTopology({
-    schema: typeof map.schema === "string" ? map.schema : "steppe-terrain.v1",
+    schema: typeof map.schema === "string" ? map.schema : "steppe-scenario.v1",
     seed: Number.isInteger(map.seed) ? map.seed : 0,
     width: map.width,
     height: map.height,
@@ -3119,6 +3210,7 @@ function normalizeLoadedMap(map) {
     walls: Array.isArray(map.walls) ? map.walls : [],
     wall_gates: Array.isArray(map.wall_gates) ? map.wall_gates : [],
     crossings: Array.isArray(map.crossings) ? map.crossings : [],
+    factions: normalizeScenarioFactions(map.factions, map.units),
     units: Array.isArray(map.units)
       ? map.units
         .filter((unit) => unit && Number.isInteger(unit.q) && Number.isInteger(unit.r))
@@ -3135,12 +3227,12 @@ function defaultMapFilename() {
   const seed = currentMap && Number.isInteger(currentMap.seed) ? currentMap.seed : 0;
   const width = currentMap ? currentMap.width : widthInput.value;
   const height = currentMap ? currentMap.height : heightInput.value;
-  return `steppe-terrain-${width}x${height}-${seed}.json`;
+  return `steppe-scenario-${width}x${height}-${seed}.json`;
 }
 
 function mapFilePickerTypes() {
   return [{
-    description: "Steppe terrain JSON",
+    description: "Steppe scenario JSON",
     accept: { "application/json": [".json"] },
   }];
 }
@@ -3156,9 +3248,97 @@ function isTextEditingTarget(target) {
     || tagName === "SELECT";
 }
 
-function mapBlob() {
+function openScenarioDirectoryDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(scenarioDirectoryDbName, 1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore(scenarioDirectoryStoreName);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function readStoredScenarioDirectoryHandle() {
+  if (!window.indexedDB) {
+    return null;
+  }
+  const db = await openScenarioDirectoryDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(scenarioDirectoryStoreName, "readonly");
+    const store = transaction.objectStore(scenarioDirectoryStoreName);
+    const request = store.get(scenarioDirectoryHandleKey);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error);
+    transaction.oncomplete = () => db.close();
+    transaction.onerror = () => {
+      db.close();
+      reject(transaction.error);
+    };
+  });
+}
+
+async function storeScenarioDirectoryHandle(handle) {
+  if (!window.indexedDB || !handle) {
+    return;
+  }
+  const db = await openScenarioDirectoryDb();
+  await new Promise((resolve, reject) => {
+    const transaction = db.transaction(scenarioDirectoryStoreName, "readwrite");
+    const store = transaction.objectStore(scenarioDirectoryStoreName);
+    store.put(handle, scenarioDirectoryHandleKey);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+  db.close();
+}
+
+async function hasScenarioDirectoryPermission(handle, mode) {
+  if (!handle || !handle.queryPermission || !handle.requestPermission) {
+    return false;
+  }
+  const options = { mode };
+  if (await handle.queryPermission(options) === "granted") {
+    return true;
+  }
+  return await handle.requestPermission(options) === "granted";
+}
+
+async function scenarioDirectoryHandle(mode) {
+  if (!window.showDirectoryPicker) {
+    return null;
+  }
+  const storedHandle = await readStoredScenarioDirectoryHandle().catch(() => null);
+  if (storedHandle && await hasScenarioDirectoryPermission(storedHandle, mode)) {
+    return storedHandle;
+  }
+  const pickedHandle = await window.showDirectoryPicker({
+    id: "steppe-scenarios-directory",
+    mode,
+    startIn: "documents",
+  });
+  await storeScenarioDirectoryHandle(pickedHandle);
+  return pickedHandle;
+}
+
+function scenarioSnapshot() {
+  ensureGameMeta();
   refreshDerivedTopology();
-  return new Blob([`${JSON.stringify(currentMap, null, 2)}\n`], { type: "application/json" });
+  return JSON.parse(JSON.stringify({
+    ...currentMap,
+    schema: "steppe-scenario.v1",
+    factions: normalizeScenarioFactions(currentMap.factions, currentMap.units),
+    units: Array.isArray(currentMap.units) ? currentMap.units.map(normalizeUnit) : [],
+    game: currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {},
+    metadata: {
+      ...(currentMap.metadata && typeof currentMap.metadata === "object" ? currentMap.metadata : {}),
+      snapshot: "full-scenario",
+    },
+  }));
+}
+
+function mapBlob() {
+  return new Blob([`${JSON.stringify(scenarioSnapshot(), null, 2)}\n`], { type: "application/json" });
 }
 
 function downloadMapFallback() {
@@ -3174,7 +3354,7 @@ function downloadMapFallback() {
 
 async function saveCurrentMap() {
   if (!currentMap) {
-    window.alert("No terrain map is loaded.");
+    window.alert("No scenario is loaded.");
     return;
   }
 
@@ -3184,7 +3364,10 @@ async function saveCurrentMap() {
   }
 
   try {
+    const directoryHandle = await scenarioDirectoryHandle("readwrite");
     const handle = await window.showSaveFilePicker({
+      id: "steppe-scenario",
+      startIn: directoryHandle || "documents",
       suggestedName: defaultMapFilename(),
       types: mapFilePickerTypes(),
     });
@@ -3192,10 +3375,121 @@ async function saveCurrentMap() {
     await writable.write(mapBlob());
     await writable.close();
   } catch (error) {
-    if (error.name !== "AbortError") {
-      window.alert(error.message);
+    if (error.name === "AbortError") {
+      return;
     }
+    window.alert(error.message);
   }
+}
+
+async function scenarioApi(pathname, options = {}) {
+  const response = await fetch(pathname, options);
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || "scenario file operation failed");
+  }
+  return payload;
+}
+
+async function listScenarioFiles() {
+  const payload = await scenarioApi("/api/scenarios");
+  return Array.isArray(payload.files) ? payload.files : [];
+}
+
+function renderScenarioFileList(files) {
+  scenarioFileList.replaceChildren();
+  if (!files.length) {
+    const empty = document.createElement("div");
+    empty.className = "scenario-file-empty";
+    empty.textContent = "No scenarios";
+    scenarioFileList.appendChild(empty);
+    return;
+  }
+  for (const filename of files) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = filename;
+    button.classList.toggle("is-selected", filename === selectedScenarioFile);
+    button.addEventListener("click", () => {
+      selectedScenarioFile = filename;
+      scenarioFileNameInput.value = filename;
+      renderScenarioFileList(files);
+    });
+    button.addEventListener("dblclick", () => {
+      selectedScenarioFile = filename;
+      scenarioFileNameInput.value = filename;
+      confirmScenarioFileDialog().catch((error) => window.alert(error.message));
+    });
+    scenarioFileList.appendChild(button);
+  }
+}
+
+async function openScenarioFileDialog(mode) {
+  scenarioFileMode = mode;
+  selectedScenarioFile = "";
+  scenarioFileTitle.textContent = mode === "save" ? "Save Scenario" : "Load Scenario";
+  scenarioFileConfirm.textContent = mode === "save" ? "Save" : "Load";
+  scenarioFileNameField.hidden = mode !== "save";
+  scenarioFileNameInput.value = defaultMapFilename();
+  scenarioFileList.replaceChildren();
+  const loading = document.createElement("div");
+  loading.className = "scenario-file-empty";
+  loading.textContent = "Loading...";
+  scenarioFileList.appendChild(loading);
+  if (scenarioFileDialog.showModal) {
+    scenarioFileDialog.showModal();
+  } else {
+    scenarioFileDialog.setAttribute("open", "");
+  }
+  try {
+    renderScenarioFileList(await listScenarioFiles());
+  } catch (error) {
+    if (mode === "save" && window.showSaveFilePicker) {
+      scenarioFileDialog.close();
+      const handle = await window.showSaveFilePicker({
+        suggestedName: defaultMapFilename(),
+        types: mapFilePickerTypes(),
+      });
+      const writable = await handle.createWritable();
+      await writable.write(mapBlob());
+      await writable.close();
+      return;
+    }
+    if (mode === "save") {
+      scenarioFileDialog.close();
+      downloadMapFallback();
+      return;
+    }
+    scenarioFileDialog.close();
+    loadFileInput.click();
+  }
+}
+
+async function confirmScenarioFileDialog() {
+  if (scenarioFileMode === "save") {
+    const filename = scenarioFileNameInput.value.trim() || defaultMapFilename();
+    await scenarioApi("/api/scenarios/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: filename, scenario: scenarioSnapshot() }),
+    });
+    scenarioFileDialog.close();
+    return;
+  }
+  const filename = selectedScenarioFile || scenarioFileNameInput.value.trim();
+  if (!filename) {
+    return;
+  }
+  const payload = await scenarioApi(`/api/scenarios/load?name=${encodeURIComponent(filename)}`);
+  currentMap = normalizeLoadedMap(payload.scenario);
+  terrainUndo = new Map();
+  clearUndoHistory();
+  ensureGameMeta();
+  widthInput.value = currentMap.width;
+  heightInput.value = currentMap.height;
+  syncModeControls();
+  fitMap();
+  scenarioFileDialog.close();
 }
 
 async function loadMapText(text) {
@@ -3234,7 +3528,10 @@ async function chooseMapFile() {
   }
 
   try {
+    const directoryHandle = await scenarioDirectoryHandle("read");
     const [handle] = await window.showOpenFilePicker({
+      id: "steppe-scenario",
+      startIn: directoryHandle || "documents",
       multiple: false,
       types: mapFilePickerTypes(),
     });
@@ -3246,8 +3543,10 @@ async function chooseMapFile() {
   }
 }
 
-scenarioModeButton.addEventListener("click", () => setAppMode("scenario"));
-playModeButton.addEventListener("click", () => setAppMode("play"));
+scenarioModeButton.addEventListener("click", enterScenarioMode);
+playModeButton.addEventListener("click", () => {
+  enterPlayMode().catch((error) => window.alert(error.message));
+});
 generateButton.addEventListener("click", generateMap);
 blankMapButton.addEventListener("click", () => createBlankMap());
 editModeButton.addEventListener("click", () => setEditMode(!isEditing));
@@ -3258,6 +3557,11 @@ editorUnitSideSelect.addEventListener("change", syncEditorControls);
 saveButton.addEventListener("click", saveCurrentMap);
 loadButton.addEventListener("click", chooseMapFile);
 loadFileInput.addEventListener("change", () => loadMapFile(loadFileInput.files[0]));
+scenarioFileCancel.addEventListener("click", () => scenarioFileDialog.close());
+scenarioFileForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  confirmScenarioFileDialog().catch((error) => window.alert(error.message));
+});
 undoButton.addEventListener("click", () => {
   undoLastAction().catch((error) => window.alert(error.message));
 });
@@ -3454,4 +3758,4 @@ new ResizeObserver(() => {
 initializeTerrainPalette();
 syncModeControls();
 loadBitmapUnitSprites();
-initializeApp();
+appInitialization = initializeApp();

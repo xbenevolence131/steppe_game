@@ -1,5 +1,6 @@
 const { test, expect } = require("@playwright/test");
 const { execFileSync, spawnSync } = require("child_process");
+const fs = require("fs");
 const path = require("path");
 
 test.describe.configure({ mode: "serial" });
@@ -69,6 +70,54 @@ function openMovementGameState() {
     hexes,
     units: [
       { id: 1, owner: 1, faction: "mongol", kind: "horse_archer", q: 1, r: 1, hp: 10, maxHp: 10, remainingScaledMove: 32 },
+    ],
+    game: {
+      round: 1,
+      activeFactionIndex: 0,
+      selectedUnitId: 1,
+      turnOrder: [1],
+    },
+  };
+}
+
+function roadMovementGameState() {
+  const hexes = [];
+  for (let q = 1; q <= 5; q += 1) {
+    hexes.push({ q, r: 1, terrain: "grassland", labels: [] });
+  }
+  return {
+    width: 5,
+    height: 1,
+    seed: 0,
+    hexes,
+    roads: [
+      { id: 1, feature: "test_road", path: [{ q: 1, r: 1 }, { q: 2, r: 1 }, { q: 3, r: 1 }, { q: 4, r: 1 }, { q: 5, r: 1 }] },
+    ],
+    units: [
+      { id: 1, owner: 1, faction: "mongol", kind: "infantry", q: 1, r: 1, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+    ],
+    game: {
+      round: 1,
+      activeFactionIndex: 0,
+      selectedUnitId: 1,
+      turnOrder: [1],
+    },
+  };
+}
+
+function mountainMinimumMoveGameState() {
+  const hexes = [
+    { q: 1, r: 1, terrain: "grassland", labels: [] },
+    { q: 2, r: 1, terrain: "mountain", labels: [] },
+    { q: 3, r: 1, terrain: "mountain", labels: [] },
+  ];
+  return {
+    width: 3,
+    height: 1,
+    seed: 0,
+    hexes,
+    units: [
+      { id: 1, owner: 1, faction: "mongol", kind: "infantry", q: 1, r: 1, hp: 10, maxHp: 10, remainingScaledMove: 8 },
     ],
     game: {
       round: 1,
@@ -393,6 +442,33 @@ test("movement spends readiness in proportion to movement cost", async ({ isMobi
   const fullMoveUnit = fullMove.units.find((candidate) => candidate.id === 1);
   expect(fullMove.ok).toBe(true);
   expect(fullMoveUnit.readiness).toBe(92);
+});
+
+test("movement uses road costs and allows one expensive terrain step", async ({ isMobile }) => {
+  test.skip(isMobile, "engine movement-cost rule is covered once on desktop");
+
+  const roadReachable = runEngineJson(["game-reachable", "--unit", "1"], roadMovementGameState()).reachable;
+  const thirdRoadStep = roadReachable.find((hex) => hex.q === 4 && hex.r === 1);
+  expect(thirdRoadStep).toEqual(expect.objectContaining({ scaledCost: 15 }));
+  expect(roadReachable.some((hex) => hex.q === 5 && hex.r === 1)).toBe(false);
+
+  const roadMoved = runEngineJson(["game-move", "--unit", "1", "--q", "4", "--r", "1"], roadMovementGameState());
+  const roadMovedUnit = roadMoved.units.find((candidate) => candidate.id === 1);
+  expect(roadMoved.ok).toBe(true);
+  expect(roadMovedUnit.remainingScaledMove).toBe(1);
+  expect(roadMovedUnit.moveDone).toBe(false);
+  const afterRoadMoveReachable = runEngineJson(["game-reachable", "--unit", "1"], roadMoved).reachable;
+  expect(afterRoadMoveReachable.some((hex) => hex.q === 5 && hex.r === 1)).toBe(false);
+
+  const mountainReachable = runEngineJson(["game-reachable", "--unit", "1"], mountainMinimumMoveGameState()).reachable;
+  const mountainStep = mountainReachable.find((hex) => hex.q === 2 && hex.r === 1);
+  expect(mountainStep).toEqual(expect.objectContaining({ scaledCost: 16 }));
+  expect(mountainReachable.some((hex) => hex.q === 3 && hex.r === 1)).toBe(false);
+
+  const moved = runEngineJson(["game-move", "--unit", "1", "--q", "2", "--r", "1"], mountainMinimumMoveGameState());
+  const movedUnit = moved.units.find((candidate) => candidate.id === 1);
+  expect(moved.ok).toBe(true);
+  expect(movedUnit.remainingScaledMove).toBe(0);
 });
 
 test("readiness recovers only after quiet non-contact turns", async ({ isMobile }) => {
@@ -1303,7 +1379,10 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
 
   await page.goto("/");
   await page.getByRole("button", { name: "Scenario Edit" }).click();
-  await page.getByRole("button", { name: "Blank Map" }).click();
+  await expect(page.getByRole("button", { name: "New Scenario" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save Scenario" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Load Scenario" })).toBeVisible();
+  await page.getByRole("button", { name: "New Scenario" }).click();
   await page.getByRole("button", { name: "Edit", exact: true }).click();
 
   const hexPoint = async (coord) => page.evaluate(({ q, r }) => {
@@ -1383,4 +1462,70 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect.poll(() => page.evaluate(() => currentMap.units.length)).toBe(1);
   await expect.poll(() => page.evaluate(() => currentMap.units[0].kind)).toBe("herd");
   await expect.poll(() => page.evaluate(() => currentMap.units[0].move)).toBe(3);
+  await expect.poll(() => page.evaluate(() => currentMap.factions.map((faction) => faction.key))).toEqual(["mongol", "chinese"]);
+
+  await page.evaluate(() => {
+    currentMap.factions = [{ id: 2, key: "chinese", name: "Chinese", color: "#c93632" }];
+    ensureGameMeta();
+  });
+  await page.getByRole("button", { name: "Play" }).click();
+  await expect(page.locator("#faction-status-name")).toHaveText("Chinese");
+  await expect.poll(() => page.evaluate(() => currentMap.game.turnOrder)).toEqual([2]);
+  await expect.poll(() => page.evaluate(() => currentMap.game.activeOwner)).toBe(2);
+});
+
+test("scenario file API round-trips full snapshots with units", async ({ page, isMobile }) => {
+  test.skip(isMobile, "scenario file storage is covered once on desktop");
+
+  const filename = `playwright-scenario-${Date.now()}.json`;
+  const scenarioPath = path.join(__dirname, "..", "scenarios", filename);
+  try {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Scenario Edit" }).click();
+    await page.getByRole("button", { name: "New Scenario" }).click();
+
+    const scenario = await page.evaluate(() => {
+      currentMap.units = [{
+        id: 101,
+        owner: 2,
+        faction: "chinese",
+        kind: "horde",
+        q: 3,
+        r: 3,
+        hp: 10,
+        maxHp: 10,
+      }];
+      currentMap.game = {
+        round: 7,
+        activeFactionIndex: 1,
+        selectedUnitId: 101,
+        turnOrder: [1, 2],
+      };
+      return scenarioSnapshot();
+    });
+
+    const saveResponse = await page.request.post("/api/scenarios/save", {
+      data: { name: filename, scenario },
+    });
+    expect(saveResponse.ok()).toBe(true);
+
+    const listResponse = await page.request.get("/api/scenarios");
+    const list = await listResponse.json();
+    expect(list.files).toContain(filename);
+
+    const loadResponse = await page.request.get(`/api/scenarios/load?name=${encodeURIComponent(filename)}`);
+    const loaded = await loadResponse.json();
+    expect(loaded.scenario.schema).toBe("steppe-scenario.v1");
+    expect(loaded.scenario.units).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 101, kind: "horde", faction: "chinese", q: 3, r: 3 }),
+    ]));
+    expect(loaded.scenario.game).toEqual(expect.objectContaining({
+      round: 7,
+      selectedUnitId: 101,
+    }));
+  } finally {
+    if (fs.existsSync(scenarioPath)) {
+      fs.unlinkSync(scenarioPath);
+    }
+  }
 });

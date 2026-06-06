@@ -585,7 +585,7 @@ bool road_connects(const GameState& state, const Coord& first, const Coord& seco
 
 int movement_cost(const GameState& state, const Coord& from, const GameHex& to_hex) {
     if (road_connects(state, from, to_hex.coord)) {
-        return 6;
+        return 5;
     }
     return terrain_movement_cost(to_hex.terrain);
 }
@@ -932,6 +932,64 @@ GameState create_default_play_sandbox(int width, int height, int faction_count) 
             state.hexes.push_back(std::move(hex));
         }
     }
+
+    auto set_sandbox_terrain = [&](Coord coord, Terrain terrain, const std::string& label) {
+        if (coord.q < 1 || coord.q > state.width || coord.r < 1 || coord.r > state.height) {
+            return;
+        }
+        GameHex& hex = state.hexes[static_cast<std::size_t>((coord.r - 1) * state.width + (coord.q - 1))];
+        hex.terrain = terrain;
+        hex.tags = terrain == Terrain::Grassland ? tag_mask(HexTag::BaseSteppe) : 0;
+        hex.pasture = initial_pasture_for_terrain(terrain);
+        hex.source_labels = label.empty() ? std::vector<std::string>{} : std::vector<std::string>{label};
+    };
+    const std::vector<Coord> sandbox_forests = {
+        {5, 4}, {6, 4}, {5, 5},
+        {10, 9}, {11, 9}, {12, 9}, {11, 10},
+        {18, 14}, {19, 14}, {20, 15},
+    };
+    const std::vector<Coord> sandbox_hills = {
+        {4, 8}, {5, 8}, {6, 8},
+        {11, 5}, {12, 5}, {12, 6},
+        {24, 12}, {25, 12}, {25, 13},
+    };
+    const std::vector<Coord> sandbox_mountains = {
+        {13, 2}, {14, 2}, {13, 3}, {14, 3}, {15, 3},
+        {29, 18}, {30, 18}, {30, 19}, {31, 19},
+    };
+    const std::vector<Coord> sandbox_marshes = {
+        {16, 7}, {17, 7}, {17, 8},
+        {34, 21}, {35, 21},
+    };
+    for (const Coord coord : sandbox_forests) {
+        set_sandbox_terrain(coord, Terrain::Forest, "sandbox_forest");
+    }
+    for (const Coord coord : sandbox_hills) {
+        set_sandbox_terrain(coord, Terrain::Hill, "sandbox_hill");
+    }
+    for (const Coord coord : sandbox_mountains) {
+        set_sandbox_terrain(coord, Terrain::Mountain, "sandbox_mountain");
+    }
+    for (const Coord coord : sandbox_marshes) {
+        set_sandbox_terrain(coord, Terrain::Marsh, "sandbox_marsh");
+    }
+
+    auto add_sandbox_road = [&](int id, std::vector<Coord> path) {
+        path.erase(std::remove_if(path.begin(), path.end(), [&](const Coord& coord) {
+            return coord.q < 1 || coord.q > state.width || coord.r < 1 || coord.r > state.height;
+        }), path.end());
+        if (path.size() < 2) {
+            return;
+        }
+        Road road;
+        road.id = id;
+        road.feature = "sandbox_road";
+        road.path = std::move(path);
+        state.roads.push_back(std::move(road));
+    };
+    add_sandbox_road(1, {{3, 6}, {4, 6}, {5, 6}, {6, 6}, {7, 6}, {8, 6}, {9, 6}, {10, 6}, {11, 6}, {12, 6}});
+    add_sandbox_road(2, {{5, 4}, {6, 4}, {7, 4}, {8, 4}, {9, 4}, {10, 4}, {11, 5}, {12, 5}});
+    add_sandbox_road(3, {{22, 11}, {23, 11}, {24, 12}, {25, 12}, {26, 13}, {27, 13}, {28, 14}});
 
     auto make_unit = [](int id, OwnerId owner, UnitKind kind, Coord coord) {
         Unit unit;
@@ -1343,7 +1401,10 @@ std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id) {
                 continue;
             }
             const int next_cost = current_cost + step_cost;
-            if (next_cost > unit->remaining_scaled_move) {
+            const bool first_step = current_cost == 0 && coord_equal(current, unit->coord);
+            const bool affordable = next_cost <= unit->remaining_scaled_move;
+            const bool minimum_step = first_step && !unit->moved_this_turn;
+            if (!affordable && !minimum_step) {
                 continue;
             }
             const auto existing = best_costs.find(next);
@@ -1354,7 +1415,7 @@ std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id) {
             if (!friendly_occupied) {
                 reachable.push_back({next, next_cost});
             }
-            if (!unit->respects_zoc || !enemy_zoc_at(state, next, *unit)) {
+            if (affordable && (!unit->respects_zoc || !enemy_zoc_at(state, next, *unit))) {
                 queue.push_back(next);
             }
         }
