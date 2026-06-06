@@ -984,6 +984,9 @@ function normalizeUnit(unit, index) {
   if (unit.moveDone !== undefined) normalized.moveDone = Boolean(unit.moveDone);
   if (unit.movedThisTurn !== undefined) normalized.movedThisTurn = Boolean(unit.movedThisTurn);
   if (unit.combatDone !== undefined) normalized.combatDone = Boolean(unit.combatDone);
+  if (unit.contactedEnemyThisTurn !== undefined) {
+    normalized.contactedEnemyThisTurn = Boolean(unit.contactedEnemyThisTurn);
+  }
   if (unit.projectsZoc !== undefined) normalized.projectsZoc = Boolean(unit.projectsZoc);
   if (unit.respectsZoc !== undefined) normalized.respectsZoc = Boolean(unit.respectsZoc);
   return normalized;

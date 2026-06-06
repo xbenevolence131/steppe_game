@@ -79,6 +79,31 @@ function openMovementGameState() {
   };
 }
 
+function readinessRecoveryGameState(adjacent = false) {
+  const hexes = [];
+  for (let r = 1; r <= 2; r += 1) {
+    for (let q = 1; q <= 5; q += 1) {
+      hexes.push({ q, r, terrain: "grassland", labels: [] });
+    }
+  }
+  return {
+    width: 5,
+    height: 2,
+    seed: 0,
+    hexes,
+    units: [
+      { id: 1, owner: 1, faction: "mongol", kind: "horse_archer", q: 2, r: 1, hp: 10, maxHp: 10, readiness: 50, remainingScaledMove: 32 },
+      { id: 2, owner: 2, faction: "chinese", kind: "infantry", q: adjacent ? 3 : 5, r: 1, hp: 10, maxHp: 10, readiness: 50, remainingScaledMove: 16 },
+    ],
+    game: {
+      round: 1,
+      activeFactionIndex: 1,
+      selectedUnitId: 0,
+      turnOrder: [1, 2],
+    },
+  };
+}
+
 function combatGameState(defenderTerrain = "grassland") {
   const hexes = [];
   for (let r = 1; r <= 2; r += 1) {
@@ -228,7 +253,7 @@ test("combat uses unit stats terrain defense and retaliation", async ({ isMobile
 
   const recovered = runEngineJson(["game-end-turn"], grass);
   const recoveredDefender = recovered.units.find((unit) => unit.id === 2);
-  expect(recoveredDefender.readiness).toBe(100);
+  expect(recoveredDefender.readiness).toBe(75);
 
   const hill = runEngineJson(["game-attack", "--attacker", "1", "--defender", "2"], combatGameState("hill"));
   const hillPreview = runEngineJson(["game-combat-preview", "--attacker", "1", "--defender", "2"], combatGameState("hill"));
@@ -353,6 +378,28 @@ test("movement spends readiness in proportion to movement cost", async ({ isMobi
   const fullMoveUnit = fullMove.units.find((candidate) => candidate.id === 1);
   expect(fullMove.ok).toBe(true);
   expect(fullMoveUnit.readiness).toBe(92);
+});
+
+test("readiness recovers only after quiet non-contact turns", async ({ isMobile }) => {
+  test.skip(isMobile, "engine readiness rule is covered once on desktop");
+
+  const quiet = runEngineJson(["game-end-turn"], readinessRecoveryGameState(false));
+  const quietUnit = quiet.units.find((candidate) => candidate.id === 1);
+  expect(quietUnit.readiness).toBe(75);
+  expect(quietUnit.contactedEnemyThisTurn).toBe(false);
+
+  const adjacent = runEngineJson(["game-end-turn"], readinessRecoveryGameState(true));
+  const adjacentUnit = adjacent.units.find((candidate) => candidate.id === 1);
+  expect(adjacentUnit.readiness).toBe(50);
+  expect(adjacentUnit.contactedEnemyThisTurn).toBe(true);
+
+  const movedState = openMovementGameState();
+  movedState.units[0].readiness = 50;
+  const moved = runEngineJson(["game-move", "--unit", "1", "--q", "2", "--r", "1"], movedState);
+  const movedUnit = moved.units.find((candidate) => candidate.id === 1);
+  const afterMovedTurn = runEngineJson(["game-end-turn"], moved);
+  const afterMovedTurnUnit = afterMovedTurn.units.find((candidate) => candidate.id === 1);
+  expect(afterMovedTurnUnit.readiness).toBe(movedUnit.readiness);
 });
 
 test("inactive units can be selected for inspection without legal actions", async ({ isMobile }) => {

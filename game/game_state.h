@@ -122,6 +122,7 @@ struct Unit {
     bool move_done = false;
     bool moved_this_turn = false;
     bool combat_done = false;
+    bool contacted_enemy_this_turn = false;
     bool projects_zoc = false;
     bool respects_zoc = false;
 };

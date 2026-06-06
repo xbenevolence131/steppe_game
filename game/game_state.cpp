@@ -1046,6 +1046,24 @@ bool enemy_unit_adjacent_to(const GameState& state, const Unit& source) {
     }) != state.units.end();
 }
 
+void mark_enemy_contact(GameState& state, int unit_id) {
+    const auto found = std::find_if(state.units.begin(), state.units.end(), [&](const Unit& unit) {
+        return unit.id == unit_id;
+    });
+    if (found == state.units.end()) {
+        return;
+    }
+    bool contacted = false;
+    for (Unit& unit : state.units) {
+        if (unit.id == found->id || unit.owner == found->owner || !adjacent(unit.coord, found->coord)) {
+            continue;
+        }
+        unit.contacted_enemy_this_turn = true;
+        contacted = true;
+    }
+    found->contacted_enemy_this_turn = found->contacted_enemy_this_turn || contacted;
+}
+
 bool defender_flanked_by_separated_unit(const GameState& state, const Unit& attacker, const Unit& defender) {
     return std::find_if(state.units.begin(), state.units.end(), [&](const Unit& unit) {
         return unit.id != attacker.id
@@ -1343,6 +1361,7 @@ bool move_unit(GameState& state, int unit_id, Coord destination) {
     if (unit->remaining_scaled_move == 0) {
         unit->move_done = true;
     }
+    mark_enemy_contact(state, unit_id);
     state.selected_unit_id = unit_id;
     refresh_legal_actions(state);
     return true;
@@ -1361,6 +1380,8 @@ bool attack_unit(GameState& state, int attacker_id, int defender_id) {
     }
 
     if (preview.special_resolution == "feigned_retreat") {
+        attacker->contacted_enemy_this_turn = true;
+        defender->contacted_enemy_this_turn = true;
         defender->coord = preview.defender_retreat_to;
         defender->remaining_scaled_move = 0;
         defender->move_done = true;
@@ -1370,6 +1391,8 @@ bool attack_unit(GameState& state, int attacker_id, int defender_id) {
         attacker->remaining_scaled_move = 0;
         attacker->move_done = true;
         attacker->combat_done = true;
+        mark_enemy_contact(state, attacker_id);
+        mark_enemy_contact(state, defender_id);
         state.selected_unit_id = attacker_id;
         refresh_legal_actions(state);
         return true;
@@ -1379,6 +1402,8 @@ bool attack_unit(GameState& state, int attacker_id, int defender_id) {
     attacker->hp = preview.attacker.result_hp;
     defender->readiness = preview.defender.result_readiness;
     attacker->readiness = preview.attacker.result_readiness;
+    attacker->contacted_enemy_this_turn = true;
+    defender->contacted_enemy_this_turn = true;
     attacker = find_unit(state, attacker_id);
     if (attacker != nullptr) {
         attacker->remaining_scaled_move = 0;
@@ -1450,7 +1475,11 @@ bool detach_herd(GameState& state, int unit_id, int horses, Coord destination) {
     herd.horses = horses;
     herd.projects_zoc = default_projects_zoc(herd.kind);
     herd.respects_zoc = default_respects_zoc(herd.kind);
+    const int horde_id = horde->id;
+    const int herd_id = herd.id;
     state.units.push_back(herd);
+    mark_enemy_contact(state, horde_id);
+    mark_enemy_contact(state, herd_id);
     state.selected_unit_id = unit_id;
     refresh_legal_actions(state);
     return true;
@@ -1545,7 +1574,11 @@ bool create_unit_from_horde(GameState& state, int unit_id, UnitKind kind, Coord 
     created.remaining_scaled_move = created.scaled_move;
     created.projects_zoc = default_projects_zoc(created.kind);
     created.respects_zoc = default_respects_zoc(created.kind);
+    const int horde_id = horde->id;
+    const int created_id = created.id;
     state.units.push_back(created);
+    mark_enemy_contact(state, horde_id);
+    mark_enemy_contact(state, created_id);
     state.selected_unit_id = unit_id;
     refresh_legal_actions(state);
     return true;
@@ -1565,11 +1598,18 @@ void end_turn(GameState& state) {
     const OwnerId owner = active_faction(state);
     for (Unit& unit : state.units) {
         if (unit.owner == owner) {
+            const bool currently_in_contact = enemy_unit_adjacent_to(state, unit);
+            if (!unit.moved_this_turn
+                && !unit.combat_done
+                && !unit.contacted_enemy_this_turn
+                && !currently_in_contact) {
+                recover_readiness(unit, turn_readiness_recovery);
+            }
             unit.remaining_scaled_move = unit.scaled_move;
             unit.move_done = false;
             unit.moved_this_turn = false;
             unit.combat_done = false;
-            recover_readiness(unit, turn_readiness_recovery);
+            unit.contacted_enemy_this_turn = currently_in_contact;
         }
     }
 }
@@ -1629,6 +1669,7 @@ void print_unit_json(const Unit& unit, std::ostream& out) {
     out << ",\"moveDone\":" << (unit.move_done ? "true" : "false")
         << ",\"movedThisTurn\":" << (unit.moved_this_turn ? "true" : "false")
         << ",\"combatDone\":" << (unit.combat_done ? "true" : "false")
+        << ",\"contactedEnemyThisTurn\":" << (unit.contacted_enemy_this_turn ? "true" : "false")
         << ",\"projectsZoc\":" << (unit.projects_zoc ? "true" : "false")
         << ",\"respectsZoc\":" << (unit.respects_zoc ? "true" : "false")
         << "}";
@@ -2060,6 +2101,7 @@ GameState parse_game_state_json(const std::string& json) {
         unit.move_done = bool_field(unit_json, "moveDone", false);
         unit.moved_this_turn = bool_field(unit_json, "movedThisTurn", false);
         unit.combat_done = bool_field(unit_json, "combatDone", false);
+        unit.contacted_enemy_this_turn = bool_field(unit_json, "contactedEnemyThisTurn", false);
         unit.projects_zoc = bool_field(unit_json, "projectsZoc", default_projects_zoc(unit.kind));
         unit.respects_zoc = bool_field(unit_json, "respectsZoc", default_respects_zoc(unit.kind));
         state.units.push_back(unit);
