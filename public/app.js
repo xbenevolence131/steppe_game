@@ -93,12 +93,14 @@ let createUnitPlacement = null;
 
 const viewport = {
   scale: 1,
+  fitScale: 1,
+  zoomLevelIndex: 0,
   offsetX: 0,
   offsetY: 0,
   width: 0,
   height: 0,
   minScale: 0.1,
-  maxScale: 3,
+  maxScale: 12,
 };
 
 const geometry = {
@@ -223,6 +225,32 @@ const unitTypeDefaults = {
   infantry: { hp: 10, attack: 3, defense: 5, readinessDamage: 10, readiness: 100, move: 2 },
   horde: { hp: 10, attack: 2, defense: 3, readinessDamage: 0, readiness: 100, move: 3, projectsZoc: true, respectsZoc: true, population: 0, metal: 0, horses: 0 },
 };
+
+const unitSpriteCellSize = 48;
+const unitSpriteColumns = {
+  infantry: 0,
+  horde: 1,
+  herd: 2,
+  horse_archer: 3,
+  chinese_cavalry: 4,
+  mongol_lancer: 5,
+  camp: 6,
+};
+const unitSpriteZoomLevels = [
+  { key: "small", row: 0, targetWidth: null, targetHeight: null, minFitMultiplier: 1, counterWidth: 32, counterHeight: 19, dividerX: 16, iconSize: 11, iconCenterX: 8, hpX: 24, hpFont: 10 },
+  { key: "medium", row: 1, targetWidth: 40, targetHeight: 20, minFitMultiplier: 1.4, counterWidth: 40, counterHeight: 24, dividerX: 20, iconSize: 15, iconCenterX: 10, hpX: 30, hpFont: 12 },
+  { key: "large", row: 2, targetWidth: 20, targetHeight: 10, minFitMultiplier: 2, counterWidth: 50, counterHeight: 30, dividerX: 25, iconSize: 19, iconCenterX: 12.5, hpX: 37.5, hpFont: 14 },
+];
+const unitSpriteSheet = new Image();
+const unitSpriteTintCache = new Map();
+let unitSpriteSheetReady = false;
+unitSpriteSheet.onload = () => {
+  unitSpriteSheetReady = true;
+  if (currentMap) {
+    drawMap();
+  }
+};
+unitSpriteSheet.src = "/unit-glyphs.svg";
 
 function terrainStyle(key) {
   const terrain = editorTerrains.find((entry) => entry.key === key);
@@ -586,6 +614,16 @@ function updateGeometry(map) {
   geometry.height = geometry.margin * 2 + hexHeight * (map.height + 0.5);
 }
 
+function worldSizeForHexSpan(width, height) {
+  const clampedWidth = Math.max(1, width);
+  const clampedHeight = Math.max(1, height);
+  const hexHeight = Math.sqrt(3) * geometry.size;
+  return {
+    width: geometry.size * (1.5 * Math.max(1, clampedWidth - 1) + 2),
+    height: hexHeight * (clampedHeight + 0.5),
+  };
+}
+
 function fitMap() {
   if (!currentMap) {
     return;
@@ -594,7 +632,9 @@ function fitMap() {
   updateGeometry(currentMap);
   const scaleX = viewport.width / geometry.width;
   const scaleY = viewport.height / geometry.height;
-  viewport.scale = clamp(Math.min(scaleX, scaleY), viewport.minScale, viewport.maxScale);
+  viewport.fitScale = clamp(Math.min(scaleX, scaleY), viewport.minScale, viewport.maxScale);
+  viewport.zoomLevelIndex = 0;
+  viewport.scale = zoomScaleForLevel(viewport.zoomLevelIndex);
   viewport.offsetX = (viewport.width - geometry.width * viewport.scale) / 2;
   viewport.offsetY = (viewport.height - geometry.height * viewport.scale) / 2;
   drawMap();
@@ -617,18 +657,34 @@ function constrainViewport() {
   }
 }
 
-function zoomAt(panelX, panelY, factor) {
+function zoomScaleForLevel(index) {
+  const level = unitSpriteZoomLevels[clamp(index, 0, unitSpriteZoomLevels.length - 1)] || unitSpriteZoomLevels[0];
+  const minimumTierScale = viewport.fitScale * (level.minFitMultiplier || 1);
+  if (!level.targetWidth || !level.targetHeight) {
+    return clamp(minimumTierScale, viewport.minScale, viewport.maxScale);
+  }
+  const target = worldSizeForHexSpan(
+    Math.min(currentMap ? currentMap.width : level.targetWidth, level.targetWidth),
+    Math.min(currentMap ? currentMap.height : level.targetHeight, level.targetHeight)
+  );
+  const targetScale = Math.min(viewport.width / target.width, viewport.height / target.height);
+  return clamp(Math.max(viewport.fitScale, minimumTierScale, targetScale), viewport.minScale, viewport.maxScale);
+}
+
+function setZoomLevelAt(panelX, panelY, nextIndex) {
   if (!currentMap) {
     return;
   }
 
-  const nextScale = clamp(viewport.scale * factor, viewport.minScale, viewport.maxScale);
-  if (nextScale === viewport.scale) {
+  const clampedIndex = clamp(nextIndex, 0, unitSpriteZoomLevels.length - 1);
+  const nextScale = zoomScaleForLevel(clampedIndex);
+  if (nextScale === viewport.scale && clampedIndex === viewport.zoomLevelIndex) {
     return;
   }
 
   const worldX = (panelX - viewport.offsetX) / viewport.scale;
   const worldY = (panelY - viewport.offsetY) / viewport.scale;
+  viewport.zoomLevelIndex = clampedIndex;
   viewport.scale = nextScale;
   viewport.offsetX = panelX - worldX * viewport.scale;
   viewport.offsetY = panelY - worldY * viewport.scale;
@@ -636,8 +692,12 @@ function zoomAt(panelX, panelY, factor) {
   drawMap();
 }
 
-function zoomFromCenter(factor) {
-  zoomAt(viewport.width / 2, viewport.height / 2, factor);
+function zoomStepAt(panelX, panelY, direction) {
+  setZoomLevelAt(panelX, panelY, viewport.zoomLevelIndex + direction);
+}
+
+function zoomFromCenter(direction) {
+  zoomStepAt(viewport.width / 2, viewport.height / 2, direction);
 }
 
 function panBy(dx, dy) {
@@ -1546,6 +1606,127 @@ function unitHpReadinessColor(unit) {
   return "#c93632";
 }
 
+function unitSpriteLevelForScale(scale) {
+  return unitSpriteZoomLevels.reduce((best, level, index) => (
+    Math.abs(zoomScaleForLevel(index) - scale) < Math.abs(zoomScaleForLevel(unitSpriteZoomLevels.indexOf(best)) - scale) ? level : best
+  ), unitSpriteZoomLevels[0]);
+}
+
+function currentUnitSpriteLevel() {
+  return unitSpriteZoomLevels[viewport.zoomLevelIndex] || unitSpriteZoomLevels[0];
+}
+
+function tintedUnitSprite(kind, color, level) {
+  if (!unitSpriteSheetReady || !Object.prototype.hasOwnProperty.call(unitSpriteColumns, kind)) {
+    return null;
+  }
+  const cacheKey = `${kind}:${color}:${level.key}`;
+  const cached = unitSpriteTintCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = unitSpriteCellSize;
+  canvas.height = unitSpriteCellSize;
+  const spriteCtx = canvas.getContext("2d");
+  if (!spriteCtx) {
+    return null;
+  }
+  spriteCtx.drawImage(
+    unitSpriteSheet,
+    unitSpriteColumns[kind] * unitSpriteCellSize,
+    level.row * unitSpriteCellSize,
+    unitSpriteCellSize,
+    unitSpriteCellSize,
+    0,
+    0,
+    unitSpriteCellSize,
+    unitSpriteCellSize
+  );
+  spriteCtx.globalCompositeOperation = "source-in";
+  spriteCtx.fillStyle = color;
+  spriteCtx.fillRect(0, 0, unitSpriteCellSize, unitSpriteCellSize);
+  unitSpriteTintCache.set(cacheKey, canvas);
+  return canvas;
+}
+
+function drawUnitSpriteGlyph(unit, faction, x, y, counterHeight) {
+  const level = currentUnitSpriteLevel();
+  const sprite = tintedUnitSprite(unit.kind, faction.color, level);
+  if (!sprite) {
+    return false;
+  }
+  const size = level.iconSize / viewport.scale;
+  const centerX = x + level.iconCenterX / viewport.scale;
+  const centerY = y + counterHeight / 2;
+  ctx.drawImage(sprite, centerX - size / 2, centerY - size / 2, size, size);
+  return true;
+}
+
+function drawFallbackUnitGlyph(unit, faction, x, y, dividerX, counterHeight) {
+  ctx.strokeStyle = faction.color;
+  ctx.lineWidth = 2 / viewport.scale;
+  if (unit.kind === "infantry") {
+    const iconInsetX = 5 / viewport.scale;
+    const iconInsetY = 5 / viewport.scale;
+    ctx.beginPath();
+    ctx.moveTo(x + iconInsetX, y + iconInsetY);
+    ctx.lineTo(dividerX - iconInsetX, y + counterHeight - iconInsetY);
+    ctx.moveTo(dividerX - iconInsetX, y + iconInsetY);
+    ctx.lineTo(x + iconInsetX, y + counterHeight - iconInsetY);
+    ctx.stroke();
+  } else if (unit.kind === "horde") {
+    const left = x + 5 / viewport.scale;
+    const right = dividerX - 5 / viewport.scale;
+    const top = y + 5 / viewport.scale;
+    const bottom = y + counterHeight - 5 / viewport.scale;
+    ctx.beginPath();
+    ctx.moveTo((left + right) / 2, top);
+    ctx.lineTo(right, bottom);
+    ctx.lineTo(left, bottom);
+    ctx.closePath();
+    ctx.stroke();
+  } else if (unit.kind === "herd") {
+    const ovalY = y + counterHeight / 2;
+    const ovalCenters = [7.2, 10.2, 13.2].map((offset) => x + offset / viewport.scale);
+    for (const ovalX of ovalCenters) {
+      ctx.beginPath();
+      ctx.ellipse(ovalX, ovalY, 4.4 / viewport.scale, 2.7 / viewport.scale, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  } else if (unit.kind === "horse_archer") {
+    ctx.beginPath();
+    ctx.ellipse(x + 9.5 / viewport.scale, y + counterHeight / 2, 5.5 / viewport.scale, 3.1 / viewport.scale, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (unit.kind === "chinese_cavalry") {
+    const centerX = x + 9.5 / viewport.scale;
+    const centerY = y + counterHeight / 2;
+    ctx.beginPath();
+    ctx.ellipse(centerX, centerY, 5.5 / viewport.scale, 3.1 / viewport.scale, 0, 0, Math.PI * 2);
+    ctx.moveTo(centerX, centerY - 4.3 / viewport.scale);
+    ctx.lineTo(centerX, centerY + 4.3 / viewport.scale);
+    ctx.stroke();
+  } else if (unit.kind === "mongol_lancer") {
+    const left = x + 5.5 / viewport.scale;
+    const right = dividerX - 6 / viewport.scale;
+    const top = y + 5 / viewport.scale;
+    const bottom = y + counterHeight - 5 / viewport.scale;
+    ctx.beginPath();
+    ctx.moveTo(left, bottom);
+    ctx.lineTo(right, top);
+    ctx.moveTo(left + 2 / viewport.scale, top);
+    ctx.lineTo(right, top);
+    ctx.lineTo(right - 3 / viewport.scale, top + 3 / viewport.scale);
+    ctx.stroke();
+  } else {
+    ctx.beginPath();
+    ctx.rect(x + 5.5 / viewport.scale, y + 6 / viewport.scale, 8 / viewport.scale, 8 / viewport.scale);
+    ctx.fillStyle = faction.color;
+    ctx.fill();
+  }
+}
+
 function drawUnitCounters(units) {
   if (!units || units.length === 0) {
     return;
@@ -1557,12 +1738,13 @@ function drawUnitCounters(units) {
     : 0;
   for (const unit of units) {
     const faction = factions[unit.faction] || factions.mongol;
+    const level = currentUnitSpriteLevel();
     const center = hexCenter(unit);
-    const counterWidth = 38 / viewport.scale;
-    const counterHeight = 23 / viewport.scale;
+    const counterWidth = level.counterWidth / viewport.scale;
+    const counterHeight = level.counterHeight / viewport.scale;
     const x = center.x - counterWidth / 2;
     const y = center.y - counterHeight / 2;
-    const dividerX = x + 19 / viewport.scale;
+    const dividerX = x + level.dividerX / viewport.scale;
 
     roundedRectPath(x, y, counterWidth, counterHeight, 4 / viewport.scale);
     ctx.fillStyle = "#fffdf8";
@@ -1588,72 +1770,15 @@ function drawUnitCounters(units) {
     ctx.lineWidth = 1 / viewport.scale;
     ctx.stroke();
 
-    ctx.strokeStyle = faction.color;
-    ctx.lineWidth = 2 / viewport.scale;
-    if (unit.kind === "infantry") {
-      const iconInsetX = 5 / viewport.scale;
-      const iconInsetY = 5 / viewport.scale;
-      ctx.beginPath();
-      ctx.moveTo(x + iconInsetX, y + iconInsetY);
-      ctx.lineTo(dividerX - iconInsetX, y + counterHeight - iconInsetY);
-      ctx.moveTo(dividerX - iconInsetX, y + iconInsetY);
-      ctx.lineTo(x + iconInsetX, y + counterHeight - iconInsetY);
-      ctx.stroke();
-    } else if (unit.kind === "horde") {
-      const left = x + 5 / viewport.scale;
-      const right = dividerX - 5 / viewport.scale;
-      const top = y + 5 / viewport.scale;
-      const bottom = y + counterHeight - 5 / viewport.scale;
-      ctx.beginPath();
-      ctx.moveTo((left + right) / 2, top);
-      ctx.lineTo(right, bottom);
-      ctx.lineTo(left, bottom);
-      ctx.closePath();
-      ctx.stroke();
-    } else if (unit.kind === "herd") {
-      const ovalY = y + counterHeight / 2;
-      const ovalCenters = [7.2, 10.2, 13.2].map((offset) => x + offset / viewport.scale);
-      for (const ovalX of ovalCenters) {
-        ctx.beginPath();
-        ctx.ellipse(ovalX, ovalY, 4.4 / viewport.scale, 2.7 / viewport.scale, 0, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-    } else if (unit.kind === "horse_archer") {
-      ctx.beginPath();
-      ctx.ellipse(x + 9.5 / viewport.scale, y + counterHeight / 2, 5.5 / viewport.scale, 3.1 / viewport.scale, 0, 0, Math.PI * 2);
-      ctx.stroke();
-    } else if (unit.kind === "chinese_cavalry") {
-      const centerX = x + 9.5 / viewport.scale;
-      const centerY = y + counterHeight / 2;
-      ctx.beginPath();
-      ctx.ellipse(centerX, centerY, 5.5 / viewport.scale, 3.1 / viewport.scale, 0, 0, Math.PI * 2);
-      ctx.moveTo(centerX, centerY - 4.3 / viewport.scale);
-      ctx.lineTo(centerX, centerY + 4.3 / viewport.scale);
-      ctx.stroke();
-    } else if (unit.kind === "mongol_lancer") {
-      const left = x + 5.5 / viewport.scale;
-      const right = dividerX - 6 / viewport.scale;
-      const top = y + 5 / viewport.scale;
-      const bottom = y + counterHeight - 5 / viewport.scale;
-      ctx.beginPath();
-      ctx.moveTo(left, bottom);
-      ctx.lineTo(right, top);
-      ctx.moveTo(left + 2 / viewport.scale, top);
-      ctx.lineTo(right, top);
-      ctx.lineTo(right - 3 / viewport.scale, top + 3 / viewport.scale);
-      ctx.stroke();
-    } else {
-      ctx.beginPath();
-      ctx.rect(x + 5.5 / viewport.scale, y + 6 / viewport.scale, 8 / viewport.scale, 8 / viewport.scale);
-      ctx.fillStyle = faction.color;
-      ctx.fill();
+    if (!drawUnitSpriteGlyph(unit, faction, x, y, counterHeight)) {
+      drawFallbackUnitGlyph(unit, faction, x, y, dividerX, counterHeight);
     }
 
     ctx.fillStyle = unitHpReadinessColor(unit);
-    ctx.font = `${12 / viewport.scale}px Segoe UI, Arial, sans-serif`;
+    ctx.font = `${level.hpFont / viewport.scale}px Segoe UI, Arial, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(String(unit.hp), x + 28.5 / viewport.scale, y + counterHeight / 2 + 0.5 / viewport.scale);
+    ctx.fillText(String(unit.hp), x + level.hpX / viewport.scale, y + counterHeight / 2 + 0.5 / viewport.scale);
   }
   ctx.restore();
 }
@@ -1718,8 +1843,9 @@ function findUnitAtPoint(point) {
   if (!currentMap || !Array.isArray(currentMap.units)) {
     return null;
   }
-  const counterWidth = 38 / viewport.scale;
-  const counterHeight = 23 / viewport.scale;
+  const level = currentUnitSpriteLevel();
+  const counterWidth = level.counterWidth / viewport.scale;
+  const counterHeight = level.counterHeight / viewport.scale;
   for (let index = currentMap.units.length - 1; index >= 0; index -= 1) {
     const unit = currentMap.units[index];
     const center = hexCenter(unit);
@@ -2757,8 +2883,8 @@ contextMenu.addEventListener("pointerdown", (event) => event.stopPropagation());
 contextMenu.addEventListener("click", (event) => event.stopPropagation());
 detachHerdPopover.addEventListener("pointerdown", (event) => event.stopPropagation());
 detachHerdPopover.addEventListener("click", (event) => event.stopPropagation());
-zoomInButton.addEventListener("click", () => zoomFromCenter(1.25));
-zoomOutButton.addEventListener("click", () => zoomFromCenter(0.8));
+zoomInButton.addEventListener("click", () => zoomFromCenter(1));
+zoomOutButton.addEventListener("click", () => zoomFromCenter(-1));
 fitButton.addEventListener("click", fitMap);
 
 mapPanel.addEventListener("wheel", (event) => {
@@ -2767,7 +2893,7 @@ mapPanel.addEventListener("wheel", (event) => {
   }
   event.preventDefault();
   const rect = mapPanel.getBoundingClientRect();
-  zoomAt(event.clientX - rect.left, event.clientY - rect.top, event.deltaY < 0 ? 1.12 : 1 / 1.12);
+  zoomStepAt(event.clientX - rect.left, event.clientY - rect.top, event.deltaY < 0 ? 1 : -1);
 }, { passive: false });
 
 mapPanel.addEventListener("pointerdown", async (event) => {

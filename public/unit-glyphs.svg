@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="336" height="144" viewBox="0 0 336 144">
+  <defs>
+    <style>
+      .g{fill:none;stroke:#000;stroke-linecap:round;stroke-linejoin:round}
+      .s{stroke-width:3}
+      .m{stroke-width:4}
+      .l{stroke-width:5}
+    </style>
+  </defs>
+  <g id="small" class="g s">
+    <g transform="translate(0 0)"><path d="M15 15 33 33M33 15 15 33"/></g>
+    <g transform="translate(48 0)"><path d="M24 13 36 35H12Z"/></g>
+    <g transform="translate(96 0)"><ellipse cx="19" cy="24" rx="10" ry="5"/><ellipse cx="24" cy="24" rx="10" ry="5"/><ellipse cx="29" cy="24" rx="10" ry="5"/></g>
+    <g transform="translate(144 0)"><ellipse cx="24" cy="24" rx="14" ry="7"/></g>
+    <g transform="translate(192 0)"><ellipse cx="24" cy="24" rx="14" ry="7"/><path d="M24 12v24"/></g>
+    <g transform="translate(240 0)"><path d="M12 35 36 12M16 14h20l-6 6"/></g>
+    <g transform="translate(288 0)"><rect x="15" y="15" width="18" height="18"/></g>
+  </g>
+  <g id="medium" class="g m" transform="translate(0 48)">
+    <g transform="translate(0 0)"><path d="M14 14 34 34M34 14 14 34"/></g>
+    <g transform="translate(48 0)"><path d="M24 11 38 36H10Z"/></g>
+    <g transform="translate(96 0)"><ellipse cx="18" cy="24" rx="11" ry="6"/><ellipse cx="24" cy="24" rx="11" ry="6"/><ellipse cx="30" cy="24" rx="11" ry="6"/></g>
+    <g transform="translate(144 0)"><ellipse cx="24" cy="24" rx="15" ry="8"/></g>
+    <g transform="translate(192 0)"><ellipse cx="24" cy="24" rx="15" ry="8"/><path d="M24 10v28"/></g>
+    <g transform="translate(240 0)"><path d="M11 36 37 11M16 13h21l-7 7"/></g>
+    <g transform="translate(288 0)"><rect x="14" y="14" width="20" height="20"/></g>
+  </g>
+  <g id="large" class="g l" transform="translate(0 96)">
+    <g transform="translate(0 0)"><path d="M13 13 35 35M35 13 13 35"/></g>
+    <g transform="translate(48 0)"><path d="M24 9 40 38H8Z"/></g>
+    <g transform="translate(96 0)"><ellipse cx="17" cy="24" rx="12" ry="7"/><ellipse cx="24" cy="24" rx="12" ry="7"/><ellipse cx="31" cy="24" rx="12" ry="7"/></g>
+    <g transform="translate(144 0)"><ellipse cx="24" cy="24" rx="16" ry="9"/></g>
+    <g transform="translate(192 0)"><ellipse cx="24" cy="24" rx="16" ry="9"/><path d="M24 8v32"/></g>
+    <g transform="translate(240 0)"><path d="M10 38 38 10M15 12h23l-8 8"/></g>
+    <g transform="translate(288 0)"><rect x="13" y="13" width="22" height="22"/></g>
+  </g>
+</svg>

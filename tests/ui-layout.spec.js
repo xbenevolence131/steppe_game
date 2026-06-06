@@ -651,6 +651,77 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   expect(layout.scrollWidth).toBeLessThanOrEqual(layout.viewportWidth);
 });
 
+test("unit counters use sprite glyph zoom bands", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop canvas setup is enough for sprite asset coverage");
+
+  await openPlayMode(page);
+  await expect.poll(() => page.evaluate(() => unitSpriteSheetReady)).toBe(true);
+  await expect(page.evaluate(() => {
+    const kinds = ["infantry", "horde", "herd", "horse_archer", "chinese_cavalry", "mongol_lancer", "camp"];
+    const medium = unitSpriteZoomLevels.find((level) => level.key === "medium");
+    return {
+      levels: unitSpriteZoomLevels.map((level) => level.key),
+      initialIndex: viewport.zoomLevelIndex,
+      initialScale: viewport.scale,
+      counterWidths: unitSpriteZoomLevels.map((level) => level.counterWidth),
+      sprites: kinds.every((kind) => Boolean(tintedUnitSprite(kind, "#2368c4", medium))),
+    };
+  })).resolves.toEqual(expect.objectContaining({
+    levels: ["small", "medium", "large"],
+    initialIndex: 0,
+    initialScale: expect.any(Number),
+    counterWidths: [32, 40, 50],
+    sprites: true,
+  }));
+  const initialScale = await page.evaluate(() => viewport.scale);
+  await page.locator("#zoom-in-button").click();
+  await expect(page.evaluate(() => ({
+    index: viewport.zoomLevelIndex,
+    level: currentUnitSpriteLevel().key,
+    counterWidth: currentUnitSpriteLevel().counterWidth,
+    scale: viewport.scale,
+  }))).resolves.toEqual(expect.objectContaining({ index: 1, level: "medium", counterWidth: 40 }));
+  const mediumScale = await page.evaluate(() => viewport.scale);
+  expect(mediumScale).toBeGreaterThan(initialScale);
+  await page.locator("#zoom-in-button").click();
+  await expect(page.evaluate(() => ({
+    index: viewport.zoomLevelIndex,
+    level: currentUnitSpriteLevel().key,
+    counterWidth: currentUnitSpriteLevel().counterWidth,
+    scale: viewport.scale,
+  }))).resolves.toEqual(expect.objectContaining({ index: 2, level: "large", counterWidth: 50 }));
+  const largeScale = await page.evaluate(() => viewport.scale);
+  expect(largeScale).toBeGreaterThan(mediumScale);
+  expect(largeScale / initialScale).toBeLessThanOrEqual(2.01);
+  await page.locator("#zoom-in-button").click();
+  await expect(page.evaluate(() => viewport.zoomLevelIndex)).resolves.toBe(2);
+  const coverageScales = await page.evaluate(() => {
+    currentMap = { width: 120, height: 80 };
+    updateGeometry(currentMap);
+    viewport.fitScale = Math.min(viewport.width / geometry.width, viewport.height / geometry.height);
+    const mediumTarget = worldSizeForHexSpan(40, 20);
+    const largeTarget = worldSizeForHexSpan(20, 10);
+    const mediumLevel = unitSpriteZoomLevels.find((level) => level.key === "medium");
+    const largeLevel = unitSpriteZoomLevels.find((level) => level.key === "large");
+    return {
+      fitDelta: Math.abs(zoomScaleForLevel(0) - viewport.fitScale),
+      mediumDelta: Math.abs(zoomScaleForLevel(1) - Math.max(
+        viewport.fitScale,
+        viewport.fitScale * mediumLevel.minFitMultiplier,
+        Math.min(viewport.width / mediumTarget.width, viewport.height / mediumTarget.height)
+      )),
+      largeDelta: Math.abs(zoomScaleForLevel(2) - Math.max(
+        viewport.fitScale,
+        viewport.fitScale * largeLevel.minFitMultiplier,
+        Math.min(viewport.width / largeTarget.width, viewport.height / largeTarget.height)
+      )),
+    };
+  });
+  expect(coverageScales.fitDelta).toBeLessThan(0.000001);
+  expect(coverageScales.mediumDelta).toBeLessThan(0.000001);
+  expect(coverageScales.largeDelta).toBeLessThan(0.000001);
+});
+
 test("horde inspector shows resource counters", async ({ page, isMobile }) => {
   test.skip(isMobile, "desktop-only bottom panel assertion");
 
