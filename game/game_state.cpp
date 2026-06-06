@@ -259,7 +259,9 @@ bool default_projects_zoc(UnitKind kind) {
 }
 
 bool default_respects_zoc(UnitKind kind) {
-    return kind == UnitKind::Infantry || kind == UnitKind::Horde;
+    return kind == UnitKind::ChineseCavalry
+        || kind == UnitKind::Infantry
+        || kind == UnitKind::Horde;
 }
 
 bool can_attack(UnitKind kind) {
@@ -529,6 +531,36 @@ HexTagMask tags_from_labels(const std::vector<std::string>& labels) {
         add_tag_for_label(mask, label);
     }
     return mask;
+}
+
+const char* unit_kind_key(UnitKind kind) {
+    return unit_kind_to_string(kind);
+}
+
+std::vector<UnitKind> unit_kinds() {
+    return {
+        UnitKind::Camp,
+        UnitKind::Herd,
+        UnitKind::HorseArcher,
+        UnitKind::ChineseCavalry,
+        UnitKind::MongolLancer,
+        UnitKind::Infantry,
+        UnitKind::Horde,
+    };
+}
+
+UnitDefaults unit_defaults(UnitKind kind) {
+    UnitDefaults defaults;
+    defaults.kind = kind;
+    defaults.hp = default_hp(kind);
+    defaults.attack = default_attack(kind);
+    defaults.defense = default_defense(kind);
+    defaults.readiness_damage = default_readiness_damage(kind);
+    defaults.readiness = default_max_readiness;
+    defaults.move = default_move(kind);
+    defaults.projects_zoc = default_projects_zoc(kind);
+    defaults.respects_zoc = default_respects_zoc(kind);
+    return defaults;
 }
 
 SettlementKind settlement_kind_from_town(const Town& town) {

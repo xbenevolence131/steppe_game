@@ -119,6 +119,21 @@ struct Unit {
     bool respects_zoc = false;
 };
 
+struct UnitDefaults {
+    UnitKind kind = UnitKind::HorseArcher;
+    int hp = 1;
+    int attack = 0;
+    int defense = 1;
+    int readiness_damage = 0;
+    int readiness = 100;
+    int move = 0;
+    bool projects_zoc = false;
+    bool respects_zoc = false;
+    int population = 0;
+    int metal = 0;
+    int horses = 0;
+};
+
 struct ReachableHex {
     Coord coord;
     int scaled_cost = 0;
@@ -224,6 +239,9 @@ PastureState initial_pasture_for_terrain(Terrain terrain);
 GameState game_state_from_generated_map(const GeneratedMap& generated);
 GameState generate_game_state(const GenerateArgs& args);
 GameState create_default_play_sandbox(int width = 10, int height = 10, int faction_count = 2);
+const char* unit_kind_key(UnitKind kind);
+std::vector<UnitKind> unit_kinds();
+UnitDefaults unit_defaults(UnitKind kind);
 
 OwnerId active_faction(const GameState& state);
 std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id);

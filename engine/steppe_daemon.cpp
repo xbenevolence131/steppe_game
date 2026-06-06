@@ -210,6 +210,33 @@ std::string combat_preview_json(const steppe::game::CombatPreview& preview) {
     return out.str();
 }
 
+std::string unit_defaults_json() {
+    std::ostringstream out;
+    out << "{\"units\":{";
+    const std::vector<steppe::game::UnitKind> kinds = steppe::game::unit_kinds();
+    for (std::size_t i = 0; i < kinds.size(); ++i) {
+        const steppe::game::UnitDefaults defaults = steppe::game::unit_defaults(kinds[i]);
+        if (i > 0) {
+            out << ",";
+        }
+        out << "\"" << steppe::game::unit_kind_key(defaults.kind) << "\":{"
+            << "\"hp\":" << defaults.hp
+            << ",\"attack\":" << defaults.attack
+            << ",\"defense\":" << defaults.defense
+            << ",\"readinessDamage\":" << defaults.readiness_damage
+            << ",\"readiness\":" << defaults.readiness
+            << ",\"move\":" << defaults.move
+            << ",\"projectsZoc\":" << (defaults.projects_zoc ? "true" : "false")
+            << ",\"respectsZoc\":" << (defaults.respects_zoc ? "true" : "false")
+            << ",\"population\":" << defaults.population
+            << ",\"metal\":" << defaults.metal
+            << ",\"horses\":" << defaults.horses
+            << "}";
+    }
+    out << "}}";
+    return out.str();
+}
+
 std::string generated_map_json(const steppe::GeneratedMap& map) {
     std::ostringstream out;
     std::streambuf* previous = std::cout.rdbuf(out.rdbuf());
@@ -271,6 +298,9 @@ std::string handle_command(const std::string& body) {
 
     if (type == "generate_map") {
         return ok_response(game_id, generated_map_json(steppe::generate_map(generate_args_from_command(command))));
+    }
+    if (type == "unit_defaults") {
+        return ok_response(game_id, unit_defaults_json());
     }
     if (type == "new_game") {
         steppe::game::GameState state = steppe::game::create_default_play_sandbox(

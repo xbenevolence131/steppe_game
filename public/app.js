@@ -216,14 +216,19 @@ const factions = {
 const factionCount = 2;
 const factionTurnOrder = ["mongol", "chinese", "persian"].slice(0, factionCount);
 
-const unitTypeDefaults = {
-  camp: { hp: 1, attack: 0, defense: 1, readinessDamage: 0, readiness: 100, move: 0 },
-  herd: { hp: 1, attack: 0, defense: 1, readinessDamage: 0, readiness: 100, move: 3 },
-  horse_archer: { hp: 10, attack: 4, defense: 3, readinessDamage: 25, readiness: 100, move: 4 },
-  chinese_cavalry: { hp: 10, attack: 5, defense: 3, readinessDamage: 10, readiness: 100, move: 3 },
-  mongol_lancer: { hp: 10, attack: 5, defense: 3, readinessDamage: 10, readiness: 100, move: 4 },
-  infantry: { hp: 10, attack: 3, defense: 5, readinessDamage: 10, readiness: 100, move: 2 },
-  horde: { hp: 10, attack: 2, defense: 3, readinessDamage: 0, readiness: 100, move: 3, projectsZoc: true, respectsZoc: true, population: 0, metal: 0, horses: 0 },
+const unitTypeDefaults = {};
+const fallbackUnitDefaults = {
+  hp: 1,
+  attack: 0,
+  defense: 1,
+  readinessDamage: 0,
+  readiness: 100,
+  move: 0,
+  projectsZoc: false,
+  respectsZoc: false,
+  population: 0,
+  metal: 0,
+  horses: 0,
 };
 
 const unitSpriteColumns = {
@@ -886,9 +891,50 @@ function restoreLocalUndo(snapshot) {
   drawMap();
 }
 
+function normalizeUnitDefault(defaults) {
+  const normalized = { ...fallbackUnitDefaults };
+  if (!defaults || typeof defaults !== "object") {
+    return normalized;
+  }
+  if (Number.isFinite(defaults.hp)) normalized.hp = Math.max(1, Math.trunc(defaults.hp));
+  if (Number.isFinite(defaults.attack)) normalized.attack = Math.max(0, Math.trunc(defaults.attack));
+  if (Number.isFinite(defaults.defense)) normalized.defense = Math.max(1, Math.trunc(defaults.defense));
+  if (Number.isFinite(defaults.readinessDamage)) normalized.readinessDamage = Math.max(0, Math.trunc(defaults.readinessDamage));
+  if (Number.isFinite(defaults.readiness)) normalized.readiness = Math.max(0, Math.trunc(defaults.readiness));
+  if (Number.isFinite(defaults.move)) normalized.move = Math.max(0, defaults.move);
+  normalized.projectsZoc = Boolean(defaults.projectsZoc);
+  normalized.respectsZoc = Boolean(defaults.respectsZoc);
+  if (Number.isFinite(defaults.population)) normalized.population = Math.max(0, Math.trunc(defaults.population));
+  if (Number.isFinite(defaults.metal)) normalized.metal = Math.max(0, Math.trunc(defaults.metal));
+  if (Number.isFinite(defaults.horses)) normalized.horses = Math.max(0, Math.trunc(defaults.horses));
+  return normalized;
+}
+
+function unitDefaultsFor(kind) {
+  return unitTypeDefaults[kind] || unitTypeDefaults.horse_archer || fallbackUnitDefaults;
+}
+
+function editorUnitDefaultsFor(kind) {
+  const defaults = unitTypeDefaults[kind];
+  if (!defaults) {
+    throw new Error("Engine unit metadata has not loaded yet.");
+  }
+  return defaults;
+}
+
+async function loadUnitTypeDefaults() {
+  const metadata = await postAppCommand({ type: "unit_defaults" });
+  if (!metadata || typeof metadata !== "object" || !metadata.units || typeof metadata.units !== "object") {
+    throw new Error("Engine unit metadata response is invalid.");
+  }
+  for (const [kind, defaults] of Object.entries(metadata.units)) {
+    unitTypeDefaults[kind] = normalizeUnitDefault(defaults);
+  }
+}
+
 function normalizeUnit(unit, index) {
   const kind = typeof unit.kind === "string" ? (unit.kind === "cavalry" ? "horse_archer" : unit.kind) : "horse_archer";
-  const defaults = unitTypeDefaults[kind] || unitTypeDefaults.horse_archer;
+  const defaults = unitDefaultsFor(kind);
   const owner = Number.isInteger(unit.owner) ? unit.owner : null;
   const ownerFaction = Object.entries(factions).find(([, faction]) => faction.owner === owner);
   const faction = typeof unit.faction === "string" && factions[unit.faction]
@@ -2628,7 +2674,7 @@ function makeEditorUnit(coord) {
   const kind = editorUnitTypeSelect.value;
   const factionKey = editorUnitSideSelect.value;
   const faction = factions[factionKey] || factions.mongol;
-  const defaults = unitTypeDefaults[kind] || unitTypeDefaults.horse_archer;
+  const defaults = editorUnitDefaultsFor(kind);
   return {
     id: nextUnitId(),
     owner: faction.owner,
@@ -2761,7 +2807,12 @@ function paintAtPointer(event) {
       recordLocalUndo();
       paintUndoRecorded = true;
     }
-    toggleEditorUnit(hex);
+    try {
+      toggleEditorUnit(hex);
+    } catch (error) {
+      window.alert(error.message);
+      return;
+    }
     syncModeControls();
     drawMap();
     return;
@@ -2904,8 +2955,8 @@ async function createDefaultPlayScenario() {
   try {
     currentMap = await postAppCommand({
       type: "new_game",
-      width: 10,
-      height: 10,
+      width: 80,
+      height: 40,
       factions: factionCount,
     });
     currentMap.units = Array.isArray(currentMap.units) ? currentMap.units.map(normalizeUnit) : [];
@@ -2915,6 +2966,15 @@ async function createDefaultPlayScenario() {
     refreshDerivedTopology();
     syncModeControls();
     fitMap();
+  } catch (error) {
+    window.alert(error.message);
+  }
+}
+
+async function initializeApp() {
+  try {
+    await loadUnitTypeDefaults();
+    await createDefaultPlayScenario();
   } catch (error) {
     window.alert(error.message);
   }
@@ -3289,4 +3349,4 @@ new ResizeObserver(() => {
 initializeTerrainPalette();
 syncModeControls();
 loadBitmapUnitSprites();
-createDefaultPlayScenario();
+initializeApp();
