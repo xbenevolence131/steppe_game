@@ -64,6 +64,12 @@ enum class UnitKind {
     Horde,
 };
 
+enum class UnitStance {
+    Default,
+    FeignedRetreat,
+    Defensive,
+};
+
 struct PastureState {
     int capacity = 0;
     int remaining = 0;
@@ -99,6 +105,7 @@ struct Unit {
     int id = 0;
     OwnerId owner = neutral_owner;
     UnitKind kind = UnitKind::HorseArcher;
+    UnitStance stance = UnitStance::FeignedRetreat;
     Coord coord;
     int hp = 10;
     int max_hp = 10;
@@ -121,6 +128,8 @@ struct Unit {
 
 struct UnitDefaults {
     UnitKind kind = UnitKind::HorseArcher;
+    UnitStance stance = UnitStance::FeignedRetreat;
+    std::vector<UnitStance> legal_stances;
     int hp = 1;
     int attack = 0;
     int defense = 1;
@@ -185,6 +194,10 @@ struct CombatPreview {
     std::string retreat_option = "none";
     std::string readiness_impact = "Even readiness";
     std::string retreat_impact = "No retreat";
+    std::string special_resolution = "normal";
+    Coord defender_retreat_to;
+    Coord attacker_pursuit_to;
+    int pursuit_readiness_penalty = 0;
     CombatantPreview attacker;
     CombatantPreview defender;
 };
@@ -243,6 +256,8 @@ GameState game_state_from_generated_map(const GeneratedMap& generated);
 GameState generate_game_state(const GenerateArgs& args);
 GameState create_default_play_sandbox(int width = 10, int height = 10, int faction_count = 2);
 const char* unit_kind_key(UnitKind kind);
+const char* unit_stance_key(UnitStance stance);
+UnitStance unit_stance_from_key(const std::string& stance);
 std::vector<UnitKind> unit_kinds();
 UnitDefaults unit_defaults(UnitKind kind);
 
@@ -251,6 +266,7 @@ std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id);
 std::vector<AttackableUnit> attackable_units(const GameState& state, int unit_id);
 CombatPreview combat_preview(const GameState& state, int attacker_id, int defender_id);
 bool select_unit(GameState& state, int unit_id);
+bool set_unit_stance(GameState& state, int unit_id, UnitStance stance);
 bool move_unit(GameState& state, int unit_id, Coord destination);
 bool attack_unit(GameState& state, int attacker_id, int defender_id);
 DetachHerdOptions detach_herd_options(const GameState& state, int unit_id, int horses);

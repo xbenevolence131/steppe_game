@@ -223,6 +223,8 @@ const fallbackUnitDefaults = {
   defense: 1,
   readinessDamage: 0,
   readiness: 100,
+  stance: "default",
+  legalStances: ["default"],
   move: 0,
   projectsZoc: false,
   respectsZoc: false,
@@ -901,6 +903,10 @@ function normalizeUnitDefault(defaults) {
   if (Number.isFinite(defaults.defense)) normalized.defense = Math.max(1, Math.trunc(defaults.defense));
   if (Number.isFinite(defaults.readinessDamage)) normalized.readinessDamage = Math.max(0, Math.trunc(defaults.readinessDamage));
   if (Number.isFinite(defaults.readiness)) normalized.readiness = Math.max(0, Math.trunc(defaults.readiness));
+  if (typeof defaults.stance === "string") normalized.stance = defaults.stance;
+  if (Array.isArray(defaults.legalStances)) {
+    normalized.legalStances = defaults.legalStances.filter((stance) => typeof stance === "string");
+  }
   if (Number.isFinite(defaults.move)) normalized.move = Math.max(0, defaults.move);
   normalized.projectsZoc = Boolean(defaults.projectsZoc);
   normalized.respectsZoc = Boolean(defaults.respectsZoc);
@@ -959,6 +965,7 @@ function normalizeUnit(unit, index) {
   normalized.readiness = Number.isFinite(unit.readiness)
     ? Math.max(0, Math.min(Math.trunc(unit.readiness), normalized.maxReadiness))
     : defaults.readiness;
+  normalized.stance = typeof unit.stance === "string" ? unit.stance : defaults.stance;
   if (Number.isFinite(unit.population)) normalized.population = Math.max(0, Math.trunc(unit.population));
   if (Number.isFinite(unit.metal)) normalized.metal = Math.max(0, Math.trunc(unit.metal));
   if (Number.isFinite(unit.horses)) normalized.horses = Math.max(0, Math.trunc(unit.horses));
@@ -1074,6 +1081,9 @@ function appendCombatRow(parent, label, value) {
 }
 
 function retreatStatusForSide(preview, mode) {
+  if (preview.specialResolution === "feigned_retreat") {
+    return mode === "defense" ? "Feigned" : "Pursues";
+  }
   const retreatSide = mode === "attack" ? "attacker" : "defender";
   return preview.retreatOption === retreatSide ? "May retreat" : "No";
 }
@@ -1105,6 +1115,10 @@ function appendCombatSide(parent, title, combatant, mode, preview) {
   appendCombatRow(side, mode === "attack" ? "RDY damage" : "RDY taken", String(
     mode === "attack" ? combatant.readinessDamageDealt : combatant.readinessDamageTaken
   ));
+  appendCombatRow(side, "Pursuit RDY", mode === "attack" && preview.specialResolution === "feigned_retreat"
+    ? String(preview.pursuitReadinessPenalty || combatant.readinessDamageTaken || 0)
+    : "-"
+  );
 
   const result = document.createElement("div");
   result.className = "combat-preview-result";
@@ -1119,6 +1133,9 @@ function renderCombatPreview(preview, clientX, clientY) {
   const title = document.createElement("div");
   title.className = "combat-preview-title";
   const titleParts = ["Combat Preview"];
+  if (preview.specialResolution === "feigned_retreat") {
+    titleParts.push("Feigned Retreat");
+  }
   if (preview.defenderFlanked) {
     titleParts.push("Flanked");
   }
@@ -1134,10 +1151,14 @@ function renderCombatPreview(preview, clientX, clientY) {
   appendCombatRow(summary, "HP/RDY factor", `${preview.conditionRatioPercent}%`);
   appendCombatRow(summary, "CRT", String(preview.crtIndex));
   appendCombatRow(summary, "Retreat", preview.retreatOption === "none" ? "-" : preview.retreatOption);
+  appendCombatRow(summary, "Resolution", preview.specialResolution === "feigned_retreat" ? "Feigned retreat" : "Normal");
   const impacts = document.createElement("div");
   impacts.className = "combat-preview-impact";
   appendCombatRow(impacts, "Readiness impact", preview.readinessImpact || "-");
   appendCombatRow(impacts, "Retreat impact", preview.retreatImpact || "-");
+  if (preview.specialResolution === "feigned_retreat") {
+    appendCombatRow(impacts, "Pursuit penalty", `${preview.pursuitReadinessPenalty || 0} RDY`);
+  }
   const grid = document.createElement("div");
   grid.className = "combat-preview-grid";
   appendCombatSide(grid, "Attacker", preview.attacker, "attack", preview);
@@ -1203,6 +1224,30 @@ const contextActionDefinitions = [
     visible: ({ unit }) => Boolean(unit && unit.owner === activeOwner()),
     enabled: ({ unit, selected }) => Boolean(unit && (!selected || selected.id !== unit.id)),
     run: async ({ unit }) => selectUnit(unit),
+  },
+  {
+    id: "stance-feigned-retreat",
+    label: "Stance: Feigned Retreat",
+    visible: ({ unit }) => Boolean(
+      unit
+      && unit.owner === activeOwner()
+      && unit.kind === "horse_archer"
+      && unit.stance !== "feigned_retreat"
+    ),
+    enabled: ({ unit }) => Boolean(unit && unit.kind === "horse_archer"),
+    run: async ({ unit }) => setUnitStance(unit, "feigned_retreat"),
+  },
+  {
+    id: "stance-defensive",
+    label: "Stance: Defensive",
+    visible: ({ unit }) => Boolean(
+      unit
+      && unit.owner === activeOwner()
+      && unit.kind === "horse_archer"
+      && unit.stance !== "defensive"
+    ),
+    enabled: ({ unit }) => Boolean(unit && unit.kind === "horse_archer"),
+    run: async ({ unit }) => setUnitStance(unit, "defensive"),
   },
   {
     id: "move-here",
@@ -2470,6 +2515,22 @@ async function selectUnit(unit) {
   return true;
 }
 
+async function setUnitStance(unit, stance) {
+  if (!unit || typeof stance !== "string") {
+    return false;
+  }
+  hideCombatPreview();
+  const payload = await postUndoableGameCommand({
+    type: "set_unit_stance",
+    unitId: unit.id,
+    stance,
+  });
+  applyGamePatch(payload);
+  syncModeControls();
+  drawMap();
+  return true;
+}
+
 async function moveSelectedUnitTo(coord) {
   const unit = selectedUnit();
   const move = legalMoveAt(coord);
@@ -2700,6 +2761,7 @@ function makeEditorUnit(coord) {
     readinessDamage: defaults.readinessDamage,
     readiness: defaults.readiness,
     maxReadiness: 100,
+    stance: defaults.stance,
     move: defaults.move,
     remainingMove: defaults.move,
     population: Number.isInteger(defaults.population) ? defaults.population : 0,

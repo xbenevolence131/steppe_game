@@ -220,6 +220,15 @@ std::string unit_defaults_json() {
             out << ",";
         }
         out << "\"" << steppe::game::unit_kind_key(defaults.kind) << "\":{"
+            << "\"stance\":\"" << steppe::game::unit_stance_key(defaults.stance) << "\""
+            << ",\"legalStances\":[";
+        for (std::size_t stance_index = 0; stance_index < defaults.legal_stances.size(); ++stance_index) {
+            if (stance_index > 0) {
+                out << ",";
+            }
+            out << "\"" << steppe::game::unit_stance_key(defaults.legal_stances[stance_index]) << "\"";
+        }
+        out << "],"
             << "\"hp\":" << defaults.hp
             << ",\"attack\":" << defaults.attack
             << ",\"defense\":" << defaults.defense
@@ -330,6 +339,18 @@ std::string handle_command(const std::string& body) {
     }
     if (type == "select_unit") {
         const bool ok = steppe::game::select_unit(state, int_field(command, "unitId", 0));
+        return command_response(game_id, ok, game_patch_json(state, ok));
+    }
+    if (type == "set_unit_stance") {
+        const steppe::game::GameState before = state;
+        const bool ok = steppe::game::set_unit_stance(
+            state,
+            int_field(command, "unitId", 0),
+            steppe::game::unit_stance_from_key(string_field(command, "stance", "default"))
+        );
+        if (ok) {
+            push_undo_state(game_id, before);
+        }
         return command_response(game_id, ok, game_patch_json(state, ok));
     }
     if (type == "move_unit") {

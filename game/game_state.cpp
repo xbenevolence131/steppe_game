@@ -159,6 +159,21 @@ UnitKind unit_kind_from_string(const std::string& kind) {
     return UnitKind::HorseArcher;
 }
 
+const char* unit_stance_to_string(UnitStance stance) {
+    switch (stance) {
+        case UnitStance::Default: return "default";
+        case UnitStance::FeignedRetreat: return "feigned_retreat";
+        case UnitStance::Defensive: return "defensive";
+    }
+    return "default";
+}
+
+UnitStance unit_stance_from_string(const std::string& stance) {
+    if (stance == "feigned_retreat") return UnitStance::FeignedRetreat;
+    if (stance == "defensive") return UnitStance::Defensive;
+    return UnitStance::Default;
+}
+
 Clan clan_for_owner(OwnerId owner) {
     if (owner == mongol_owner) {
         return {mongol_owner, "mongol", "Mongol", "#2368c4"};
@@ -264,6 +279,22 @@ bool default_respects_zoc(UnitKind kind) {
         || kind == UnitKind::Horde;
 }
 
+UnitStance default_stance(UnitKind kind) {
+    return kind == UnitKind::HorseArcher ? UnitStance::FeignedRetreat : UnitStance::Default;
+}
+
+std::vector<UnitStance> legal_stances(UnitKind kind) {
+    if (kind == UnitKind::HorseArcher) {
+        return {UnitStance::FeignedRetreat, UnitStance::Defensive};
+    }
+    return {UnitStance::Default};
+}
+
+bool legal_stance(UnitKind kind, UnitStance stance) {
+    const std::vector<UnitStance> stances = legal_stances(kind);
+    return std::find(stances.begin(), stances.end(), stance) != stances.end();
+}
+
 bool can_attack(UnitKind kind) {
     return default_attack(kind) > 0;
 }
@@ -289,6 +320,7 @@ constexpr int max_move_readiness_cost = 8;
 constexpr int attack_readiness_cost = 10;
 constexpr int turn_readiness_recovery = 25;
 constexpr int flanked_defense_percent = 75;
+constexpr int feigned_retreat_pursuit_readiness_penalty = 15;
 
 constexpr int move_scale = 8;
 
@@ -538,6 +570,14 @@ const char* unit_kind_key(UnitKind kind) {
     return unit_kind_to_string(kind);
 }
 
+const char* unit_stance_key(UnitStance stance) {
+    return unit_stance_to_string(stance);
+}
+
+UnitStance unit_stance_from_key(const std::string& stance) {
+    return unit_stance_from_string(stance);
+}
+
 std::vector<UnitKind> unit_kinds() {
     return {
         UnitKind::Camp,
@@ -553,6 +593,8 @@ std::vector<UnitKind> unit_kinds() {
 UnitDefaults unit_defaults(UnitKind kind) {
     UnitDefaults defaults;
     defaults.kind = kind;
+    defaults.stance = default_stance(kind);
+    defaults.legal_stances = legal_stances(kind);
     defaults.hp = default_hp(kind);
     defaults.attack = default_attack(kind);
     defaults.defense = default_defense(kind);
@@ -700,6 +742,7 @@ GameState create_default_play_sandbox(int width, int height, int faction_count) 
         unit.id = id;
         unit.owner = owner;
         unit.kind = kind;
+        unit.stance = default_stance(unit.kind);
         unit.coord = coord;
         unit.hp = default_hp(unit.kind);
         unit.max_hp = unit.hp;
@@ -1016,6 +1059,41 @@ bool defender_flanked_by_separated_unit(const GameState& state, const Unit& atta
     }) != state.units.end();
 }
 
+bool can_pursue_into_defender_hex(const GameState& state, const Unit& attacker, const Unit& defender) {
+    const GameHex* hex = find_hex(state, defender.coord);
+    return hex != nullptr && movement_cost(state, attacker.coord, *hex) != blocked_movement_cost();
+}
+
+bool find_feigned_retreat_hex(const GameState& state, const Unit& attacker, const Unit& defender, Coord& retreat_to) {
+    std::vector<Coord> preferred;
+    std::vector<Coord> fallback;
+    for (int direction = 0; direction < 6; ++direction) {
+        const Coord candidate = neighbor_in_direction(defender.coord, direction);
+        if (!in_bounds(state, candidate) || occupied_by_other_unit(state, candidate, defender.id)) {
+            continue;
+        }
+        const GameHex* hex = find_hex(state, candidate);
+        if (hex == nullptr || movement_cost(state, defender.coord, *hex) == blocked_movement_cost()) {
+            continue;
+        }
+        if (coord_equal(candidate, attacker.coord) || adjacent(candidate, attacker.coord)) {
+            continue;
+        }
+        if (enemy_zoc_at(state, candidate, defender)) {
+            fallback.push_back(candidate);
+        } else {
+            preferred.push_back(candidate);
+        }
+    }
+    std::vector<Coord>& candidates = preferred.empty() ? fallback : preferred;
+    if (candidates.empty()) {
+        return false;
+    }
+    std::sort(candidates.begin(), candidates.end(), coord_less);
+    retreat_to = candidates.front();
+    return true;
+}
+
 std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id) {
     std::vector<ReachableHex> reachable;
     const Unit* unit = find_unit(state, unit_id);
@@ -1170,6 +1248,27 @@ CombatPreview combat_preview(const GameState& state, int attacker_id, int defend
         -6,
         std::min(6, static_cast<int>(std::lround(preview.base_differential * condition_multiplier)))
     );
+    Coord retreat_to;
+    if (defender->kind == UnitKind::HorseArcher
+        && defender->stance == UnitStance::FeignedRetreat
+        && attacker->kind != UnitKind::HorseArcher
+        && can_pursue_into_defender_hex(state, *attacker, *defender)
+        && find_feigned_retreat_hex(state, *attacker, *defender, retreat_to)) {
+        preview.special_resolution = "feigned_retreat";
+        preview.defender_retaliates = false;
+        preview.retreat_option = "defender";
+        preview.readiness_impact = "Pursuit costs attacker readiness";
+        preview.retreat_impact = "Defender retreats; attacker pursues";
+        preview.defender_retreat_to = retreat_to;
+        preview.attacker_pursuit_to = defender->coord;
+        preview.pursuit_readiness_penalty = feigned_retreat_pursuit_readiness_penalty;
+        preview.attacker.readiness_damage_taken = feigned_retreat_pursuit_readiness_penalty;
+        preview.attacker.result_readiness = std::max(
+            0,
+            clamped_readiness(*attacker) - feigned_retreat_pursuit_readiness_penalty
+        );
+        return preview;
+    }
     const CrtOutcome outcome = crt_outcome(preview.crt_index);
     preview.retreat_option = outcome.retreat_option;
     preview.readiness_impact = readiness_impact_text(preview.readiness_ratio_percent);
@@ -1206,6 +1305,17 @@ bool select_unit(GameState& state, int unit_id) {
         state.legal_attacks.clear();
         return false;
     }
+    state.selected_unit_id = unit_id;
+    refresh_legal_actions(state);
+    return true;
+}
+
+bool set_unit_stance(GameState& state, int unit_id, UnitStance stance) {
+    Unit* unit = find_unit(state, unit_id);
+    if (unit == nullptr || unit->owner != active_faction(state) || !legal_stance(unit->kind, stance)) {
+        return false;
+    }
+    unit->stance = stance;
     state.selected_unit_id = unit_id;
     refresh_legal_actions(state);
     return true;
@@ -1248,6 +1358,21 @@ bool attack_unit(GameState& state, int attacker_id, int defender_id) {
     Unit* defender = find_unit(state, defender_id);
     if (attacker == nullptr || defender == nullptr) {
         return false;
+    }
+
+    if (preview.special_resolution == "feigned_retreat") {
+        defender->coord = preview.defender_retreat_to;
+        defender->remaining_scaled_move = 0;
+        defender->move_done = true;
+        defender->moved_this_turn = true;
+        attacker->coord = preview.attacker_pursuit_to;
+        attacker->readiness = preview.attacker.result_readiness;
+        attacker->remaining_scaled_move = 0;
+        attacker->move_done = true;
+        attacker->combat_done = true;
+        state.selected_unit_id = attacker_id;
+        refresh_legal_actions(state);
+        return true;
     }
 
     defender->hp = preview.defender.result_hp;
@@ -1311,6 +1436,7 @@ bool detach_herd(GameState& state, int unit_id, int horses, Coord destination) {
     herd.id = next_unit_id(state);
     herd.owner = horde->owner;
     herd.kind = UnitKind::Herd;
+    herd.stance = default_stance(herd.kind);
     herd.coord = destination;
     herd.hp = default_hp(herd.kind);
     herd.max_hp = herd.hp;
@@ -1406,6 +1532,7 @@ bool create_unit_from_horde(GameState& state, int unit_id, UnitKind kind, Coord 
     created.id = next_unit_id(state);
     created.owner = horde->owner;
     created.kind = kind;
+    created.stance = default_stance(created.kind);
     created.coord = destination;
     created.hp = default_hp(created.kind);
     created.max_hp = created.hp;
@@ -1476,6 +1603,7 @@ void print_unit_json(const Unit& unit, std::ostream& out) {
         << ",\"owner\":" << unit.owner
         << ",\"faction\":\"" << clan.key << "\""
         << ",\"kind\":\"" << unit_kind_to_string(unit.kind) << "\""
+        << ",\"stance\":\"" << unit_stance_to_string(unit.stance) << "\""
         << ",\"q\":" << unit.coord.q
         << ",\"r\":" << unit.coord.r
         << ",\"hp\":" << unit.hp
@@ -1728,7 +1856,13 @@ void print_combat_preview_json(const CombatPreview& preview, std::ostream& out) 
         << ",\"retreatOption\":\"" << escape_json(preview.retreat_option) << "\""
         << ",\"readinessImpact\":\"" << escape_json(preview.readiness_impact) << "\""
         << ",\"retreatImpact\":\"" << escape_json(preview.retreat_impact) << "\""
-        << ",\"attacker\":";
+        << ",\"specialResolution\":\"" << escape_json(preview.special_resolution) << "\""
+        << ",\"pursuitReadinessPenalty\":" << preview.pursuit_readiness_penalty
+        << ",\"defenderRetreatTo\":";
+    print_coord_json(preview.defender_retreat_to, out);
+    out << ",\"attackerPursuitTo\":";
+    print_coord_json(preview.attacker_pursuit_to, out);
+    out << ",\"attacker\":";
     print_combatant_preview_json(preview.attacker, out);
     out << ",\"defender\":";
     print_combatant_preview_json(preview.defender, out);
@@ -1893,6 +2027,10 @@ GameState parse_game_state_json(const std::string& json) {
             }
         }
         unit.kind = unit_kind_from_string(string_field(unit_json, "kind", "horse_archer"));
+        unit.stance = unit_stance_from_string(string_field(unit_json, "stance", unit_stance_to_string(default_stance(unit.kind))));
+        if (!legal_stance(unit.kind, unit.stance)) {
+            unit.stance = default_stance(unit.kind);
+        }
         unit.coord = {int_field(unit_json, "q", 0), int_field(unit_json, "r", 0)};
         unit.hp = int_field(unit_json, "hp", default_hp(unit.kind));
         unit.max_hp = int_field(unit_json, "maxHp", unit.hp);

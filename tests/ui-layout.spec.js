@@ -130,6 +130,42 @@ function flankingCombatGameState(flankerCoord) {
   };
 }
 
+function feignedRetreatGameState(defenderStance = "feigned_retreat", attackerKind = "infantry") {
+  const hexes = [];
+  for (let r = 1; r <= 3; r += 1) {
+    for (let q = 1; q <= 4; q += 1) {
+      hexes.push({ q, r, terrain: "grassland", labels: [] });
+    }
+  }
+  return {
+    width: 4,
+    height: 3,
+    seed: 0,
+    hexes,
+    units: [
+      { id: 1, owner: 1, faction: "mongol", kind: attackerKind, q: 1, r: 2, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+      {
+        id: 2,
+        owner: 2,
+        faction: "chinese",
+        kind: "horse_archer",
+        stance: defenderStance,
+        q: 2,
+        r: 2,
+        hp: 10,
+        maxHp: 10,
+        remainingScaledMove: 32,
+      },
+    ],
+    game: {
+      round: 1,
+      activeFactionIndex: 0,
+      selectedUnitId: 1,
+      turnOrder: [1, 2],
+    },
+  };
+}
+
 test("movement can pass through friendly units without stacking", async ({ isMobile }) => {
   test.skip(isMobile, "engine rule is covered once on desktop");
 
@@ -158,6 +194,7 @@ test("combat uses unit stats terrain defense and retaliation", async ({ isMobile
   expect(preview.readinessRatioPercent).toBe(100);
   expect(preview.conditionRatioPercent).toBe(100);
   expect(preview.crtIndex).toBe(1);
+  expect(preview.specialResolution).toBe("normal");
   expect(preview.retreatOption).toBe("none");
   expect(preview.readinessImpact).toBe("Even readiness");
   expect(preview.retreatImpact).toBe("No retreat");
@@ -208,6 +245,7 @@ test("combat uses unit stats terrain defense and retaliation", async ({ isMobile
 
   const infantryState = combatGameState("grassland");
   infantryState.units[0].kind = "infantry";
+  infantryState.units[1].stance = "defensive";
   const infantryPreview = runEngineJson(["game-combat-preview", "--attacker", "1", "--defender", "2"], infantryState);
   expect(infantryPreview.attacker.baseReadinessDamage).toBe(10);
   expect(infantryPreview.attacker.readinessDamageDealt).toBe(10);
@@ -215,10 +253,47 @@ test("combat uses unit stats terrain defense and retaliation", async ({ isMobile
 
   const hordeState = combatGameState("grassland");
   hordeState.units[0].kind = "horde";
+  hordeState.units[1].stance = "defensive";
   const hordePreview = runEngineJson(["game-combat-preview", "--attacker", "1", "--defender", "2"], hordeState);
   expect(hordePreview.attacker.baseReadinessDamage).toBe(0);
   expect(hordePreview.attacker.readinessDamageDealt).toBe(0);
   expect(hordePreview.defender.resultReadiness).toBe(100);
+});
+
+test("horse archers default to feigned retreat when attacked by non horse archers", async ({ isMobile }) => {
+  test.skip(isMobile, "engine combat rule is covered once on desktop");
+
+  const preview = runEngineJson(["game-combat-preview", "--attacker", "1", "--defender", "2"], feignedRetreatGameState());
+  expect(preview.valid).toBe(true);
+  expect(preview.specialResolution).toBe("feigned_retreat");
+  expect(preview.defenderRetaliates).toBe(false);
+  expect(preview.pursuitReadinessPenalty).toBe(15);
+  expect(preview.attacker.readinessDamageTaken).toBe(15);
+  expect(preview.attacker.resultReadiness).toBe(85);
+  expect(preview.attacker.damageDealt).toBe(0);
+  expect(preview.defender.damageTaken).toBe(0);
+  expect(preview.attackerPursuitTo).toEqual({ q: 2, r: 2 });
+  expect(preview.defenderRetreatTo).toEqual({ q: 2, r: 3 });
+
+  const resolved = runEngineJson(["game-attack", "--attacker", "1", "--defender", "2"], feignedRetreatGameState());
+  const attacker = resolved.units.find((unit) => unit.id === 1);
+  const defender = resolved.units.find((unit) => unit.id === 2);
+  expect(resolved.ok).toBe(true);
+  expect(attacker).toEqual(expect.objectContaining({ q: 2, r: 2, hp: 10, readiness: 85, combatDone: true }));
+  expect(defender).toEqual(expect.objectContaining({ q: 2, r: 3, hp: 10, readiness: 100 }));
+
+  const defensivePreview = runEngineJson(
+    ["game-combat-preview", "--attacker", "1", "--defender", "2"],
+    feignedRetreatGameState("defensive")
+  );
+  expect(defensivePreview.specialResolution).toBe("normal");
+  expect(defensivePreview.defender.damageTaken).toBeGreaterThan(0);
+
+  const horseArcherAttackerPreview = runEngineJson(
+    ["game-combat-preview", "--attacker", "1", "--defender", "2"],
+    feignedRetreatGameState("feigned_retreat", "horse_archer")
+  );
+  expect(horseArcherAttackerPreview.specialResolution).toBe("normal");
 });
 
 test("combat flanking requires separated support", async ({ isMobile }) => {
