@@ -247,10 +247,30 @@ const bitmapUnitSpriteSources = {
     medium: "/unit-sprites/infantry_96.png",
     large: "/unit-sprites/infantry_128.png",
   },
+  horde: {
+    small: "/unit-sprites/horde_48.png",
+    medium: "/unit-sprites/horde_96.png",
+    large: "/unit-sprites/horde_128.png",
+  },
+  herd: {
+    small: "/unit-sprites/herd_48.png",
+    medium: "/unit-sprites/herd_96.png",
+    large: "/unit-sprites/herd_128.png",
+  },
+  chinese_cavalry: {
+    small: "/unit-sprites/heavy_cavalry_48.png",
+    medium: "/unit-sprites/heavy_cavalry_96.png",
+    large: "/unit-sprites/heavy_cavalry_128.png",
+  },
   horse_archer: {
     small: "/unit-sprites/horse_archer_48.png",
     medium: "/unit-sprites/horse_archer_96.png",
     large: "/unit-sprites/horse_archer_128.png",
+  },
+  mongol_lancer: {
+    small: "/unit-sprites/heavy_cavalry_48.png",
+    medium: "/unit-sprites/heavy_cavalry_96.png",
+    large: "/unit-sprites/heavy_cavalry_128.png",
   },
 };
 const bitmapUnitSpriteImages = {};
@@ -1838,7 +1858,7 @@ function unitCounterMetrics() {
     iconCenterX: dividerOffset * 0.5,
     hpX: dividerOffset + (width - dividerOffset) * 0.5,
     iconSize: Math.min(height * 0.94, dividerOffset * 0.9),
-    hpFont: height * 0.42,
+    hpFont: height * 0.34,
     cornerRadius: geometry.size * 0.18,
     strokeWidth: geometry.size * 0.1,
     selectedStrokeWidth: geometry.size * 0.17,
