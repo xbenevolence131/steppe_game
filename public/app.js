@@ -89,7 +89,7 @@ let combatPreviewRequestId = 0;
 let combatPreviewTargetId = 0;
 let detachHerdAmountContext = null;
 let detachHerdPlacement = null;
-let createHorseArchersPlacement = null;
+let createUnitPlacement = null;
 
 const viewport = {
   scale: 1,
@@ -218,6 +218,8 @@ const unitTypeDefaults = {
   camp: { hp: 1, attack: 0, defense: 1, readinessDamage: 0, readiness: 100, move: 0 },
   herd: { hp: 1, attack: 0, defense: 1, readinessDamage: 0, readiness: 100, move: 3 },
   horse_archer: { hp: 10, attack: 4, defense: 3, readinessDamage: 25, readiness: 100, move: 4 },
+  chinese_cavalry: { hp: 10, attack: 5, defense: 3, readinessDamage: 10, readiness: 100, move: 3 },
+  mongol_lancer: { hp: 10, attack: 5, defense: 3, readinessDamage: 10, readiness: 100, move: 4 },
   infantry: { hp: 10, attack: 3, defense: 5, readinessDamage: 10, readiness: 100, move: 2 },
   horde: { hp: 10, attack: 2, defense: 3, readinessDamage: 0, readiness: 100, move: 3, projectsZoc: true, respectsZoc: true, population: 0, metal: 0, horses: 0 },
 };
@@ -1010,7 +1012,7 @@ async function showCombatPreviewFor(event, defender) {
 }
 
 function updateCombatPreviewHover(event) {
-  if (appMode !== "play" || isPanning || isPainting || detachHerdPlacement || createHorseArchersPlacement) {
+  if (appMode !== "play" || isPanning || isPainting || detachHerdPlacement || createUnitPlacement) {
     hideCombatPreview();
     return;
   }
@@ -1090,12 +1092,43 @@ const contextActionDefinitions = [
     ),
     run: async (context) => startCreateHorseArchersPlacement(context),
   },
+  {
+    id: "create-mongol-lancers",
+    label: "Create Mongol Lancers",
+    visible: ({ unit, actionAvailability }) => Boolean(
+      unit
+      && unit.faction === "mongol"
+      && actionAvailability
+      && actionAvailability.createMongolLancers
+      && Number.isInteger(unit.population)
+      && Number.isInteger(unit.metal)
+      && Number.isInteger(unit.horses)
+      && unit.population >= 1
+      && unit.metal >= 2
+      && unit.horses >= 3
+    ),
+    enabled: ({ unit, actionAvailability }) => Boolean(
+      unit
+      && unit.faction === "mongol"
+      && actionAvailability
+      && actionAvailability.createMongolLancers
+      && Number.isInteger(unit.population)
+      && Number.isInteger(unit.metal)
+      && Number.isInteger(unit.horses)
+      && unit.population >= 1
+      && unit.metal >= 2
+      && unit.horses >= 3
+    ),
+    run: async (context) => startCreateMongolLancersPlacement(context),
+  },
 ];
 
 function unitDisplayName(unit) {
   const faction = factions[unit.faction] || factions.mongol;
   const kindNames = {
     horse_archer: "Horse Archers",
+    chinese_cavalry: "Cavalry",
+    mongol_lancer: "Lancers",
     infantry: "Infantry",
     horde: "Horde",
   };
@@ -1108,6 +1141,8 @@ function unitKindLabel(unit) {
     camp: "Camp",
     herd: "Herd",
     horse_archer: "Horse Archers",
+    chinese_cavalry: "Chinese Cavalry",
+    mongol_lancer: "Mongol Lancers",
     infantry: "Infantry",
     horde: "Horde",
   };
@@ -1587,6 +1622,26 @@ function drawUnitCounters(units) {
       ctx.beginPath();
       ctx.ellipse(x + 9.5 / viewport.scale, y + counterHeight / 2, 5.5 / viewport.scale, 3.1 / viewport.scale, 0, 0, Math.PI * 2);
       ctx.stroke();
+    } else if (unit.kind === "chinese_cavalry") {
+      const centerX = x + 9.5 / viewport.scale;
+      const centerY = y + counterHeight / 2;
+      ctx.beginPath();
+      ctx.ellipse(centerX, centerY, 5.5 / viewport.scale, 3.1 / viewport.scale, 0, 0, Math.PI * 2);
+      ctx.moveTo(centerX, centerY - 4.3 / viewport.scale);
+      ctx.lineTo(centerX, centerY + 4.3 / viewport.scale);
+      ctx.stroke();
+    } else if (unit.kind === "mongol_lancer") {
+      const left = x + 5.5 / viewport.scale;
+      const right = dividerX - 6 / viewport.scale;
+      const top = y + 5 / viewport.scale;
+      const bottom = y + counterHeight - 5 / viewport.scale;
+      ctx.beginPath();
+      ctx.moveTo(left, bottom);
+      ctx.lineTo(right, top);
+      ctx.moveTo(left + 2 / viewport.scale, top);
+      ctx.lineTo(right, top);
+      ctx.lineTo(right - 3 / viewport.scale, top + 3 / viewport.scale);
+      ctx.stroke();
     } else {
       ctx.beginPath();
       ctx.rect(x + 5.5 / viewport.scale, y + 6 / viewport.scale, 8 / viewport.scale, 8 / viewport.scale);
@@ -1632,7 +1687,7 @@ function drawReachableHexes() {
 }
 
 function drawDetachDeploymentHexes() {
-  const placement = detachHerdPlacement || createHorseArchersPlacement;
+  const placement = detachHerdPlacement || createUnitPlacement;
   if (!placement || !Array.isArray(placement.deployableHexes)) {
     return;
   }
@@ -1715,6 +1770,7 @@ async function hydrateContextActionAvailability(context) {
   context.actionAvailability = {
     detachHerd: false,
     createHorseArchers: false,
+    createMongolLancers: false,
   };
 
   const unit = context.unit;
@@ -1752,6 +1808,26 @@ async function hydrateContextActionAvailability(context) {
         && options.deployableHexes.length > 0;
     }).catch(() => {
       context.actionAvailability.createHorseArchers = false;
+    }));
+  }
+
+  if (
+    unit.faction === "mongol"
+    && Number.isInteger(unit.population)
+    && Number.isInteger(unit.metal)
+    && Number.isInteger(unit.horses)
+    && unit.population >= 1
+    && unit.metal >= 2
+    && unit.horses >= 3
+  ) {
+    checks.push(postAppCommand({
+      type: "create_mongol_lancers_options",
+      unitId: unit.id,
+    }).then((options) => {
+      context.actionAvailability.createMongolLancers = Array.isArray(options.deployableHexes)
+        && options.deployableHexes.length > 0;
+    }).catch(() => {
+      context.actionAvailability.createMongolLancers = false;
     }));
   }
 
@@ -1817,8 +1893,8 @@ function cancelDetachHerdPlacement() {
   drawMap();
 }
 
-function cancelCreateHorseArchersPlacement() {
-  createHorseArchersPlacement = null;
+function cancelCreateUnitPlacement() {
+  createUnitPlacement = null;
   drawMap();
 }
 
@@ -1836,7 +1912,7 @@ function showDetachHerdAmount(context) {
     return false;
   }
   cancelDetachHerdPlacement();
-  cancelCreateHorseArchersPlacement();
+  cancelCreateUnitPlacement();
   detachHerdAmountContext = context;
   detachHerdHorsesInput.min = "1";
   detachHerdHorsesInput.max = String(context.unit.horses);
@@ -1886,9 +1962,9 @@ function detachDeployableAt(coord) {
   return detachHerdPlacement && detachHerdPlacement.deployableHexes.find((hex) => hex.q === coord.q && hex.r === coord.r);
 }
 
-function createHorseArchersDeployableAt(coord) {
-  return createHorseArchersPlacement
-    && createHorseArchersPlacement.deployableHexes.find((hex) => hex.q === coord.q && hex.r === coord.r);
+function createUnitDeployableAt(coord) {
+  return createUnitPlacement
+    && createUnitPlacement.deployableHexes.find((hex) => hex.q === coord.q && hex.r === coord.r);
 }
 
 async function deployDetachedHerdAt(coord) {
@@ -1909,6 +1985,20 @@ async function deployDetachedHerdAt(coord) {
 }
 
 async function startCreateHorseArchersPlacement(context) {
+  return startCreateUnitPlacement(context, {
+    optionsCommandType: "create_horse_archers_options",
+    createCommandType: "create_horse_archers",
+  });
+}
+
+async function startCreateMongolLancersPlacement(context) {
+  return startCreateUnitPlacement(context, {
+    optionsCommandType: "create_mongol_lancers_options",
+    createCommandType: "create_mongol_lancers",
+  });
+}
+
+async function startCreateUnitPlacement(context, config) {
   if (!context.unit || context.unit.kind !== "horde") {
     return false;
   }
@@ -1916,17 +2006,19 @@ async function startCreateHorseArchersPlacement(context) {
   hideDetachHerdAmount();
   try {
     const options = await postAppCommand({
-      type: "create_horse_archers_options",
+      type: config.optionsCommandType,
       unitId: context.unit.id,
     });
     if (!Array.isArray(options.deployableHexes) || options.deployableHexes.length === 0) {
       window.alert("No adjacent deployment hex is available.");
-      createHorseArchersPlacement = null;
+      createUnitPlacement = null;
       drawMap();
       return false;
     }
-    createHorseArchersPlacement = {
+    createUnitPlacement = {
       unitId: context.unit.id,
+      kind: options.kind,
+      createCommandType: config.createCommandType,
       deployableHexes: options.deployableHexes,
       populationCost: options.populationCost,
       metalCost: options.metalCost,
@@ -1940,16 +2032,16 @@ async function startCreateHorseArchersPlacement(context) {
   }
 }
 
-async function deployCreatedHorseArchersAt(coord) {
-  if (!createHorseArchersPlacement || !createHorseArchersDeployableAt(coord)) {
+async function deployCreatedUnitAt(coord) {
+  if (!createUnitPlacement || !createUnitDeployableAt(coord)) {
     return false;
   }
   const payload = await postUndoableGameCommand({
-    type: "create_horse_archers",
-    unitId: createHorseArchersPlacement.unitId,
+    type: createUnitPlacement.createCommandType,
+    unitId: createUnitPlacement.unitId,
     to: { q: coord.q, r: coord.r },
   });
-  createHorseArchersPlacement = null;
+  createUnitPlacement = null;
   applyGamePatch(payload);
   syncModeControls();
   drawMap();
@@ -2022,7 +2114,7 @@ async function undoLastAction() {
   hideContextMenu();
   hideDetachHerdAmount();
   cancelDetachHerdPlacement();
-  cancelCreateHorseArchersPlacement();
+  cancelCreateUnitPlacement();
 
   if (appMode === "play") {
     if (playUndoDepth <= 0) {
@@ -2685,7 +2777,7 @@ mapPanel.addEventListener("pointerdown", async (event) => {
     event.preventDefault();
     hideDetachHerdAmount();
     cancelDetachHerdPlacement();
-    cancelCreateHorseArchersPlacement();
+    cancelCreateUnitPlacement();
     await showContextMenu(event);
     return;
   }
@@ -2702,11 +2794,11 @@ mapPanel.addEventListener("pointerdown", async (event) => {
     event.preventDefault();
     return;
   }
-  if (appMode === "play" && event.button === 0 && createHorseArchersPlacement) {
+  if (appMode === "play" && event.button === 0 && createUnitPlacement) {
     const hex = findNearestHex(point);
-    if (hex && createHorseArchersDeployableAt(hex)) {
+    if (hex && createUnitDeployableAt(hex)) {
       event.preventDefault();
-      await deployCreatedHorseArchersAt(hex);
+      await deployCreatedUnitAt(hex);
       return;
     }
     event.preventDefault();
@@ -2803,7 +2895,7 @@ mapPanel.addEventListener("keydown", (event) => {
     hideContextMenu();
     hideDetachHerdAmount();
     cancelDetachHerdPlacement();
-    cancelCreateHorseArchersPlacement();
+    cancelCreateUnitPlacement();
     return;
   }
   const step = event.shiftKey ? 80 : 32;

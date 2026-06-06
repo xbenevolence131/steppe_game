@@ -198,6 +198,12 @@ std::string create_horse_archers_options_json(const steppe::game::CreateHorseArc
     return out.str();
 }
 
+std::string create_mongol_lancers_options_json(const steppe::game::CreateUnitOptions& options) {
+    std::ostringstream out;
+    steppe::game::print_create_mongol_lancers_options_json(options, out);
+    return out.str();
+}
+
 std::string combat_preview_json(const steppe::game::CombatPreview& preview) {
     std::ostringstream out;
     steppe::game::print_combat_preview_json(preview, out);
@@ -362,6 +368,26 @@ std::string handle_command(const std::string& body) {
         const std::string to = object_field(command, "to");
         const steppe::game::GameState before = state;
         const bool ok = steppe::game::create_horse_archers(
+            state,
+            int_field(command, "unitId", 0),
+            {int_field(to, "q", 0), int_field(to, "r", 0)}
+        );
+        if (ok) {
+            push_undo_state(game_id, before);
+        }
+        return command_response(game_id, ok, game_patch_json(state, ok));
+    }
+    if (type == "create_mongol_lancers_options") {
+        const steppe::game::CreateUnitOptions options = steppe::game::create_mongol_lancers_options(
+            state,
+            int_field(command, "unitId", 0)
+        );
+        return command_response(game_id, true, create_mongol_lancers_options_json(options));
+    }
+    if (type == "create_mongol_lancers") {
+        const std::string to = object_field(command, "to");
+        const steppe::game::GameState before = state;
+        const bool ok = steppe::game::create_mongol_lancers(
             state,
             int_field(command, "unitId", 0),
             {int_field(to, "q", 0), int_field(to, "r", 0)}

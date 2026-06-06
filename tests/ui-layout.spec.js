@@ -466,7 +466,7 @@ test("clicking inactive units inspects without enabling actions", async ({ page,
   await openPlayMode(page);
 
   const point = await page.evaluate(() => {
-    const unit = currentMap.units.find((candidate) => candidate.kind === "horse_archer" && candidate.faction === "chinese");
+    const unit = currentMap.units.find((candidate) => candidate.kind === "chinese_cavalry" && candidate.faction === "chinese");
     const panel = mapPanel.getBoundingClientRect();
     const center = hexCenter(unit);
     return {
@@ -476,8 +476,8 @@ test("clicking inactive units inspects without enabling actions", async ({ page,
   });
 
   await page.mouse.click(point.x, point.y);
-  await expect(page.locator("#unit-name")).toHaveText("Chinese Horse Archers");
-  await expect(page.locator(".sidebar-selection-readout")).toHaveText("Chinese Horse Archers");
+  await expect(page.locator("#unit-name")).toHaveText("Chinese Cavalry");
+  await expect(page.locator(".sidebar-selection-readout")).toHaveText("Chinese Cavalry");
   await expect.poll(() => page.evaluate(() => ({
     selectedUnitId: currentMap.game.selectedUnitId,
     legalMoves: currentMap.game.legalMoves.length,
@@ -497,7 +497,7 @@ test("clicking attackable enemies resolves combat", async ({ page, isMobile }) =
   const result = await page.evaluate(async () => {
     const horde = currentMap.units.find((unit) => unit.kind === "horde" && unit.faction === "mongol");
     applyGamePatch(await postAppCommand({ type: "end_turn" }));
-    const enemy = currentMap.units.find((unit) => unit.faction === "chinese" && unit.kind === "horse_archer");
+    const enemy = currentMap.units.find((unit) => unit.faction === "chinese" && unit.kind === "chinese_cavalry");
     applyGamePatch(await postAppCommand({ type: "select_unit", unitId: enemy.id }));
     const hordeNeighbors = Array.from({ length: 6 }, (_, direction) => neighborInDirection(horde, direction));
     const adjacentHex = currentMap.game.legalMoves.find((hex) => (
@@ -737,10 +737,10 @@ test("create horse archers spends horde resources and deploys adjacent unit", as
   await page.locator("#context-menu [data-action='create-horse-archers']").click();
 
   await expect.poll(() => page.evaluate(() => (
-    createHorseArchersPlacement && createHorseArchersPlacement.deployableHexes.length
+    createUnitPlacement && createUnitPlacement.deployableHexes.length
   ))).toBeGreaterThan(0);
   const deployPoint = await page.evaluate(() => {
-    const hex = createHorseArchersPlacement.deployableHexes[0];
+    const hex = createUnitPlacement.deployableHexes[0];
     const panel = mapPanel.getBoundingClientRect();
     const center = hexCenter(hex);
     return {
@@ -785,6 +785,77 @@ test("create horse archers spends horde resources and deploys adjacent unit", as
   });
 });
 
+test("create mongol lancers spends horde resources and deploys adjacent unit", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop pointer geometry is simpler for deployment assertions");
+
+  await openPlayMode(page);
+
+  const hordePoint = await page.evaluate(() => {
+    const unit = currentMap.units.find((candidate) => candidate.kind === "horde" && candidate.faction === "mongol");
+    const panel = mapPanel.getBoundingClientRect();
+    const center = hexCenter(unit);
+    return {
+      unitId: unit.id,
+      x: panel.left + viewport.offsetX + center.x * viewport.scale,
+      y: panel.top + viewport.offsetY + center.y * viewport.scale,
+    };
+  });
+
+  await page.mouse.click(hordePoint.x, hordePoint.y, { button: "right" });
+  await expect(page.locator("#context-menu [data-action='create-mongol-lancers']")).toHaveText("Create Mongol Lancers");
+  await page.locator("#context-menu [data-action='create-mongol-lancers']").click();
+
+  await expect.poll(() => page.evaluate(() => (
+    createUnitPlacement && createUnitPlacement.kind === "mongol_lancer" && createUnitPlacement.deployableHexes.length
+  ))).toBeGreaterThan(0);
+  const deployPoint = await page.evaluate(() => {
+    const hex = createUnitPlacement.deployableHexes[0];
+    const panel = mapPanel.getBoundingClientRect();
+    const center = hexCenter(hex);
+    return {
+      q: hex.q,
+      r: hex.r,
+      x: panel.left + viewport.offsetX + center.x * viewport.scale,
+      y: panel.top + viewport.offsetY + center.y * viewport.scale,
+    };
+  });
+
+  await page.mouse.click(deployPoint.x, deployPoint.y);
+  await expect.poll(() => page.evaluate(({ unitId, q, r }) => {
+    const horde = currentMap.units.find((unit) => unit.id === unitId);
+    const created = currentMap.units.find((unit) => (
+      unit.kind === "mongol_lancer" && unit.q === q && unit.r === r
+    ));
+    return {
+      population: horde.population,
+      metal: horde.metal,
+      horses: horde.horses,
+      moveDone: horde.moveDone,
+      createdKind: created ? created.kind : "",
+      createdAttack: created ? created.attack : 0,
+      createdDefense: created ? created.defense : 0,
+      createdMove: created ? created.move : 0,
+      statusPopulation: document.querySelector("#faction-population-total").textContent,
+      statusHorses: document.querySelector("#faction-horses-total").textContent,
+      statusMetal: document.querySelector("#faction-metal-total").textContent,
+    };
+  }, { unitId: hordePoint.unitId, q: deployPoint.q, r: deployPoint.r }), {
+    message: "horde resources should be spent and mongol lancers should deploy",
+  }).toEqual({
+    population: 3,
+    metal: 2,
+    horses: 9,
+    moveDone: true,
+    createdKind: "mongol_lancer",
+    createdAttack: 5,
+    createdDefense: 3,
+    createdMove: 4,
+    statusPopulation: "3",
+    statusHorses: "9",
+    statusMetal: "2",
+  });
+});
+
 test("horde resource actions are unavailable after movement", async ({ page, isMobile }) => {
   test.skip(isMobile, "daemon rule is covered once on desktop");
 
@@ -801,6 +872,7 @@ test("horde resource actions are unavailable after movement", async ({ page, isM
     }));
     const movedHorde = currentMap.units.find((unit) => unit.id === horde.id);
     const createOptions = await postAppCommand({ type: "create_horse_archers_options", unitId: horde.id });
+    const lancerOptions = await postAppCommand({ type: "create_mongol_lancers_options", unitId: horde.id });
     const detachOptions = await postAppCommand({ type: "detach_herd_options", unitId: horde.id, horses: 1 });
     const panel = mapPanel.getBoundingClientRect();
     const center = hexCenter(movedHorde);
@@ -808,6 +880,7 @@ test("horde resource actions are unavailable after movement", async ({ page, isM
       moveDone: movedHorde.moveDone,
       movedThisTurn: movedHorde.movedThisTurn,
       createDeployable: createOptions.deployableHexes.length,
+      lancerDeployable: lancerOptions.deployableHexes.length,
       detachDeployable: detachOptions.deployableHexes.length,
       x: panel.left + viewport.offsetX + center.x * viewport.scale,
       y: panel.top + viewport.offsetY + center.y * viewport.scale,
@@ -817,10 +890,12 @@ test("horde resource actions are unavailable after movement", async ({ page, isM
   expect(result.moveDone).toBe(false);
   expect(result.movedThisTurn).toBe(true);
   expect(result.createDeployable).toBe(0);
+  expect(result.lancerDeployable).toBe(0);
   expect(result.detachDeployable).toBe(0);
   await page.mouse.click(result.x, result.y, { button: "right" });
   await expect(page.locator("#context-menu [data-action='detach-herd']")).toHaveCount(0);
   await expect(page.locator("#context-menu [data-action='create-horse-archers']")).toHaveCount(0);
+  await expect(page.locator("#context-menu [data-action='create-mongol-lancers']")).toHaveCount(0);
 });
 
 test("horde resource actions are unavailable next to enemies", async ({ page, isMobile }) => {
@@ -831,7 +906,7 @@ test("horde resource actions are unavailable next to enemies", async ({ page, is
   const result = await page.evaluate(async () => {
     const horde = currentMap.units.find((unit) => unit.kind === "horde" && unit.faction === "mongol");
     applyGamePatch(await postAppCommand({ type: "end_turn" }));
-    const enemy = currentMap.units.find((unit) => unit.faction === "chinese" && unit.kind === "horse_archer");
+    const enemy = currentMap.units.find((unit) => unit.faction === "chinese" && unit.kind === "chinese_cavalry");
     applyGamePatch(await postAppCommand({ type: "select_unit", unitId: enemy.id }));
     const hordeNeighbors = Array.from({ length: 6 }, (_, direction) => neighborInDirection(horde, direction));
     const adjacentHex = currentMap.game.legalMoves.find((hex) => (
@@ -845,6 +920,7 @@ test("horde resource actions are unavailable next to enemies", async ({ page, is
     applyGamePatch(await postAppCommand({ type: "end_turn" }));
     applyGamePatch(await postAppCommand({ type: "select_unit", unitId: horde.id }));
     const createOptions = await postAppCommand({ type: "create_horse_archers_options", unitId: horde.id });
+    const lancerOptions = await postAppCommand({ type: "create_mongol_lancers_options", unitId: horde.id });
     const detachOptions = await postAppCommand({ type: "detach_herd_options", unitId: horde.id, horses: 1 });
     const movedEnemy = currentMap.units.find((unit) => unit.id === enemy.id);
     const activeHorde = currentMap.units.find((unit) => unit.id === horde.id);
@@ -855,6 +931,7 @@ test("horde resource actions are unavailable next to enemies", async ({ page, is
       enemyAdjacent: hordeNeighbors.some((neighbor) => neighbor.q === movedEnemy.q && neighbor.r === movedEnemy.r),
       attackable: currentMap.game.legalAttacks.some((attack) => attack.unitId === enemy.id),
       createDeployable: createOptions.deployableHexes.length,
+      lancerDeployable: lancerOptions.deployableHexes.length,
       detachDeployable: detachOptions.deployableHexes.length,
       x: panel.left + viewport.offsetX + center.x * viewport.scale,
       y: panel.top + viewport.offsetY + center.y * viewport.scale,
@@ -866,6 +943,7 @@ test("horde resource actions are unavailable next to enemies", async ({ page, is
   expect(result.enemyAdjacent).toBe(true);
   expect(result.attackable).toBe(true);
   expect(result.createDeployable).toBe(0);
+  expect(result.lancerDeployable).toBe(0);
   expect(result.detachDeployable).toBe(0);
   await page.mouse.move(result.enemyX, result.enemyY);
   await expect(page.locator("#combat-preview")).toBeVisible();
@@ -886,6 +964,7 @@ test("horde resource actions are unavailable next to enemies", async ({ page, is
   await page.mouse.click(result.x, result.y, { button: "right" });
   await expect(page.locator("#context-menu [data-action='detach-herd']")).toHaveCount(0);
   await expect(page.locator("#context-menu [data-action='create-horse-archers']")).toHaveCount(0);
+  await expect(page.locator("#context-menu [data-action='create-mongol-lancers']")).toHaveCount(0);
 });
 
 test("play context menu exposes unit actions", async ({ page, isMobile }) => {

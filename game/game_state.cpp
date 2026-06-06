@@ -140,6 +140,8 @@ const char* unit_kind_to_string(UnitKind kind) {
         case UnitKind::Camp: return "camp";
         case UnitKind::Herd: return "herd";
         case UnitKind::HorseArcher: return "horse_archer";
+        case UnitKind::ChineseCavalry: return "chinese_cavalry";
+        case UnitKind::MongolLancer: return "mongol_lancer";
         case UnitKind::Infantry: return "infantry";
         case UnitKind::Horde: return "horde";
     }
@@ -150,6 +152,8 @@ UnitKind unit_kind_from_string(const std::string& kind) {
     if (kind == "camp") return UnitKind::Camp;
     if (kind == "herd") return UnitKind::Herd;
     if (kind == "horse_archer" || kind == "cavalry") return UnitKind::HorseArcher;
+    if (kind == "chinese_cavalry") return UnitKind::ChineseCavalry;
+    if (kind == "mongol_lancer") return UnitKind::MongolLancer;
     if (kind == "infantry") return UnitKind::Infantry;
     if (kind == "horde") return UnitKind::Horde;
     return UnitKind::HorseArcher;
@@ -169,7 +173,11 @@ Clan clan_for_owner(OwnerId owner) {
 }
 
 int default_hp(UnitKind kind) {
-    if (kind == UnitKind::HorseArcher || kind == UnitKind::Infantry || kind == UnitKind::Horde) {
+    if (kind == UnitKind::HorseArcher
+        || kind == UnitKind::ChineseCavalry
+        || kind == UnitKind::MongolLancer
+        || kind == UnitKind::Infantry
+        || kind == UnitKind::Horde) {
         return 10;
     }
     return 1;
@@ -180,6 +188,12 @@ int default_move(UnitKind kind) {
         return 3;
     }
     if (kind == UnitKind::HorseArcher) {
+        return 4;
+    }
+    if (kind == UnitKind::ChineseCavalry) {
+        return 3;
+    }
+    if (kind == UnitKind::MongolLancer) {
         return 4;
     }
     if (kind == UnitKind::Infantry) {
@@ -195,6 +209,9 @@ int default_attack(UnitKind kind) {
     if (kind == UnitKind::HorseArcher) {
         return 4;
     }
+    if (kind == UnitKind::ChineseCavalry || kind == UnitKind::MongolLancer) {
+        return 5;
+    }
     if (kind == UnitKind::Infantry) {
         return 3;
     }
@@ -206,6 +223,9 @@ int default_attack(UnitKind kind) {
 
 int default_defense(UnitKind kind) {
     if (kind == UnitKind::HorseArcher) {
+        return 3;
+    }
+    if (kind == UnitKind::ChineseCavalry || kind == UnitKind::MongolLancer) {
         return 3;
     }
     if (kind == UnitKind::Infantry) {
@@ -224,11 +244,18 @@ int default_readiness_damage(UnitKind kind) {
     if (kind == UnitKind::Infantry) {
         return 10;
     }
+    if (kind == UnitKind::ChineseCavalry || kind == UnitKind::MongolLancer) {
+        return 10;
+    }
     return 0;
 }
 
 bool default_projects_zoc(UnitKind kind) {
-    return kind == UnitKind::HorseArcher || kind == UnitKind::Infantry || kind == UnitKind::Horde;
+    return kind == UnitKind::HorseArcher
+        || kind == UnitKind::ChineseCavalry
+        || kind == UnitKind::MongolLancer
+        || kind == UnitKind::Infantry
+        || kind == UnitKind::Horde;
 }
 
 bool default_respects_zoc(UnitKind kind) {
@@ -250,6 +277,9 @@ int next_unit_id(const GameState& state) {
 constexpr int create_horse_archers_population_cost = 1;
 constexpr int create_horse_archers_metal_cost = 1;
 constexpr int create_horse_archers_horses_cost = 3;
+constexpr int create_mongol_lancers_population_cost = 1;
+constexpr int create_mongol_lancers_metal_cost = 2;
+constexpr int create_mongol_lancers_horses_cost = 3;
 constexpr int default_max_readiness = 100;
 constexpr int minimum_combat_readiness_percent = 25;
 constexpr int full_move_readiness_cost = 8;
@@ -662,7 +692,7 @@ GameState create_default_play_sandbox(int width, int height, int faction_count) 
         make_unit(2, mongol_owner, UnitKind::Infantry, {3, 7}),
         make_unit(3, mongol_owner, UnitKind::Horde, {3, 6}),
         make_unit(4, mongol_owner, UnitKind::Herd, {2, 6}),
-        make_unit(5, chinese_owner, UnitKind::HorseArcher, {8, 5}),
+        make_unit(5, chinese_owner, UnitKind::ChineseCavalry, {6, 5}),
         make_unit(6, chinese_owner, UnitKind::Infantry, {8, 7}),
         make_unit(7, chinese_owner, UnitKind::Horde, {8, 6}),
         make_unit(8, chinese_owner, UnitKind::Herd, {9, 6}),
@@ -1250,22 +1280,50 @@ bool detach_herd(GameState& state, int unit_id, int horses, Coord destination) {
     return true;
 }
 
+CreateUnitOptions create_unit_options(const GameState& state, int unit_id, UnitKind kind);
+bool create_unit_from_horde(GameState& state, int unit_id, UnitKind kind, Coord destination);
+
 CreateHorseArchersOptions create_horse_archers_options(const GameState& state, int unit_id) {
-    CreateHorseArchersOptions options;
+    return create_unit_options(state, unit_id, UnitKind::HorseArcher);
+}
+
+bool create_horse_archers(GameState& state, int unit_id, Coord destination) {
+    return create_unit_from_horde(state, unit_id, UnitKind::HorseArcher, destination);
+}
+
+CreateUnitOptions create_mongol_lancers_options(const GameState& state, int unit_id) {
+    return create_unit_options(state, unit_id, UnitKind::MongolLancer);
+}
+
+bool create_mongol_lancers(GameState& state, int unit_id, Coord destination) {
+    return create_unit_from_horde(state, unit_id, UnitKind::MongolLancer, destination);
+}
+
+CreateUnitOptions create_unit_options(const GameState& state, int unit_id, UnitKind kind) {
+    CreateUnitOptions options;
+    options.kind = kind;
     options.unit_id = unit_id;
-    options.population_cost = create_horse_archers_population_cost;
-    options.metal_cost = create_horse_archers_metal_cost;
-    options.horses_cost = create_horse_archers_horses_cost;
+    if (kind == UnitKind::MongolLancer) {
+        options.population_cost = create_mongol_lancers_population_cost;
+        options.metal_cost = create_mongol_lancers_metal_cost;
+        options.horses_cost = create_mongol_lancers_horses_cost;
+    } else {
+        options.population_cost = create_horse_archers_population_cost;
+        options.metal_cost = create_horse_archers_metal_cost;
+        options.horses_cost = create_horse_archers_horses_cost;
+    }
     const Unit* horde = find_unit(state, unit_id);
     if (horde == nullptr
         || horde->kind != UnitKind::Horde
         || horde->owner != active_faction(state)
+        || (kind == UnitKind::MongolLancer && horde->owner != mongol_owner)
+        || (kind != UnitKind::HorseArcher && kind != UnitKind::MongolLancer)
         || horde->move_done
         || horde->moved_this_turn
         || enemy_unit_adjacent_to(state, *horde)
-        || horde->population < create_horse_archers_population_cost
-        || horde->metal < create_horse_archers_metal_cost
-        || horde->horses < create_horse_archers_horses_cost) {
+        || horde->population < options.population_cost
+        || horde->metal < options.metal_cost
+        || horde->horses < options.horses_cost) {
         return options;
     }
 
@@ -1273,8 +1331,8 @@ CreateHorseArchersOptions create_horse_archers_options(const GameState& state, i
     return options;
 }
 
-bool create_horse_archers(GameState& state, int unit_id, Coord destination) {
-    CreateHorseArchersOptions options = create_horse_archers_options(state, unit_id);
+bool create_unit_from_horde(GameState& state, int unit_id, UnitKind kind, Coord destination) {
+    CreateUnitOptions options = create_unit_options(state, unit_id, kind);
     const bool valid_destination = std::find_if(
         options.deployable_hexes.begin(),
         options.deployable_hexes.end(),
@@ -1288,29 +1346,29 @@ bool create_horse_archers(GameState& state, int unit_id, Coord destination) {
     if (horde == nullptr) {
         return false;
     }
-    horde->population -= create_horse_archers_population_cost;
-    horde->metal -= create_horse_archers_metal_cost;
-    horde->horses -= create_horse_archers_horses_cost;
+    horde->population -= options.population_cost;
+    horde->metal -= options.metal_cost;
+    horde->horses -= options.horses_cost;
     horde->remaining_scaled_move = 0;
     horde->move_done = true;
 
-    Unit horse_archers;
-    horse_archers.id = next_unit_id(state);
-    horse_archers.owner = horde->owner;
-    horse_archers.kind = UnitKind::HorseArcher;
-    horse_archers.coord = destination;
-    horse_archers.hp = default_hp(horse_archers.kind);
-    horse_archers.max_hp = horse_archers.hp;
-    horse_archers.attack = default_attack(horse_archers.kind);
-    horse_archers.defense = default_defense(horse_archers.kind);
-    horse_archers.readiness_damage = default_readiness_damage(horse_archers.kind);
-    horse_archers.max_readiness = default_max_readiness;
-    horse_archers.readiness = horse_archers.max_readiness;
-    horse_archers.scaled_move = to_scaled_move(default_move(horse_archers.kind));
-    horse_archers.remaining_scaled_move = horse_archers.scaled_move;
-    horse_archers.projects_zoc = default_projects_zoc(horse_archers.kind);
-    horse_archers.respects_zoc = default_respects_zoc(horse_archers.kind);
-    state.units.push_back(horse_archers);
+    Unit created;
+    created.id = next_unit_id(state);
+    created.owner = horde->owner;
+    created.kind = kind;
+    created.coord = destination;
+    created.hp = default_hp(created.kind);
+    created.max_hp = created.hp;
+    created.attack = default_attack(created.kind);
+    created.defense = default_defense(created.kind);
+    created.readiness_damage = default_readiness_damage(created.kind);
+    created.max_readiness = default_max_readiness;
+    created.readiness = created.max_readiness;
+    created.scaled_move = to_scaled_move(default_move(created.kind));
+    created.remaining_scaled_move = created.scaled_move;
+    created.projects_zoc = default_projects_zoc(created.kind);
+    created.respects_zoc = default_respects_zoc(created.kind);
+    state.units.push_back(created);
     state.selected_unit_id = unit_id;
     refresh_legal_actions(state);
     return true;
@@ -1637,8 +1695,9 @@ void print_detach_herd_options_json(const DetachHerdOptions& options, std::ostre
     out << "]}\n";
 }
 
-void print_create_horse_archers_options_json(const CreateHorseArchersOptions& options, std::ostream& out) {
+void print_create_unit_options_json(const CreateUnitOptions& options, std::ostream& out) {
     out << "{\"unitId\":" << options.unit_id
+        << ",\"kind\":\"" << unit_kind_to_string(options.kind) << "\""
         << ",\"populationCost\":" << options.population_cost
         << ",\"metalCost\":" << options.metal_cost
         << ",\"horsesCost\":" << options.horses_cost
@@ -1650,6 +1709,14 @@ void print_create_horse_archers_options_json(const CreateHorseArchersOptions& op
         print_coord_json(options.deployable_hexes[i], out);
     }
     out << "]}\n";
+}
+
+void print_create_horse_archers_options_json(const CreateHorseArchersOptions& options, std::ostream& out) {
+    print_create_unit_options_json(options, out);
+}
+
+void print_create_mongol_lancers_options_json(const CreateUnitOptions& options, std::ostream& out) {
+    print_create_unit_options_json(options, out);
 }
 
 void print_game_patch_json(const GameState& state, bool ok, std::ostream& out) {
