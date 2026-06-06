@@ -42,9 +42,17 @@ const undoButton = document.querySelector("#undo-button");
 const zoomInButton = document.querySelector("#zoom-in-button");
 const zoomOutButton = document.querySelector("#zoom-out-button");
 const fitButton = document.querySelector("#fit-button");
-const editModeButton = document.querySelector("#edit-mode-button");
-const editorModeSelect = document.querySelector("#editor-mode");
+const scenarioNameInput = document.querySelector("#scenario-name");
+const scenarioRegions = Array.from(document.querySelectorAll(".scenario-region"));
+const scenarioToolButtons = Array.from(document.querySelectorAll("[data-scenario-activate]"));
+const scenarioCollapseButtons = Array.from(document.querySelectorAll("[data-scenario-toggle]"));
+const scenarioToolPanels = Array.from(document.querySelectorAll(".scenario-tool-panel"));
+const unitToolButtons = Array.from(document.querySelectorAll(".unit-tool-button"));
+const scenarioFactionCheckboxes = Array.from(document.querySelectorAll(".scenario-faction-checkbox"));
+const terrainEditModeButtons = Array.from(document.querySelectorAll(".terrain-edit-mode-button"));
+const edgeFeatureButtons = Array.from(document.querySelectorAll(".edge-feature-button"));
 const editorEdgeFeatureSelect = document.querySelector("#editor-edge-feature");
+const edgeFeatureChoices = document.querySelector("#edge-feature-choices");
 const editorUnitTypeSelect = document.querySelector("#editor-unit-type");
 const editorUnitSideSelect = document.querySelector("#editor-unit-side");
 const terrainPalette = document.querySelector("#terrain-palette");
@@ -67,11 +75,18 @@ const hordeCount = document.querySelector("#horde-count");
 const sidebarSelectionReadout = document.querySelector(".sidebar-selection-readout");
 const unitRoster = document.querySelector("#unit-roster");
 const unitName = document.querySelector("#unit-name");
+const unitNameInput = document.querySelector("#unit-name-input");
+const unitType = document.querySelector("#unit-type");
+const unitTypeInput = document.querySelector("#unit-type-input");
 const unitHp = document.querySelector("#unit-hp");
+const unitHpInput = document.querySelector("#unit-hp-input");
 const unitAttack = document.querySelector("#unit-attack");
 const unitDefense = document.querySelector("#unit-defense");
 const unitReadiness = document.querySelector("#unit-readiness");
+const unitReadinessInput = document.querySelector("#unit-readiness-input");
 const unitMove = document.querySelector("#unit-move");
+const unitStance = document.querySelector("#unit-stance");
+const unitStanceInput = document.querySelector("#unit-stance-input");
 const unitResources = document.querySelector("#unit-resources");
 const unitPopulation = document.querySelector("#unit-population");
 const unitMetal = document.querySelector("#unit-metal");
@@ -80,10 +95,13 @@ const unitHorses = document.querySelector("#unit-horses");
 let currentMap = null;
 let appMode = "intro";
 let isPanning = false;
-let isEditing = false;
 let isPainting = false;
 let lastPointer = { x: 0, y: 0 };
 let selectedTerrain = "lake";
+let scenarioTool = "scenario";
+let unitTool = "place";
+let editorSelectedUnitId = 0;
+let openScenarioRegions = new Set(["scenario", "parameters", "terrain", "units"]);
 let paintStrokeKeys = new Set();
 let paintUndoRecorded = false;
 let terrainUndo = new Map();
@@ -821,6 +839,173 @@ function stopPainting() {
   paintUndoRecorded = false;
 }
 
+function scenarioEditingActive() {
+  return appMode === "scenario" && (scenarioTool === "terrain" || scenarioTool === "units");
+}
+
+function terrainEditingActive() {
+  return appMode === "scenario" && scenarioTool === "terrain";
+}
+
+function unitPlaceActive() {
+  return appMode === "scenario" && scenarioTool === "units" && unitTool === "place";
+}
+
+function unitEditActive() {
+  return appMode === "scenario" && scenarioTool === "units" && unitTool === "edit";
+}
+
+function scenarioName() {
+  const value = scenarioNameInput ? scenarioNameInput.value.trim() : "";
+  return value || "Untitled Scenario";
+}
+
+function selectedScenarioFactionsFromControls() {
+  const selected = scenarioFactionCheckboxes
+    .filter((checkbox) => checkbox.checked)
+    .map((checkbox) => normalizeScenarioFaction(checkbox.value, checkbox.value));
+  return selected.length > 0 ? selected : defaultScenarioFactions();
+}
+
+function syncScenarioParameterControls() {
+  if (scenarioNameInput) {
+    scenarioNameInput.value = currentMap && typeof currentMap.name === "string" && currentMap.name.trim()
+      ? currentMap.name
+      : "Untitled Scenario";
+  }
+  const factionKeys = new Set(
+    currentMap && Array.isArray(currentMap.factions)
+      ? normalizeScenarioFactions(currentMap.factions, currentMap.units).map((faction) => faction.key)
+      : defaultScenarioFactions().map((faction) => faction.key)
+  );
+  for (const checkbox of scenarioFactionCheckboxes) {
+    checkbox.checked = factionKeys.has(checkbox.value);
+  }
+}
+
+function syncScenarioToolControls() {
+  for (const region of scenarioRegions) {
+    const key = region.dataset.scenarioRegion;
+    const open = openScenarioRegions.has(key);
+    region.classList.toggle("is-active", key === scenarioTool);
+    region.classList.toggle("is-collapsed", !open);
+  }
+  for (const button of scenarioToolButtons) {
+    const active = button.dataset.scenarioActivate === scenarioTool;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
+  for (const button of scenarioCollapseButtons) {
+    const key = button.dataset.scenarioToggle;
+    const open = openScenarioRegions.has(key);
+    button.setAttribute("aria-expanded", String(open));
+    button.textContent = open ? "-" : "+";
+    button.setAttribute("aria-label", `${open ? "Collapse" : "Expand"} ${key}`);
+  }
+  for (const panel of scenarioToolPanels) {
+    panel.hidden = !openScenarioRegions.has(panel.dataset.scenarioPanel);
+  }
+  for (const button of unitToolButtons) {
+    const active = button.dataset.unitTool === unitTool;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
+  const placingUnit = openScenarioRegions.has("units") && unitTool === "place";
+  editorUnitSideSelect.hidden = !placingUnit;
+  editorUnitTypeSelect.hidden = !placingUnit;
+  const terrainOpen = openScenarioRegions.has("terrain");
+  const terrainMode = editorEdgeFeatureSelect.value === "terrain";
+  editorEdgeFeatureSelect.hidden = true;
+  terrainPalette.hidden = !terrainOpen || !terrainMode;
+  edgeFeatureChoices.hidden = !terrainOpen || terrainMode;
+  for (const button of terrainEditModeButtons) {
+    const active = button.dataset.terrainEditMode === (terrainMode ? "terrain" : "edge");
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
+  for (const button of edgeFeatureButtons) {
+    const active = button.dataset.edgeFeature === editorEdgeFeatureSelect.value;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
+  mapPanel.classList.toggle("is-editing", scenarioEditingActive());
+  for (const button of terrainPalette.querySelectorAll(".terrain-button")) {
+    button.classList.toggle("is-selected", button.dataset.terrain === selectedTerrain);
+  }
+}
+
+function setScenarioTool(tool) {
+  scenarioTool = ["scenario", "parameters", "terrain", "units"].includes(tool) ? tool : "scenario";
+  openScenarioRegions.add(scenarioTool);
+  isPainting = false;
+  paintStrokeKeys = new Set();
+  paintUndoRecorded = false;
+  syncEditorControls();
+  if (currentMap) {
+    requestAnimationFrame(drawMap);
+  }
+}
+
+function toggleScenarioRegion(region) {
+  if (!["scenario", "parameters", "terrain", "units"].includes(region)) {
+    return;
+  }
+  if (openScenarioRegions.has(region)) {
+    openScenarioRegions.delete(region);
+  } else {
+    openScenarioRegions.add(region);
+  }
+  syncEditorControls();
+}
+
+function setTerrainEditMode(mode) {
+  editorEdgeFeatureSelect.value = mode === "edge" ? "river" : "terrain";
+  setScenarioTool("terrain");
+}
+
+function setEditorEdgeFeature(feature) {
+  editorEdgeFeatureSelect.value = feature === "road" ? "road" : "river";
+  setScenarioTool("terrain");
+}
+
+function setUnitTool(tool) {
+  unitTool = tool === "edit" ? "edit" : "place";
+  isPainting = false;
+  paintStrokeKeys = new Set();
+  paintUndoRecorded = false;
+  if (unitTool === "place") {
+    editorSelectedUnitId = 0;
+    if (currentMap && currentMap.game) {
+      currentMap.game.selectedUnitId = 0;
+    }
+  }
+  syncEditorControls();
+  if (currentMap) {
+    requestAnimationFrame(drawMap);
+  }
+}
+
+function updateScenarioNameFromInput() {
+  if (!currentMap) {
+    return;
+  }
+  currentMap.name = scenarioName();
+}
+
+function updateScenarioFactionsFromControls() {
+  if (!currentMap) {
+    return;
+  }
+  const selected = scenarioFactionCheckboxes.filter((checkbox) => checkbox.checked);
+  if (selected.length === 0 && scenarioFactionCheckboxes.length > 0) {
+    scenarioFactionCheckboxes[0].checked = true;
+  }
+  currentMap.factions = selectedScenarioFactionsFromControls();
+  ensureGameMeta();
+  syncModeControls();
+  drawMap();
+}
+
 function normalizeScenarioFaction(faction, fallbackKey = "mongol") {
   const key = typeof faction === "string"
     ? faction
@@ -936,6 +1121,9 @@ function ensureGameMeta() {
   if (!currentMap) {
     return;
   }
+  currentMap.name = typeof currentMap.name === "string" && currentMap.name.trim()
+    ? currentMap.name
+    : "Untitled Scenario";
   currentMap.game = currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {};
   currentMap.units = Array.isArray(currentMap.units) ? currentMap.units.map(normalizeUnit) : [];
   currentMap.factions = normalizeScenarioFactions(currentMap.factions, currentMap.units);
@@ -999,6 +1187,9 @@ function restoreLocalUndo(snapshot) {
   currentMap = refreshDerivedTopology(snapshot);
   terrainUndo = new Map();
   ensureGameMeta();
+  editorSelectedUnitId = currentMap.game && Number.isInteger(currentMap.game.selectedUnitId)
+    ? currentMap.game.selectedUnitId
+    : 0;
   syncModeControls();
   drawMap();
 }
@@ -1042,20 +1233,24 @@ function unitKindLabelForKind(kind) {
   return unitKindLabels[kind] || kind || "Unit";
 }
 
-function populateEditorUnitTypeOptions(kinds) {
-  const previous = editorUnitTypeSelect.value;
-  editorUnitTypeSelect.replaceChildren();
+function populateUnitTypeSelect(select, kinds, previous = select.value) {
+  select.replaceChildren();
   for (const kind of kinds) {
     const option = document.createElement("option");
     option.value = kind;
     option.textContent = unitKindLabelForKind(kind);
-    editorUnitTypeSelect.appendChild(option);
+    select.appendChild(option);
   }
   if (kinds.includes(previous)) {
-    editorUnitTypeSelect.value = previous;
+    select.value = previous;
   } else if (kinds.length > 0) {
-    editorUnitTypeSelect.value = kinds[0];
+    select.value = kinds[0];
   }
+}
+
+function populateEditorUnitTypeOptions(kinds) {
+  populateUnitTypeSelect(editorUnitTypeSelect, kinds);
+  populateUnitTypeSelect(unitTypeInput, kinds);
 }
 
 async function loadUnitTypeDefaults() {
@@ -1085,6 +1280,7 @@ function normalizeUnit(unit, index) {
     q: unit.q,
     r: unit.r,
   };
+  if (typeof unit.name === "string") normalized.name = unit.name;
   if (owner !== null) normalized.owner = owner;
   if (Number.isFinite(unit.hp)) normalized.hp = unit.hp;
   if (Number.isFinite(unit.maxHp)) normalized.maxHp = unit.maxHp;
@@ -1476,6 +1672,9 @@ const contextActionDefinitions = [
 ];
 
 function unitDisplayName(unit) {
+  if (unit && typeof unit.name === "string" && unit.name.trim()) {
+    return unit.name.trim();
+  }
   const faction = factions[unit.faction] || factions.mongol;
   const kind = unitDisplayKindNames[unit.kind] || unit.kind;
   return `${faction.name} ${kind}`;
@@ -1483,6 +1682,107 @@ function unitDisplayName(unit) {
 
 function unitKindLabel(unit) {
   return unitKindLabelForKind(unit.kind);
+}
+
+function stanceLabel(stance) {
+  return String(stance || "default")
+    .split("_")
+    .map((part) => part ? `${part[0].toUpperCase()}${part.slice(1)}` : part)
+    .join(" ");
+}
+
+function legalStancesForUnit(unit) {
+  const defaults = unitDefaultsFor(unit ? unit.kind : "");
+  return defaults.legalStances && defaults.legalStances.length > 0 ? defaults.legalStances : ["default"];
+}
+
+function defaultUnitDisplayNameFor(unit, kind = unit.kind) {
+  const faction = factions[unit.faction] || factions.mongol;
+  const displayKind = unitDisplayKindNames[kind] || kind;
+  return `${faction.name} ${displayKind}`;
+}
+
+function editorInspectorUnit() {
+  return unitEditActive() ? selectedUnit() : null;
+}
+
+function applyUnitTypeDefaults(unit, kind) {
+  const defaults = unitDefaultsFor(kind);
+  const hadCustomName = typeof unit.name === "string" && unit.name.trim()
+    && unit.name.trim() !== defaultUnitDisplayNameFor(unit, unit.kind);
+  unit.kind = kind;
+  unit.attack = defaults.attack;
+  unit.defense = defaults.defense;
+  unit.readinessDamage = defaults.readinessDamage;
+  unit.maxHp = defaults.hp;
+  unit.hp = Math.max(0, Math.min(Number.isFinite(unit.hp) ? Math.trunc(unit.hp) : defaults.hp, defaults.hp));
+  unit.maxReadiness = 100;
+  unit.readiness = Math.max(0, Math.min(Number.isFinite(unit.readiness) ? Math.trunc(unit.readiness) : defaults.readiness, 100));
+  unit.move = defaults.move;
+  unit.remainingMove = defaults.move;
+  unit.projectsZoc = Boolean(defaults.projectsZoc);
+  unit.respectsZoc = Boolean(defaults.respectsZoc);
+  if (Number.isInteger(defaults.population)) unit.population = defaults.population;
+  if (Number.isInteger(defaults.metal)) unit.metal = defaults.metal;
+  if (Number.isInteger(defaults.horses)) unit.horses = defaults.horses;
+  const stances = defaults.legalStances && defaults.legalStances.length > 0 ? defaults.legalStances : ["default"];
+  unit.stance = stances.includes(unit.stance) ? unit.stance : defaults.stance;
+  if (!hadCustomName) {
+    delete unit.name;
+  }
+}
+
+function mutateEditorInspectorUnit(mutator) {
+  const unit = editorInspectorUnit();
+  if (!unit) {
+    return;
+  }
+  recordLocalUndo();
+  mutator(unit);
+  ensureGameMeta();
+  syncModeControls();
+  drawMap();
+}
+
+function updateEditorUnitName() {
+  mutateEditorInspectorUnit((unit) => {
+    const name = unitNameInput.value.trim();
+    const fallbackName = defaultUnitDisplayNameFor(unit);
+    if (!name || name === fallbackName) {
+      delete unit.name;
+    } else {
+      unit.name = name;
+    }
+  });
+}
+
+function updateEditorUnitType() {
+  mutateEditorInspectorUnit((unit) => {
+    applyUnitTypeDefaults(unit, unitTypeInput.value);
+  });
+}
+
+function updateEditorUnitHp() {
+  mutateEditorInspectorUnit((unit) => {
+    const maxHp = Number.isFinite(unit.maxHp) ? unit.maxHp : unitDefaultsFor(unit.kind).hp;
+    const hp = Number.parseInt(unitHpInput.value, 10);
+    unit.hp = Number.isFinite(hp) ? Math.max(0, Math.min(hp, maxHp)) : unit.hp;
+  });
+}
+
+function updateEditorUnitReadiness() {
+  mutateEditorInspectorUnit((unit) => {
+    const readiness = Number.parseInt(unitReadinessInput.value, 10);
+    unit.maxReadiness = 100;
+    unit.readiness = Number.isFinite(readiness) ? Math.max(0, Math.min(readiness, 100)) : unit.readiness;
+  });
+}
+
+function updateEditorUnitStance() {
+  mutateEditorInspectorUnit((unit) => {
+    const stances = legalStancesForUnit(unit);
+    unit.stance = stances.includes(unitStanceInput.value) ? unitStanceInput.value : stances[0];
+  });
 }
 
 function syncUnitRoster() {
@@ -1507,9 +1807,6 @@ function syncUnitRoster() {
     item.className = "unit-roster-item";
     item.classList.toggle("is-selected", Boolean(selected && selected.id === unit.id));
     item.style.setProperty("--unit-color", faction.color);
-    item.addEventListener("click", () => {
-      selectUnit(unit).catch((error) => window.alert(error.message));
-    });
 
     const name = document.createElement("span");
     name.className = "unit-roster-name";
@@ -1521,20 +1818,42 @@ function syncUnitRoster() {
     meta.textContent = `${unitKindLabel(unit)} - HP ${hp}`;
 
     item.append(name, meta);
+    if (appMode === "scenario") {
+      item.addEventListener("click", () => {
+        scenarioTool = "units";
+        openScenarioRegions.add("units");
+        unitTool = "edit";
+        selectEditorUnit(unit);
+      });
+    } else {
+      item.addEventListener("click", () => {
+        selectUnit(unit).catch((error) => window.alert(error.message));
+      });
+    }
     unitRoster.appendChild(item);
   }
 }
 
 function syncUnitInspector() {
   const unit = selectedUnit();
+  const editing = unitEditActive() && Boolean(unit);
+  const unitInspector = document.querySelector(".unit-inspector");
+  unitInspector.classList.toggle("is-editing", editing);
   if (!unit) {
     sidebarSelectionReadout.textContent = "None";
     unitName.textContent = "None";
+    unitNameInput.value = "";
+    unitType.textContent = "-";
+    unitTypeInput.value = unitTypeInput.options.length > 0 ? unitTypeInput.options[0].value : "";
     unitHp.textContent = "-";
+    unitHpInput.value = "";
     unitAttack.textContent = "-";
     unitDefense.textContent = "-";
     unitReadiness.textContent = "-";
+    unitReadinessInput.value = "";
     unitMove.textContent = "-";
+    unitStance.textContent = "-";
+    unitStanceInput.replaceChildren();
     unitResources.hidden = true;
     unitPopulation.textContent = "0";
     unitMetal.textContent = "0";
@@ -1543,13 +1862,31 @@ function syncUnitInspector() {
   }
   sidebarSelectionReadout.textContent = unitDisplayName(unit);
   unitName.textContent = unitDisplayName(unit);
-  unitHp.textContent = Number.isFinite(unit.hp) && Number.isFinite(unit.maxHp) ? `${unit.hp}/${unit.maxHp}` : "-";
+  unitNameInput.value = unitDisplayName(unit);
+  unitType.textContent = unitKindLabel(unit);
+  if (unitTypeInput.value !== unit.kind) {
+    unitTypeInput.value = unit.kind;
+  }
+  unitHp.textContent = Number.isFinite(unit.hp) && Number.isFinite(unit.maxHp) ? String(unit.hp) : "-";
+  unitHpInput.value = Number.isFinite(unit.hp) ? String(unit.hp) : "";
   unitAttack.textContent = Number.isFinite(unit.attack) ? String(unit.attack) : "-";
   unitDefense.textContent = Number.isFinite(unit.defense) ? String(unit.defense) : "-";
-  unitReadiness.textContent = Number.isFinite(unit.readiness) && Number.isFinite(unit.maxReadiness)
-    ? `${unit.readiness}/${unit.maxReadiness}`
-    : "-";
-  unitMove.textContent = Number.isFinite(unit.remainingMove) && Number.isFinite(unit.move) ? `${unit.remainingMove}/${unit.move}` : "-";
+  unitReadiness.textContent = Number.isFinite(unit.readiness) ? String(unit.readiness) : "-";
+  unitReadinessInput.value = Number.isFinite(unit.readiness) ? String(unit.readiness) : "";
+  unitMove.textContent = Number.isFinite(unit.move) ? String(unit.move) : "-";
+  unitStance.textContent = stanceLabel(unit.stance);
+  const stances = legalStancesForUnit(unit);
+  const previousStance = unitStanceInput.value;
+  unitStanceInput.replaceChildren();
+  for (const stance of stances) {
+    const option = document.createElement("option");
+    option.value = stance;
+    option.textContent = stanceLabel(stance);
+    unitStanceInput.appendChild(option);
+  }
+  unitStanceInput.value = stances.includes(unit.stance)
+    ? unit.stance
+    : (stances.includes(previousStance) ? previousStance : stances[0]);
   const showResources = unit.kind === "horde";
   unitResources.hidden = !showResources;
   unitPopulation.textContent = String(Number.isInteger(unit.population) ? unit.population : 0);
@@ -1583,10 +1920,16 @@ function syncModeControls() {
   appShell.classList.toggle("is-intro", appMode === "intro");
   appShell.classList.toggle("is-scenario", appMode === "scenario");
   appShell.classList.toggle("is-play", appMode === "play");
+  appShell.classList.toggle("show-editor-inspector", appMode === "scenario" && unitEditActive() && Boolean(selectedUnit()));
   scenarioModeButton.classList.toggle("is-active", appMode === "scenario");
   playModeButton.classList.toggle("is-active", appMode === "play");
   scenarioModeButton.setAttribute("aria-pressed", String(appMode === "scenario"));
   playModeButton.setAttribute("aria-pressed", String(appMode === "play"));
+  endTurnButton.disabled = appMode !== "play";
+  controlEndTurnButton.disabled = appMode !== "play";
+  statusEndTurnButton.disabled = appMode !== "play";
+  syncEditorControls();
+  syncScenarioParameterControls();
   syncPlayControls();
   syncUndoControls();
 }
@@ -1595,7 +1938,10 @@ function setAppMode(mode) {
   hideCombatPreview();
   appMode = mode;
   if (mode !== "scenario") {
-    setEditMode(false);
+    isPainting = false;
+    paintStrokeKeys = new Set();
+    paintUndoRecorded = false;
+    editorSelectedUnitId = 0;
   }
   syncModeControls();
   if (currentMap) {
@@ -1605,7 +1951,10 @@ function setAppMode(mode) {
 
 async function enterPlayMode() {
   appMode = "play";
-  setEditMode(false);
+  isPainting = false;
+  paintStrokeKeys = new Set();
+  paintUndoRecorded = false;
+  editorSelectedUnitId = 0;
   syncModeControls();
   if (appInitialization) {
     await appInitialization;
@@ -2257,6 +2606,9 @@ function drawUnitCounters(units) {
 }
 
 function drawReachableHexes() {
+  if (appMode !== "play") {
+    return;
+  }
   const moves = legalMoves();
   if (moves.length === 0) {
     return;
@@ -2279,6 +2631,37 @@ function drawReachableHexes() {
     ctx.fill();
     ctx.strokeStyle = "#8a6f24";
     ctx.lineWidth = 1.5 / viewport.scale;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawEditorUnitMoveHexes() {
+  if (!unitEditActive()) {
+    return;
+  }
+  const moves = editorUnitMoveHexes();
+  if (moves.length === 0) {
+    return;
+  }
+
+  ctx.save();
+  for (const move of moves) {
+    const center = hexCenter(move);
+    const points = hexPoints(center.x, center.y, geometry.size * 0.74);
+    ctx.beginPath();
+    points.forEach(([x, y], index) => {
+      if (index === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    });
+    ctx.closePath();
+    ctx.fillStyle = "rgba(47, 111, 115, 0.28)";
+    ctx.fill();
+    ctx.strokeStyle = "#1f4f52";
+    ctx.lineWidth = 1.4 / viewport.scale;
     ctx.stroke();
   }
   ctx.restore();
@@ -2764,6 +3147,7 @@ function drawMap() {
   drawMapMarkers(currentMap.merge_points, terrainStyles.river.merge, 5);
   drawMapMarkers(currentMap.river_destinations, terrainStyles.river.destination, 5);
   drawReachableHexes();
+  drawEditorUnitMoveHexes();
   drawDetachDeploymentHexes();
   drawUnitCounters(currentMap.units);
 
@@ -2771,18 +3155,7 @@ function drawMap() {
 }
 
 function syncEditorControls() {
-  editModeButton.classList.toggle("is-active", isEditing);
-  editModeButton.setAttribute("aria-pressed", String(isEditing));
-  mapPanel.classList.toggle("is-editing", isEditing);
-  const mode = editorModeSelect.value;
-  terrainPalette.hidden = mode !== "terrain";
-  editorEdgeFeatureSelect.hidden = mode !== "edges";
-  editorUnitTypeSelect.hidden = mode !== "units";
-  editorUnitSideSelect.hidden = mode !== "units";
-
-  for (const button of terrainPalette.querySelectorAll(".terrain-button")) {
-    button.classList.toggle("is-selected", button.dataset.terrain === selectedTerrain);
-  }
+  syncScenarioToolControls();
 }
 
 function initializeTerrainPalette() {
@@ -2797,19 +3170,11 @@ function initializeTerrainPalette() {
     button.style.borderColor = terrain.stroke;
     button.addEventListener("click", () => {
       selectedTerrain = terrain.key;
-      editorModeSelect.value = "terrain";
+      editorEdgeFeatureSelect.value = "terrain";
+      setScenarioTool("terrain");
       syncEditorControls();
     });
     terrainPalette.appendChild(button);
-  }
-  syncEditorControls();
-}
-
-function setEditMode(enabled) {
-  isEditing = enabled && appMode === "scenario";
-  if (!isEditing) {
-    isPainting = false;
-    paintStrokeKeys = new Set();
   }
   syncEditorControls();
 }
@@ -2896,26 +3261,90 @@ function makeEditorUnit(coord) {
 
 function toggleEditorUnit(hex) {
   currentMap.units = Array.isArray(currentMap.units) ? currentMap.units : [];
-  const kind = editorUnitTypeSelect.value;
-  const factionKey = editorUnitSideSelect.value;
-  const faction = factions[factionKey] || factions.mongol;
-  const existingSelected = currentMap.units.findIndex((unit) => (
-    unit.q === hex.q
-    && unit.r === hex.r
-    && unit.kind === kind
-    && unit.owner === faction.owner
-  ));
-  if (existingSelected >= 0) {
-    const removedId = currentMap.units[existingSelected].id;
-    currentMap.units.splice(existingSelected, 1);
-    if (currentMap.game && currentMap.game.selectedUnitId === removedId) {
+  const removedUnits = currentMap.units.filter((unit) => unit.q === hex.q && unit.r === hex.r);
+  if (removedUnits.length > 0) {
+    currentMap.units = currentMap.units.filter((unit) => !(unit.q === hex.q && unit.r === hex.r));
+    const removedIds = new Set(removedUnits.map((unit) => unit.id));
+    if (currentMap.game && removedIds.has(currentMap.game.selectedUnitId)) {
       currentMap.game.selectedUnitId = 0;
+    }
+    if (removedIds.has(editorSelectedUnitId)) {
+      editorSelectedUnitId = 0;
     }
     return;
   }
 
-  currentMap.units = currentMap.units.filter((unit) => !(unit.q === hex.q && unit.r === hex.r));
-  currentMap.units.push(normalizeUnit(makeEditorUnit(hex), currentMap.units.length));
+  const unit = normalizeUnit(makeEditorUnit(hex), currentMap.units.length);
+  currentMap.units.push(unit);
+  editorSelectedUnitId = unit.id;
+  currentMap.game = currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {};
+  currentMap.game.selectedUnitId = unit.id;
+}
+
+function editorSelectedUnit() {
+  return currentMap && Array.isArray(currentMap.units)
+    ? currentMap.units.find((unit) => unit.id === editorSelectedUnitId) || null
+    : null;
+}
+
+function unitAtCoord(coord, ignoreUnitId = 0) {
+  return currentMap && Array.isArray(currentMap.units)
+    ? currentMap.units.find((unit) => unit.id !== ignoreUnitId && unit.q === coord.q && unit.r === coord.r) || null
+    : null;
+}
+
+function editorHexPassable(hex) {
+  return Boolean(hex && hex.terrain !== "lake" && hex.terrain !== "none");
+}
+
+function editorUnitMoveHexes() {
+  const unit = editorSelectedUnit();
+  if (!currentMap || !unit || !Array.isArray(currentMap.hexes)) {
+    return [];
+  }
+  return currentMap.hexes.filter((hex) => (
+    editorHexPassable(hex)
+    && !(hex.q === unit.q && hex.r === unit.r)
+    && !unitAtCoord(hex, unit.id)
+  ));
+}
+
+function editorUnitMoveAt(coord) {
+  return editorUnitMoveHexes().find((hex) => hex.q === coord.q && hex.r === coord.r) || null;
+}
+
+function selectEditorUnit(unit) {
+  editorSelectedUnitId = unit ? unit.id : 0;
+  currentMap.game = currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {};
+  currentMap.game.selectedUnitId = editorSelectedUnitId;
+  syncModeControls();
+  drawMap();
+}
+
+function handleUnitEditClick(event) {
+  if (!currentMap) {
+    return;
+  }
+  const point = panelToWorld(event);
+  const clickedUnit = findUnitAtPoint(point);
+  if (clickedUnit) {
+    selectEditorUnit(clickedUnit);
+    return;
+  }
+  const hex = findNearestHex(point);
+  const unit = editorSelectedUnit();
+  if (hex && unit && editorUnitMoveAt(hex)) {
+    recordLocalUndo();
+    unit.q = hex.q;
+    unit.r = hex.r;
+    unit.remainingMove = unit.move;
+    currentMap.game.selectedUnitId = unit.id;
+    ensureGameMeta();
+    syncModeControls();
+    drawMap();
+    return;
+  }
+  selectEditorUnit(null);
 }
 
 function toggleHexTerrain(hex, terrain) {
@@ -2954,13 +3383,12 @@ function editorLabelsForTerrain(terrain) {
 }
 
 function paintAtPointer(event) {
-  if (appMode !== "scenario" || !isEditing || !currentMap) {
+  if (!terrainEditingActive() || !currentMap) {
     return;
   }
 
   const point = panelToWorld(event);
-  const mode = editorModeSelect.value;
-  if (mode === "edges") {
+  if (editorEdgeFeatureSelect.value === "river" || editorEdgeFeatureSelect.value === "road") {
     const edge = findNearestEditableEdge(point);
     if (!edge) {
       return;
@@ -2992,26 +3420,6 @@ function paintAtPointer(event) {
   if (!hex) {
     return;
   }
-  if (mode === "units") {
-    const key = `unit:${coordKey(hex)}`;
-    if (paintStrokeKeys.has(key)) {
-      return;
-    }
-    paintStrokeKeys.add(key);
-    if (!paintUndoRecorded) {
-      recordLocalUndo();
-      paintUndoRecorded = true;
-    }
-    try {
-      toggleEditorUnit(hex);
-    } catch (error) {
-      window.alert(error.message);
-      return;
-    }
-    syncModeControls();
-    drawMap();
-    return;
-  }
 
   const terrain = event.shiftKey ? "grassland" : selectedTerrain;
   const key = `hex:${coordKey(hex)}`;
@@ -3025,6 +3433,30 @@ function paintAtPointer(event) {
   }
   toggleHexTerrain(hex, terrain);
   refreshDerivedTopology();
+  drawMap();
+}
+
+function placeEditorUnitAtPointer(event) {
+  if (!unitPlaceActive() || !currentMap) {
+    return;
+  }
+  const point = panelToWorld(event);
+  const hex = findNearestHex(point);
+  if (!hex) {
+    return;
+  }
+  if (!editorHexPassable(hex)) {
+    window.alert("Units cannot be placed on blocked terrain.");
+    return;
+  }
+  recordLocalUndo();
+  try {
+    toggleEditorUnit(hex);
+  } catch (error) {
+    window.alert(error.message);
+    return;
+  }
+  syncModeControls();
   drawMap();
 }
 
@@ -3084,6 +3516,8 @@ async function generateMap() {
       throw new Error(payload.error || "generation failed");
     }
     currentMap = payload;
+    currentMap.name = scenarioName();
+    currentMap.factions = selectedScenarioFactionsFromControls();
     currentMap.units = Array.isArray(currentMap.units) ? currentMap.units : [];
     currentMap.game = currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {};
     terrainUndo = new Map();
@@ -3116,6 +3550,7 @@ function createBlankMap(options = {}) {
 
   currentMap = {
     schema: "steppe-scenario.v1",
+    name: scenarioName(),
     seed: 0,
     width,
     height,
@@ -3130,7 +3565,7 @@ function createBlankMap(options = {}) {
     walls: [],
     wall_gates: [],
     crossings: [],
-    factions: defaultScenarioFactions(),
+    factions: selectedScenarioFactionsFromControls(),
     units: [],
     metadata: {
       generator: typeof options.generator === "string" ? options.generator : "new-scenario",
@@ -3189,6 +3624,7 @@ function normalizeLoadedMap(map) {
 
   return refreshDerivedTopology({
     schema: typeof map.schema === "string" ? map.schema : "steppe-scenario.v1",
+    name: typeof map.name === "string" && map.name.trim() ? map.name : "Untitled Scenario",
     seed: Number.isInteger(map.seed) ? map.seed : 0,
     width: map.width,
     height: map.height,
@@ -3327,6 +3763,7 @@ function scenarioSnapshot() {
   return JSON.parse(JSON.stringify({
     ...currentMap,
     schema: "steppe-scenario.v1",
+    name: scenarioName(),
     factions: normalizeScenarioFactions(currentMap.factions, currentMap.units),
     units: Array.isArray(currentMap.units) ? currentMap.units.map(normalizeUnit) : [],
     game: currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {},
@@ -3549,11 +3986,43 @@ playModeButton.addEventListener("click", () => {
 });
 generateButton.addEventListener("click", generateMap);
 blankMapButton.addEventListener("click", () => createBlankMap());
-editModeButton.addEventListener("click", () => setEditMode(!isEditing));
-editorModeSelect.addEventListener("change", syncEditorControls);
-editorEdgeFeatureSelect.addEventListener("change", syncEditorControls);
+for (const button of scenarioToolButtons) {
+  button.addEventListener("click", () => setScenarioTool(button.dataset.scenarioActivate));
+}
+for (const button of scenarioCollapseButtons) {
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleScenarioRegion(button.dataset.scenarioToggle);
+  });
+}
+for (const button of unitToolButtons) {
+  button.addEventListener("click", () => setUnitTool(button.dataset.unitTool));
+}
+for (const button of terrainEditModeButtons) {
+  button.addEventListener("click", () => setTerrainEditMode(button.dataset.terrainEditMode));
+}
+for (const button of edgeFeatureButtons) {
+  button.addEventListener("click", () => setEditorEdgeFeature(button.dataset.edgeFeature));
+}
+if (scenarioNameInput) {
+  scenarioNameInput.addEventListener("input", updateScenarioNameFromInput);
+}
+for (const checkbox of scenarioFactionCheckboxes) {
+  checkbox.addEventListener("change", updateScenarioFactionsFromControls);
+}
+editorEdgeFeatureSelect.addEventListener("change", () => {
+  syncEditorControls();
+  if (currentMap) {
+    requestAnimationFrame(drawMap);
+  }
+});
 editorUnitTypeSelect.addEventListener("change", syncEditorControls);
 editorUnitSideSelect.addEventListener("change", syncEditorControls);
+unitNameInput.addEventListener("change", updateEditorUnitName);
+unitTypeInput.addEventListener("change", updateEditorUnitType);
+unitHpInput.addEventListener("change", updateEditorUnitHp);
+unitReadinessInput.addEventListener("change", updateEditorUnitReadiness);
+unitStanceInput.addEventListener("change", updateEditorUnitStance);
 saveButton.addEventListener("click", saveCurrentMap);
 loadButton.addEventListener("click", chooseMapFile);
 loadFileInput.addEventListener("change", () => loadMapFile(loadFileInput.files[0]));
@@ -3597,7 +4066,9 @@ mapPanel.addEventListener("pointerdown", async (event) => {
     hideDetachHerdAmount();
     cancelDetachHerdPlacement();
     cancelCreateUnitPlacement();
-    await showContextMenu(event);
+    if (appMode === "play") {
+      await showContextMenu(event);
+    }
     return;
   }
   hideContextMenu();
@@ -3639,13 +4110,23 @@ mapPanel.addEventListener("pointerdown", async (event) => {
       return;
     }
   }
-  if (appMode === "scenario" && isEditing && event.button === 0) {
+  if (terrainEditingActive() && event.button === 0) {
     event.preventDefault();
     isPainting = true;
     paintStrokeKeys = new Set();
     paintUndoRecorded = false;
     paintAtPointer(event);
     mapPanel.setPointerCapture(event.pointerId);
+    return;
+  }
+  if (unitPlaceActive() && event.button === 0) {
+    event.preventDefault();
+    placeEditorUnitAtPointer(event);
+    return;
+  }
+  if (unitEditActive() && event.button === 0) {
+    event.preventDefault();
+    handleUnitEditClick(event);
     return;
   }
   if (event.button !== 0 && event.button !== 1) {
@@ -3703,7 +4184,7 @@ mapPanel.addEventListener("auxclick", (event) => {
 });
 
 mapPanel.addEventListener("contextmenu", (event) => {
-  if (appMode === "play") {
+  if (appMode === "play" || appMode === "scenario") {
     event.preventDefault();
   }
 });

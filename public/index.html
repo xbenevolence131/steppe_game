@@ -17,122 +17,163 @@
 
     <main id="app-shell" class="app-shell is-intro">
       <section id="scenario-controls" class="scenario-topbar" aria-label="Scenario edit controls">
-        <div class="control-section scenario-actions">
-          <h2>Scenario Edit</h2>
-          <div class="panel-actions">
-            <button id="generate-button" type="button">Generate</button>
-            <button id="blank-map-button" class="secondary" type="button">New Scenario</button>
-            <button id="save-button" class="secondary" type="button">Save Scenario</button>
-            <button id="load-button" class="secondary" type="button">Load Scenario</button>
-            <input id="load-file-input" class="hidden-file-input" type="file" accept="application/json,.json">
+        <article class="scenario-region" data-scenario-region="scenario">
+          <button class="scenario-region-rail is-active" type="button" data-scenario-activate="scenario" aria-pressed="true">Scenario</button>
+          <div class="scenario-region-body">
+            <button class="scenario-region-toggle" type="button" data-scenario-toggle="scenario" aria-expanded="true" aria-label="Collapse Scenario">-</button>
+            <div class="scenario-tool-panel" data-scenario-panel="scenario">
+              <div class="panel-actions">
+                <button id="generate-button" type="button">Generate</button>
+                <button id="blank-map-button" class="secondary" type="button">New Scenario</button>
+                <button id="save-button" class="secondary" type="button">Save Scenario</button>
+                <button id="load-button" class="secondary" type="button">Load Scenario</button>
+                <input id="load-file-input" class="hidden-file-input" type="file" accept="application/json,.json">
+              </div>
+            </div>
           </div>
-        </div>
+        </article>
 
-        <div class="control-section map-fields">
-          <h2>Map</h2>
-          <div class="field-grid">
-            <label>
-              <span>Width</span>
-              <input id="map-width" type="number" min="1" max="120" value="120">
-            </label>
-            <label>
-              <span>Height</span>
-              <input id="map-height" type="number" min="1" max="80" value="80">
-            </label>
-            <label>
-              <span>Rivers</span>
-              <input id="river-sources" type="number" min="0" max="20" value="4">
-            </label>
-            <label>
-              <span>Lakes</span>
-              <input id="lake-count" type="number" min="0" max="20" value="4">
-            </label>
-            <label>
-              <span>Lake size</span>
-              <input id="lake-size" type="number" min="1" max="40" value="6">
-            </label>
-            <label>
-              <span>Valleys</span>
-              <input id="valley-thickness" type="number" min="0" max="5" step="0.25" value="2">
-            </label>
-            <label>
-              <span>Forests</span>
-              <input id="forest-blobs" type="number" min="0" max="10" step="1" value="4">
-            </label>
-            <label>
-              <span>Forest radius</span>
-              <input id="forest-blob-radius" type="number" min="0" max="20" step="1" value="4">
-            </label>
+        <article class="scenario-region" data-scenario-region="parameters">
+          <button class="scenario-region-rail" type="button" data-scenario-activate="parameters" aria-pressed="false">Parameters</button>
+          <div class="scenario-region-body">
+            <button class="scenario-region-toggle" type="button" data-scenario-toggle="parameters" aria-expanded="true" aria-label="Collapse Parameters">-</button>
+            <div class="scenario-tool-panel" data-scenario-panel="parameters">
+              <div class="field-grid parameters-grid">
+                <label>
+                  <span>Name</span>
+                  <input id="scenario-name" type="text" value="Untitled Scenario">
+                </label>
+                <label>
+                  <span>Width</span>
+                  <input id="map-width" type="number" min="1" max="120" value="120">
+                </label>
+                <label>
+                  <span>Height</span>
+                  <input id="map-height" type="number" min="1" max="80" value="80">
+                </label>
+                <fieldset class="faction-selector" aria-label="Scenario factions">
+                  <legend>Factions</legend>
+                  <label><input class="scenario-faction-checkbox" type="checkbox" value="mongol" checked> Mongol</label>
+                  <label><input class="scenario-faction-checkbox" type="checkbox" value="chinese" checked> Chinese</label>
+                  <label><input class="scenario-faction-checkbox" type="checkbox" value="persian"> Persian</label>
+                </fieldset>
+              </div>
+            </div>
           </div>
-        </div>
+        </article>
 
-        <div class="control-section river-fields">
-          <h2>Rivers</h2>
-          <div class="field-grid">
-            <label>
-              <span>Forward</span>
-              <input id="meander-forward" type="number" min="0" max="40" step="0.5" value="8">
-            </label>
-            <label>
-              <span>F jitter</span>
-              <input id="meander-forward-jitter" type="number" min="0" max="40" step="0.5" value="4">
-            </label>
-            <label>
-              <span>Lateral</span>
-              <input id="meander-lateral" type="number" min="0" max="40" step="0.5" value="7">
-            </label>
-            <label>
-              <span>L jitter</span>
-              <input id="meander-lateral-jitter" type="number" min="0" max="40" step="0.5" value="4">
-            </label>
-            <label>
-              <span>Strength</span>
-              <input id="meander-strength" type="number" min="0" max="10" step="0.05" value="1">
-            </label>
-            <label>
-              <span>Reach</span>
-              <input id="meander-reach" type="number" min="0" max="40" step="0.5" value="2">
-            </label>
-            <label>
-              <span>Slant</span>
-              <input id="river-slant-strength" type="number" min="0" max="10" step="0.05" value="10">
-            </label>
-            <label>
-              <span>Timeout</span>
-              <input id="meander-timeout" type="number" min="1" max="200" value="28">
-            </label>
+        <article class="scenario-region" data-scenario-region="terrain">
+          <button class="scenario-region-rail" type="button" data-scenario-activate="terrain" aria-pressed="false">Terrain</button>
+          <div class="scenario-region-body">
+            <button class="scenario-region-toggle" type="button" data-scenario-toggle="terrain" aria-expanded="true" aria-label="Collapse Terrain">-</button>
+            <div class="scenario-tool-panel" data-scenario-panel="terrain">
+              <div class="terrain-tool-grid">
+                <div class="segmented-control" role="group" aria-label="Terrain edit mode">
+                  <button class="terrain-edit-mode-button is-active" type="button" data-terrain-edit-mode="terrain">Hex Terrain</button>
+                  <button class="terrain-edit-mode-button" type="button" data-terrain-edit-mode="edge">Edges</button>
+                </div>
+                <select id="editor-edge-feature" class="hidden-control" aria-label="Edge feature">
+                  <option value="terrain">Hex Terrain</option>
+                  <option value="river">River Edge</option>
+                  <option value="road">Road Edge</option>
+                </select>
+                <div id="terrain-palette" class="terrain-palette" aria-label="Terrain palette"></div>
+                <div id="edge-feature-choices" class="edge-feature-choices" aria-label="Edge feature choices" hidden>
+                  <button class="edge-feature-button is-active" type="button" data-edge-feature="river">River</button>
+                  <button class="edge-feature-button" type="button" data-edge-feature="road">Road</button>
+                </div>
+              </div>
+              <div class="field-grid generation-parameter-grid generation-defaults" hidden>
+                <label>
+                  <span>Rivers</span>
+                  <input id="river-sources" type="number" min="0" max="20" value="4">
+                </label>
+                <label>
+                  <span>Lakes</span>
+                  <input id="lake-count" type="number" min="0" max="20" value="4">
+                </label>
+                <label>
+                  <span>Lake size</span>
+                  <input id="lake-size" type="number" min="1" max="40" value="6">
+                </label>
+                <label>
+                  <span>Valleys</span>
+                  <input id="valley-thickness" type="number" min="0" max="5" step="0.25" value="2">
+                </label>
+                <label>
+                  <span>Forests</span>
+                  <input id="forest-blobs" type="number" min="0" max="10" step="1" value="4">
+                </label>
+                <label>
+                  <span>Forest radius</span>
+                  <input id="forest-blob-radius" type="number" min="0" max="20" step="1" value="4">
+                </label>
+                <label>
+                  <span>Forward</span>
+                  <input id="meander-forward" type="number" min="0" max="40" step="0.5" value="8">
+                </label>
+                <label>
+                  <span>F jitter</span>
+                  <input id="meander-forward-jitter" type="number" min="0" max="40" step="0.5" value="4">
+                </label>
+                <label>
+                  <span>Lateral</span>
+                  <input id="meander-lateral" type="number" min="0" max="40" step="0.5" value="7">
+                </label>
+                <label>
+                  <span>L jitter</span>
+                  <input id="meander-lateral-jitter" type="number" min="0" max="40" step="0.5" value="4">
+                </label>
+                <label>
+                  <span>Strength</span>
+                  <input id="meander-strength" type="number" min="0" max="10" step="0.05" value="1">
+                </label>
+                <label>
+                  <span>Reach</span>
+                  <input id="meander-reach" type="number" min="0" max="40" step="0.5" value="2">
+                </label>
+                <label>
+                  <span>Slant</span>
+                  <input id="river-slant-strength" type="number" min="0" max="10" step="0.05" value="10">
+                </label>
+                <label>
+                  <span>Timeout</span>
+                  <input id="meander-timeout" type="number" min="1" max="200" value="28">
+                </label>
+              </div>
+            </div>
           </div>
-        </div>
+        </article>
 
-        <div class="control-section paint-fields">
-          <h2>Paint</h2>
-          <button id="edit-mode-button" class="secondary" type="button" aria-pressed="false">Edit</button>
-          <select id="editor-mode" aria-label="Editor mode">
-            <option value="terrain">Terrain</option>
-            <option value="edges">Edges</option>
-            <option value="units">Units</option>
-          </select>
-          <select id="editor-edge-feature" aria-label="Edge feature">
-            <option value="river">River</option>
-            <option value="road">Road</option>
-          </select>
-          <select id="editor-unit-type" aria-label="Unit type">
-            <option value="horse_archer">Horse Archers</option>
-            <option value="chinese_cavalry">Chinese Cavalry</option>
-            <option value="chinese_militia">Chinese Militia</option>
-            <option value="mongol_lancer">Mongol Lancers</option>
-            <option value="infantry">Infantry</option>
-            <option value="horde">Horde</option>
-            <option value="camp">Camp</option>
-            <option value="herd">Herd</option>
-          </select>
-          <select id="editor-unit-side" aria-label="Unit side">
-            <option value="mongol">Mongol</option>
-            <option value="chinese">Chinese</option>
-            <option value="persian">Persian</option>
-          </select>
-          <div id="terrain-palette" class="terrain-palette" aria-label="Terrain palette"></div>
-        </div>
+        <article class="scenario-region" data-scenario-region="units">
+          <button class="scenario-region-rail" type="button" data-scenario-activate="units" aria-pressed="false">Units</button>
+          <div class="scenario-region-body">
+            <button class="scenario-region-toggle" type="button" data-scenario-toggle="units" aria-expanded="true" aria-label="Collapse Units">-</button>
+            <div class="scenario-tool-panel" data-scenario-panel="units">
+              <div class="unit-tool-row">
+                <div class="segmented-control" role="group" aria-label="Unit edit mode">
+                  <button class="unit-tool-button is-active" type="button" data-unit-tool="place">Place</button>
+                  <button class="unit-tool-button" type="button" data-unit-tool="edit">Edit</button>
+                </div>
+                <select id="editor-unit-side" aria-label="Unit side">
+                  <option value="mongol">Mongol</option>
+                  <option value="chinese">Chinese</option>
+                  <option value="persian">Persian</option>
+                </select>
+                <select id="editor-unit-type" aria-label="Unit type">
+                  <option value="horse_archer">Horse Archers</option>
+                  <option value="chinese_cavalry">Chinese Cavalry</option>
+                  <option value="chinese_militia">Chinese Militia</option>
+                  <option value="mongol_lancer">Mongol Lancers</option>
+                  <option value="infantry">Infantry</option>
+                  <option value="horde">Horde</option>
+                  <option value="camp">Camp</option>
+                  <option value="herd">Herd</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </article>
       </section>
 
       <section id="faction-status-bar" class="faction-status-bar" aria-label="Active faction status">
@@ -230,33 +271,46 @@
           </dialog>
           <div id="play-details-bar" class="play-details-bar" aria-label="Play details">
             <section class="unit-inspector" aria-label="Unit inspector">
-              <h2>Unit</h2>
-              <dl class="status-list">
+              <h2>Unit Inspector</h2>
+              <dl class="status-list unit-inspector-list">
                 <div>
                   <dt>Name</dt>
-                  <dd id="unit-name">None</dd>
+                  <dd>
+                    <span id="unit-name" class="inspector-read">None</span>
+                    <input id="unit-name-input" class="inspector-edit" type="text" autocomplete="off" spellcheck="false">
+                  </dd>
                 </div>
                 <div>
-                  <dt>HP</dt>
-                  <dd id="unit-hp">-</dd>
+                  <dt>Type</dt>
+                  <dd>
+                    <span id="unit-type" class="inspector-read">-</span>
+                    <select id="unit-type-input" class="inspector-edit" aria-label="Unit type"></select>
+                  </dd>
                 </div>
                 <div>
-                  <dt>Attack</dt>
-                  <dd id="unit-attack">-</dd>
+                  <dt>HP/RDY</dt>
+                  <dd class="unit-condition-pair">
+                    <span class="unit-condition-label">HP</span>
+                    <span id="unit-hp" class="inspector-read">-</span>
+                    <input id="unit-hp-input" class="inspector-edit" type="number" min="0" step="1">
+                    <span class="unit-condition-label">RDY</span>
+                    <span id="unit-readiness" class="inspector-read">-</span>
+                    <input id="unit-readiness-input" class="inspector-edit" type="number" min="0" max="100" step="1">
+                  </dd>
                 </div>
                 <div>
-                  <dt>Defense</dt>
-                  <dd id="unit-defense">-</dd>
-                </div>
-                <div>
-                  <dt>Readiness</dt>
-                  <dd id="unit-readiness">-</dd>
-                </div>
-                <div>
-                  <dt>Move</dt>
-                  <dd id="unit-move">-</dd>
+                  <dt>Stance</dt>
+                  <dd>
+                    <span id="unit-stance" class="inspector-read">-</span>
+                    <select id="unit-stance-input" class="inspector-edit" aria-label="Unit stance"></select>
+                  </dd>
                 </div>
               </dl>
+              <div class="unit-derived-stats" hidden>
+                <span id="unit-attack">-</span>
+                <span id="unit-defense">-</span>
+                <span id="unit-move">-</span>
+              </div>
               <dl id="unit-resources" class="status-list unit-resources" hidden>
                 <div>
                   <dt>Population</dt>

@@ -597,14 +597,25 @@ test("scenario controls sit above the shared map", async ({ page }) => {
   await page.getByRole("button", { name: "Scenario Edit" }).click();
 
   await expect(page.locator("#scenario-controls")).toBeVisible();
-  await expect(page.locator("#play-controls")).toBeHidden();
+  await expect(page.locator("#play-controls")).toBeVisible();
+  await expect(page.locator("#end-turn-button")).toBeDisabled();
   await expect(page.locator(".map-section")).toBeVisible();
+  const isMobileLayout = await page.evaluate(() => window.innerWidth <= 820);
+  if (isMobileLayout) {
+    await expect(page.locator("#play-details-bar")).toBeHidden();
+  } else {
+    await expect(page.locator("#play-details-bar")).toBeVisible();
+  }
 
   const layout = await page.evaluate(() => {
     const topbar = document.querySelector("#scenario-controls").getBoundingClientRect();
+    const sidebar = document.querySelector("#play-controls").getBoundingClientRect();
     const map = document.querySelector(".map-section").getBoundingClientRect();
     return {
       topbarBottom: topbar.bottom,
+      sidebarRight: sidebar.right,
+      sidebarBottom: sidebar.bottom,
+      mapLeft: map.left,
       mapTop: map.top,
       mapWidth: map.width,
       viewportWidth: window.innerWidth,
@@ -613,7 +624,13 @@ test("scenario controls sit above the shared map", async ({ page }) => {
   });
 
   expect(layout.mapTop).toBeGreaterThanOrEqual(layout.topbarBottom - 1);
-  expect(layout.mapWidth).toBeGreaterThan(layout.viewportWidth * 0.95);
+  if (layout.viewportWidth > 820) {
+    expect(layout.mapLeft).toBeGreaterThanOrEqual(layout.sidebarRight - 1);
+    expect(layout.mapWidth).toBeGreaterThan(layout.viewportWidth * 0.6);
+  } else {
+    expect(layout.mapTop).toBeGreaterThanOrEqual(layout.sidebarBottom - 1);
+    expect(layout.mapWidth).toBeGreaterThan(layout.viewportWidth * 0.95);
+  }
   expect(layout.scrollWidth).toBeLessThanOrEqual(layout.viewportWidth);
 });
 
@@ -735,6 +752,7 @@ test("clicking inactive units inspects without enabling actions", async ({ page,
 
   await page.mouse.click(point.x, point.y);
   await expect(page.locator("#unit-name")).toHaveText("Chinese Cavalry");
+  await expect(page.locator("#unit-type")).toHaveText("Chinese Cavalry");
   await expect(page.locator(".sidebar-selection-readout")).toHaveText("Chinese Cavalry");
   await expect.poll(() => page.evaluate(() => ({
     selectedUnitId: currentMap.game.selectedUnitId,
@@ -864,12 +882,12 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   await rosterItems.first().click();
 
   await expect(page.locator(".sidebar-selection-readout")).toHaveText("Mongol Horse Archers");
+  await expect(page.locator(".unit-inspector h2")).toHaveText("Unit Inspector");
   await expect(page.locator("#unit-name")).toHaveText("Mongol Horse Archers");
-  await expect(page.locator("#unit-hp")).toHaveText("10/10");
-  await expect(page.locator("#unit-attack")).toHaveText("4");
-  await expect(page.locator("#unit-defense")).toHaveText("3");
-  await expect(page.locator("#unit-readiness")).toHaveText("100/100");
-  await expect(page.locator("#unit-move")).toHaveText("4/4");
+  await expect(page.locator("#unit-type")).toHaveText("Horse Archers");
+  await expect(page.locator("#unit-hp")).toHaveText("10");
+  await expect(page.locator("#unit-readiness")).toHaveText("100");
+  await expect(page.locator("#unit-stance")).toHaveText("Feigned Retreat");
   await expect(page.evaluate(() => [
     unitHpReadinessColor({ readiness: 100, maxReadiness: 100 }),
     unitHpReadinessColor({ readiness: 65, maxReadiness: 100 }),
@@ -991,7 +1009,7 @@ test("horde inspector shows resource counters", async ({ page, isMobile }) => {
   await openPlayMode(page);
 
   await page.locator(".unit-roster-item").filter({ hasText: "Mongol Horde" }).click();
-  await expect(page.locator("#unit-name")).toHaveText("Mongol Horde");
+  await expect(page.locator("#unit-type")).toHaveText("Horde");
   await expect(page.locator("#unit-resources")).toBeVisible();
   await expect(page.locator("#unit-population")).toHaveText("4");
   await expect(page.locator("#unit-metal")).toHaveText("4");
@@ -1322,7 +1340,7 @@ test("play context menu exposes unit actions", async ({ page, isMobile }) => {
   await expect(page.locator("#context-menu")).toBeVisible();
   await expect(page.locator("#context-menu [data-action='select-unit']")).toHaveText("Select");
   await page.locator("#context-menu [data-action='select-unit']").click();
-  await expect(page.locator("#unit-name")).not.toHaveText("None");
+  await expect(page.locator("#unit-type")).not.toHaveText("-");
 
   const movePoint = await page.evaluate(() => {
     const selectedId = currentMap.game.selectedUnitId;
@@ -1383,7 +1401,9 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect(page.getByRole("button", { name: "Save Scenario" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Load Scenario" })).toBeVisible();
   await page.getByRole("button", { name: "New Scenario" }).click();
-  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(page.locator("#play-controls")).toBeVisible();
+  await expect(page.locator("#play-details-bar")).toBeVisible();
+  await expect(page.locator("#end-turn-button")).toBeDisabled();
 
   const hexPoint = async (coord) => page.evaluate(({ q, r }) => {
     const panel = mapPanel.getBoundingClientRect();
@@ -1412,16 +1432,18 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
     };
   }, { first, second });
 
-  await expect(page.locator("#editor-mode")).toHaveValue("terrain");
+  await page.getByRole("button", { name: "Terrain", exact: true }).click();
+  await expect(page.locator("#editor-edge-feature")).toHaveValue("terrain");
   await expect(page.locator("#terrain-palette")).toBeVisible();
   await expect(page.locator("#editor-edge-feature")).toBeHidden();
-  await expect(page.locator("#editor-unit-type")).toBeHidden();
+  await expect(page.locator("#edge-feature-choices")).toBeHidden();
+  await expect(page.locator("#editor-unit-type")).toBeVisible();
+  await expect(page.locator('[data-scenario-region="terrain"]')).toHaveClass(/is-active/);
 
-  await page.locator("#editor-mode").selectOption("edges");
+  await page.getByRole("button", { name: "Edges" }).click();
+  await expect(page.locator("#edge-feature-choices")).toBeVisible();
   await expect(page.locator("#terrain-palette")).toBeHidden();
-  await expect(page.locator("#editor-edge-feature")).toBeVisible();
-
-  await page.locator("#editor-edge-feature").selectOption("road");
+  await page.getByRole("button", { name: "Road" }).click();
   let point = await edgePoint({ q: 2, r: 2 }, { q: 3, r: 2 });
   await page.mouse.click(point.x, point.y);
   await expect.poll(() => page.evaluate(() => currentMap.roads.length)).toBe(1);
@@ -1430,14 +1452,14 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect.poll(() => page.evaluate(() => currentMap.roads.length)).toBe(0);
   await expect(page.locator("#undo-button")).toBeDisabled();
 
-  await page.locator("#editor-edge-feature").selectOption("river");
+  await page.getByRole("button", { name: "River" }).click();
   point = await edgePoint({ q: 2, r: 2 }, { q: 3, r: 2 });
   await page.mouse.click(point.x, point.y);
   await expect.poll(() => page.evaluate(() => currentMap.edges.length)).toBe(1);
   await page.mouse.click(point.x, point.y);
   await expect.poll(() => page.evaluate(() => currentMap.edges.length)).toBe(0);
 
-  await page.locator("#editor-mode").selectOption("units");
+  await page.getByRole("button", { name: "Units", exact: true }).click();
   await expect(page.locator("#editor-unit-type")).toBeVisible();
   await expect(page.locator("#editor-unit-side")).toBeVisible();
   await page.locator("#editor-unit-type").selectOption("horde");
@@ -1453,6 +1475,7 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect.poll(() => page.evaluate(() => currentMap.units[0].population)).toBe(4);
   await expect.poll(() => page.evaluate(() => currentMap.units[0].metal)).toBe(4);
   await expect.poll(() => page.evaluate(() => currentMap.units[0].horses)).toBe(12);
+  point = await hexPoint({ q: 3, r: 3 });
   await page.mouse.click(point.x, point.y);
   await expect.poll(() => page.evaluate(() => currentMap.units.length)).toBe(0);
 
@@ -1463,6 +1486,43 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect.poll(() => page.evaluate(() => currentMap.units[0].kind)).toBe("herd");
   await expect.poll(() => page.evaluate(() => currentMap.units[0].move)).toBe(3);
   await expect.poll(() => page.evaluate(() => currentMap.factions.map((faction) => faction.key))).toEqual(["mongol", "chinese"]);
+
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(page.locator("#editor-unit-type")).toBeHidden();
+  await page.mouse.click(point.x, point.y);
+  await expect(page.locator("#play-details-bar")).toBeVisible();
+  await expect(page.locator(".unit-inspector")).toHaveClass(/is-editing/);
+  await expect(page.locator("#unit-name")).toBeHidden();
+  await expect(page.locator("#unit-name-input")).toBeVisible();
+  await expect(page.locator("#unit-type")).toBeHidden();
+  await expect(page.locator("#unit-type-input")).toHaveValue("herd");
+  await page.locator("#unit-name-input").fill("Forward Herd");
+  await page.locator("#unit-name-input").dispatchEvent("change");
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].name)).toBe("Forward Herd");
+  await page.locator("#unit-readiness-input").fill("42");
+  await page.locator("#unit-readiness-input").dispatchEvent("change");
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].readiness)).toBe(42);
+  await page.locator("#unit-type-input").selectOption("chinese_militia");
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].kind)).toBe("chinese_militia");
+  await expect(page.locator("#unit-type-input")).toHaveValue("chinese_militia");
+  await page.locator("#unit-hp-input").fill("7");
+  await page.locator("#unit-hp-input").dispatchEvent("change");
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].hp)).toBe(7);
+  await page.locator(".unit-roster-item").first().click();
+  await expect(page.locator(".unit-inspector")).toHaveClass(/is-editing/);
+  await expect.poll(() => page.evaluate(() => currentMap.game.selectedUnitId)).toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate(() => editorUnitMoveHexes().length)).toBeGreaterThan(0);
+  const movePoint = await hexPoint({ q: 20, r: 3 });
+  await page.mouse.click(movePoint.x, movePoint.y);
+  await expect.poll(() => page.evaluate(() => ({ q: currentMap.units[0].q, r: currentMap.units[0].r }))).toEqual({ q: 20, r: 3 });
+  await page.evaluate(() => {
+    currentMap.hexes.find((hex) => hex.q === 21 && hex.r === 3).terrain = "lake";
+    currentMap.hexes.find((hex) => hex.q === 21 && hex.r === 3).labels = [];
+    drawMap();
+  });
+  const lakePoint = await hexPoint({ q: 21, r: 3 });
+  await page.mouse.click(lakePoint.x, lakePoint.y);
+  await expect.poll(() => page.evaluate(() => ({ q: currentMap.units[0].q, r: currentMap.units[0].r }))).toEqual({ q: 20, r: 3 });
 
   await page.evaluate(() => {
     currentMap.factions = [{ id: 2, key: "chinese", name: "Chinese", color: "#c93632" }];
