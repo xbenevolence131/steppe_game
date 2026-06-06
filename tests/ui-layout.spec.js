@@ -7,7 +7,7 @@ test.describe.configure({ mode: "serial" });
 async function openPlayMode(page) {
   await page.goto("/");
   await page.getByRole("button", { name: "Play" }).click();
-  await expect(page.locator(".unit-roster-item")).toHaveCount(8);
+  await expect(page.locator(".unit-roster-item")).toHaveCount(9);
 }
 
 function steppeEnginePath() {
@@ -205,6 +205,21 @@ test("movement can pass through friendly units without stacking", async ({ isMob
   });
   expect(moveToFriendly.status).not.toBe(0);
   expect(JSON.parse(moveToFriendly.stdout).ok).toBe(false);
+});
+
+test("default sandbox includes Chinese militia stats", async ({ isMobile }) => {
+  test.skip(isMobile, "engine unit defaults are covered once on desktop");
+
+  const state = runEngineOutputJson(["game-new"]);
+  const militia = state.units.find((unit) => unit.kind === "chinese_militia");
+  expect(militia).toEqual(expect.objectContaining({
+    faction: "chinese",
+    attack: 2,
+    defense: 2,
+    move: 2,
+    projectsZoc: true,
+    respectsZoc: true,
+  }));
 });
 
 test("combat uses unit stats terrain defense and retaliation", async ({ isMobile }) => {
@@ -824,7 +839,7 @@ test("unit counters use sprite glyph zoom bands", async ({ page, isMobile }) => 
   await openPlayMode(page);
   await expect.poll(() => page.evaluate(() => unitSpriteSheetReady)).toBe(true);
   await expect(page.evaluate(() => {
-    const kinds = ["infantry", "horde", "herd", "horse_archer", "chinese_cavalry", "mongol_lancer", "camp"];
+    const kinds = ["infantry", "horde", "herd", "horse_archer", "chinese_cavalry", "chinese_militia", "mongol_lancer", "camp"];
     const medium = unitSpriteZoomLevels.find((level) => level.key === "medium");
     return {
       levels: unitSpriteZoomLevels.map((level) => level.key),
@@ -1269,7 +1284,7 @@ test("mobile play mode keeps the map usable below the unit roster", async ({ pag
 
   await expect(page.locator("#faction-status-bar")).toBeVisible();
   await expect(page.locator("#play-details-bar")).toBeHidden();
-  await expect(page.locator(".unit-roster-item")).toHaveCount(8);
+  await expect(page.locator(".unit-roster-item")).toHaveCount(9);
 
   const layout = await page.evaluate(() => {
     const sidebar = document.querySelector("#play-controls").getBoundingClientRect();
@@ -1361,9 +1376,9 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect.poll(() => page.evaluate(() => currentMap.units[0].move)).toBe(3);
   await expect.poll(() => page.evaluate(() => currentMap.units[0].projectsZoc)).toBe(true);
   await expect.poll(() => page.evaluate(() => currentMap.units[0].respectsZoc)).toBe(true);
-  await expect.poll(() => page.evaluate(() => currentMap.units[0].population)).toBe(0);
-  await expect.poll(() => page.evaluate(() => currentMap.units[0].metal)).toBe(0);
-  await expect.poll(() => page.evaluate(() => currentMap.units[0].horses)).toBe(0);
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].population)).toBe(4);
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].metal)).toBe(4);
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].horses)).toBe(12);
   await page.mouse.click(point.x, point.y);
   await expect.poll(() => page.evaluate(() => currentMap.units.length)).toBe(0);
 

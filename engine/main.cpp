@@ -41,6 +41,7 @@ int main(int argc, char** argv) {
     }
 
     try {
+        steppe::game::load_unit_types();
         const std::string command = argv[1];
         if (command == "generate") {
             steppe::print_generated_map(steppe::parse_generate_args(argc, argv));

@@ -217,6 +217,26 @@ const factionCount = 2;
 const factionTurnOrder = ["mongol", "chinese", "persian"].slice(0, factionCount);
 
 const unitTypeDefaults = {};
+const unitDisplayKindNames = {
+  horse_archer: "Horse Archers",
+  chinese_cavalry: "Cavalry",
+  chinese_militia: "Militia",
+  mongol_lancer: "Lancers",
+  infantry: "Infantry",
+  horde: "Horde",
+  herd: "Herd",
+  camp: "Camp",
+};
+const unitKindLabels = {
+  camp: "Camp",
+  herd: "Herd",
+  horse_archer: "Horse Archers",
+  chinese_cavalry: "Chinese Cavalry",
+  chinese_militia: "Chinese Militia",
+  mongol_lancer: "Mongol Lancers",
+  infantry: "Infantry",
+  horde: "Horde",
+};
 const fallbackUnitDefaults = {
   hp: 1,
   attack: 0,
@@ -239,6 +259,7 @@ const unitSpriteColumns = {
   herd: "herd",
   horse_archer: "horse_archer",
   chinese_cavalry: "chinese_cavalry",
+  chinese_militia: "chinese_militia",
   mongol_lancer: "mongol_lancer",
   camp: "camp",
 };
@@ -268,6 +289,11 @@ const bitmapUnitSpriteSources = {
     small: "/unit-sprites/heavy_cavalry_48.png",
     medium: "/unit-sprites/heavy_cavalry_96.png",
     large: "/unit-sprites/heavy_cavalry_128.png",
+  },
+  chinese_militia: {
+    small: "/unit-sprites/militia_48.png",
+    medium: "/unit-sprites/militia_96.png",
+    large: "/unit-sprites/militia_128.png",
   },
   horse_archer: {
     small: "/unit-sprites/horse_archer_48.png",
@@ -928,14 +954,36 @@ function editorUnitDefaultsFor(kind) {
   return defaults;
 }
 
+function unitKindLabelForKind(kind) {
+  return unitKindLabels[kind] || kind || "Unit";
+}
+
+function populateEditorUnitTypeOptions(kinds) {
+  const previous = editorUnitTypeSelect.value;
+  editorUnitTypeSelect.replaceChildren();
+  for (const kind of kinds) {
+    const option = document.createElement("option");
+    option.value = kind;
+    option.textContent = unitKindLabelForKind(kind);
+    editorUnitTypeSelect.appendChild(option);
+  }
+  if (kinds.includes(previous)) {
+    editorUnitTypeSelect.value = previous;
+  } else if (kinds.length > 0) {
+    editorUnitTypeSelect.value = kinds[0];
+  }
+}
+
 async function loadUnitTypeDefaults() {
   const metadata = await postAppCommand({ type: "unit_defaults" });
   if (!metadata || typeof metadata !== "object" || !metadata.units || typeof metadata.units !== "object") {
     throw new Error("Engine unit metadata response is invalid.");
   }
-  for (const [kind, defaults] of Object.entries(metadata.units)) {
+  const entries = Object.entries(metadata.units);
+  for (const [kind, defaults] of entries) {
     unitTypeDefaults[kind] = normalizeUnitDefault(defaults);
   }
+  populateEditorUnitTypeOptions(entries.map(([kind]) => kind));
 }
 
 function normalizeUnit(unit, index) {
@@ -1345,28 +1393,12 @@ const contextActionDefinitions = [
 
 function unitDisplayName(unit) {
   const faction = factions[unit.faction] || factions.mongol;
-  const kindNames = {
-    horse_archer: "Horse Archers",
-    chinese_cavalry: "Cavalry",
-    mongol_lancer: "Lancers",
-    infantry: "Infantry",
-    horde: "Horde",
-  };
-  const kind = kindNames[unit.kind] || unit.kind;
+  const kind = unitDisplayKindNames[unit.kind] || unit.kind;
   return `${faction.name} ${kind}`;
 }
 
 function unitKindLabel(unit) {
-  const kindNames = {
-    camp: "Camp",
-    herd: "Herd",
-    horse_archer: "Horse Archers",
-    chinese_cavalry: "Chinese Cavalry",
-    mongol_lancer: "Mongol Lancers",
-    infantry: "Infantry",
-    horde: "Horde",
-  };
-  return kindNames[unit.kind] || unit.kind || "Unit";
+  return unitKindLabelForKind(unit.kind);
 }
 
 function syncUnitRoster() {

@@ -20,8 +20,10 @@ Each Generate click sends a seed and parameters to the C++ engine. Terrain, hydr
 
 - `engine/` contains the authoritative C++17 generator, JSON serialization, CLI wrapper, and long-running local daemon.
 - `game/` contains the game-facing state layer and command handling for the shared strategic map.
+- `data/unit_types.csv` is the authoritative unit-type table loaded by the C++ game layer at startup.
 - `proxy/` contains the raw Node.js HTTP server that serves the browser and forwards commands to the daemon.
 - `public/` contains the browser UI for map inspection, scenario editing, and play controls.
+- `scripts/` contains local utility scripts, including bitmap unit sprite generation from reference silhouettes.
 - `tests/` contains Playwright coverage for layout, editor behavior, and generated-map invariants.
 
 ## Build
@@ -40,3 +42,11 @@ npm start
 ```
 
 Then open `http://localhost:3000`.
+
+## Unit Sprites
+
+Generate transparent bitmap unit sprites from a black-silhouette reference PNG:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\generate-unit-sprites.ps1 -Reference public\reference\militia.png -Name militia
+```

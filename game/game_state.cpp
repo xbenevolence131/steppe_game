@@ -4,6 +4,8 @@
 #include <cctype>
 #include <cmath>
 #include <deque>
+#include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -142,20 +144,54 @@ const char* unit_kind_to_string(UnitKind kind) {
         case UnitKind::HorseArcher: return "horse_archer";
         case UnitKind::ChineseCavalry: return "chinese_cavalry";
         case UnitKind::MongolLancer: return "mongol_lancer";
+        case UnitKind::ChineseMilitia: return "chinese_militia";
         case UnitKind::Infantry: return "infantry";
         case UnitKind::Horde: return "horde";
     }
     return "horse_archer";
 }
 
+bool try_unit_kind_from_string(const std::string& kind, UnitKind& out) {
+    if (kind == "camp") {
+        out = UnitKind::Camp;
+        return true;
+    }
+    if (kind == "herd") {
+        out = UnitKind::Herd;
+        return true;
+    }
+    if (kind == "horse_archer" || kind == "cavalry") {
+        out = UnitKind::HorseArcher;
+        return true;
+    }
+    if (kind == "chinese_cavalry") {
+        out = UnitKind::ChineseCavalry;
+        return true;
+    }
+    if (kind == "mongol_lancer") {
+        out = UnitKind::MongolLancer;
+        return true;
+    }
+    if (kind == "chinese_militia") {
+        out = UnitKind::ChineseMilitia;
+        return true;
+    }
+    if (kind == "infantry") {
+        out = UnitKind::Infantry;
+        return true;
+    }
+    if (kind == "horde") {
+        out = UnitKind::Horde;
+        return true;
+    }
+    return false;
+}
+
 UnitKind unit_kind_from_string(const std::string& kind) {
-    if (kind == "camp") return UnitKind::Camp;
-    if (kind == "herd") return UnitKind::Herd;
-    if (kind == "horse_archer" || kind == "cavalry") return UnitKind::HorseArcher;
-    if (kind == "chinese_cavalry") return UnitKind::ChineseCavalry;
-    if (kind == "mongol_lancer") return UnitKind::MongolLancer;
-    if (kind == "infantry") return UnitKind::Infantry;
-    if (kind == "horde") return UnitKind::Horde;
+    UnitKind parsed = UnitKind::HorseArcher;
+    if (try_unit_kind_from_string(kind, parsed)) {
+        return parsed;
+    }
     return UnitKind::HorseArcher;
 }
 
@@ -174,6 +210,83 @@ UnitStance unit_stance_from_string(const std::string& stance) {
     return UnitStance::Default;
 }
 
+std::string trim_copy(const std::string& text) {
+    std::size_t first = 0;
+    while (first < text.size() && std::isspace(static_cast<unsigned char>(text[first]))) {
+        ++first;
+    }
+    std::size_t last = text.size();
+    while (last > first && std::isspace(static_cast<unsigned char>(text[last - 1]))) {
+        --last;
+    }
+    return text.substr(first, last - first);
+}
+
+std::vector<std::string> split_simple(const std::string& text, char delimiter) {
+    std::vector<std::string> parts;
+    std::stringstream input(text);
+    std::string part;
+    while (std::getline(input, part, delimiter)) {
+        parts.push_back(trim_copy(part));
+    }
+    if (!text.empty() && text.back() == delimiter) {
+        parts.push_back("");
+    }
+    return parts;
+}
+
+std::string strip_csv_comment(const std::string& line) {
+    const std::size_t comment = line.find('#');
+    return comment == std::string::npos ? line : line.substr(0, comment);
+}
+
+int parse_int_field(const std::string& value, const std::string& column, int line_number) {
+    try {
+        std::size_t consumed = 0;
+        const int parsed = std::stoi(value, &consumed);
+        if (consumed != value.size()) {
+            throw std::invalid_argument("trailing characters");
+        }
+        return parsed;
+    } catch (...) {
+        throw std::runtime_error("invalid integer in unit_types.csv line "
+            + std::to_string(line_number) + " column " + column + ": " + value);
+    }
+}
+
+bool parse_bool_field(const std::string& value, const std::string& column, int line_number) {
+    if (value == "true" || value == "1") {
+        return true;
+    }
+    if (value == "false" || value == "0") {
+        return false;
+    }
+    throw std::runtime_error("invalid boolean in unit_types.csv line "
+        + std::to_string(line_number) + " column " + column + ": " + value);
+}
+
+std::vector<UnitStance> parse_legal_stances_field(const std::string& value, int line_number) {
+    std::vector<UnitStance> stances;
+    for (const std::string& stance_key : split_simple(value, ';')) {
+        if (stance_key.empty()) {
+            continue;
+        }
+        const UnitStance stance = unit_stance_from_string(stance_key);
+        if (unit_stance_to_string(stance) != stance_key) {
+            throw std::runtime_error("invalid stance in unit_types.csv line "
+                + std::to_string(line_number) + ": " + stance_key);
+        }
+        if (std::find(stances.begin(), stances.end(), stance) == stances.end()) {
+            stances.push_back(stance);
+        }
+    }
+    if (stances.empty()) {
+        throw std::runtime_error("unit_types.csv line " + std::to_string(line_number)
+            + " must define at least one legal stance");
+    }
+    return stances;
+}
+
 Clan clan_for_owner(OwnerId owner) {
     if (owner == mongol_owner) {
         return {mongol_owner, "mongol", "Mongol", "#2368c4"};
@@ -187,107 +300,207 @@ Clan clan_for_owner(OwnerId owner) {
     return {neutral_owner, "neutral", "Neutral", "#777777"};
 }
 
-int default_hp(UnitKind kind) {
-    if (kind == UnitKind::HorseArcher
-        || kind == UnitKind::ChineseCavalry
-        || kind == UnitKind::MongolLancer
-        || kind == UnitKind::Infantry
-        || kind == UnitKind::Horde) {
-        return 10;
+struct UnitTypeTable {
+    std::vector<UnitKind> order;
+    std::map<UnitKind, UnitDefaults> defaults;
+};
+
+std::vector<UnitKind> required_unit_kinds() {
+    return {
+        UnitKind::Camp,
+        UnitKind::Herd,
+        UnitKind::HorseArcher,
+        UnitKind::ChineseCavalry,
+        UnitKind::MongolLancer,
+        UnitKind::ChineseMilitia,
+        UnitKind::Infantry,
+        UnitKind::Horde,
+    };
+}
+
+std::vector<std::string> unit_type_csv_candidates() {
+    std::vector<std::string> candidates;
+    if (const char* env_path = std::getenv("STEPPE_UNIT_TYPES_CSV")) {
+        if (*env_path != '\0') {
+            candidates.push_back(env_path);
+        }
     }
-    return 1;
+    candidates.push_back("data/unit_types.csv");
+    candidates.push_back("../data/unit_types.csv");
+    candidates.push_back("../../data/unit_types.csv");
+    return candidates;
+}
+
+std::string unit_type_csv_path() {
+    for (const std::string& candidate : unit_type_csv_candidates()) {
+        std::ifstream input(candidate);
+        if (input.good()) {
+            return candidate;
+        }
+    }
+    throw std::runtime_error("could not find authoritative unit type data file data/unit_types.csv");
+}
+
+UnitDefaults parse_unit_type_row(const std::vector<std::string>& cells, int line_number) {
+    if (cells.size() != 14) {
+        throw std::runtime_error("unit_types.csv line " + std::to_string(line_number)
+            + " must have 14 columns");
+    }
+    UnitKind kind = UnitKind::HorseArcher;
+    if (!try_unit_kind_from_string(cells[0], kind) || cells[0] == "cavalry") {
+        throw std::runtime_error("unknown unit kind in unit_types.csv line "
+            + std::to_string(line_number) + ": " + cells[0]);
+    }
+
+    UnitDefaults defaults;
+    defaults.kind = kind;
+    defaults.hp = parse_int_field(cells[1], "hp", line_number);
+    defaults.attack = parse_int_field(cells[2], "attack", line_number);
+    defaults.defense = parse_int_field(cells[3], "defense", line_number);
+    defaults.readiness_damage = parse_int_field(cells[4], "readiness_damage", line_number);
+    defaults.readiness = parse_int_field(cells[5], "readiness", line_number);
+    defaults.move = parse_int_field(cells[6], "move", line_number);
+    defaults.projects_zoc = parse_bool_field(cells[7], "projects_zoc", line_number);
+    defaults.respects_zoc = parse_bool_field(cells[8], "respects_zoc", line_number);
+    defaults.stance = unit_stance_from_string(cells[9]);
+    if (unit_stance_to_string(defaults.stance) != cells[9]) {
+        throw std::runtime_error("invalid default stance in unit_types.csv line "
+            + std::to_string(line_number) + ": " + cells[9]);
+    }
+    defaults.legal_stances = parse_legal_stances_field(cells[10], line_number);
+    defaults.population = parse_int_field(cells[11], "population", line_number);
+    defaults.metal = parse_int_field(cells[12], "metal", line_number);
+    defaults.horses = parse_int_field(cells[13], "horses", line_number);
+
+    if (defaults.hp < 1 || defaults.defense < 1 || defaults.attack < 0
+        || defaults.readiness_damage < 0 || defaults.readiness < 1 || defaults.move < 0
+        || defaults.population < 0 || defaults.metal < 0 || defaults.horses < 0) {
+        throw std::runtime_error("invalid negative or zero unit stat in unit_types.csv line "
+            + std::to_string(line_number));
+    }
+    if (std::find(defaults.legal_stances.begin(), defaults.legal_stances.end(), defaults.stance)
+        == defaults.legal_stances.end()) {
+        throw std::runtime_error("default stance must be listed in legal stances in unit_types.csv line "
+            + std::to_string(line_number));
+    }
+    return defaults;
+}
+
+UnitTypeTable parse_unit_type_table(const std::string& path) {
+    std::ifstream input(path);
+    if (!input.good()) {
+        throw std::runtime_error("could not open unit type data file: " + path);
+    }
+
+    const std::vector<std::string> expected_header = {
+        "kind",
+        "hp",
+        "attack",
+        "defense",
+        "readiness_damage",
+        "readiness",
+        "move",
+        "projects_zoc",
+        "respects_zoc",
+        "default_stance",
+        "legal_stances",
+        "population",
+        "metal",
+        "horses",
+    };
+
+    UnitTypeTable table;
+    std::string line;
+    bool saw_header = false;
+    int line_number = 0;
+    while (std::getline(input, line)) {
+        ++line_number;
+        const std::string clean = trim_copy(strip_csv_comment(line));
+        if (clean.empty()) {
+            continue;
+        }
+        const std::vector<std::string> cells = split_simple(clean, ',');
+        if (!saw_header) {
+            if (cells != expected_header) {
+                throw std::runtime_error("unit_types.csv header does not match expected schema");
+            }
+            saw_header = true;
+            continue;
+        }
+
+        UnitDefaults defaults = parse_unit_type_row(cells, line_number);
+        if (table.defaults.find(defaults.kind) != table.defaults.end()) {
+            throw std::runtime_error("duplicate unit kind in unit_types.csv: "
+                + std::string(unit_kind_to_string(defaults.kind)));
+        }
+        table.order.push_back(defaults.kind);
+        table.defaults[defaults.kind] = std::move(defaults);
+    }
+
+    if (!saw_header) {
+        throw std::runtime_error("unit_types.csv is empty");
+    }
+    for (const UnitKind kind : required_unit_kinds()) {
+        if (table.defaults.find(kind) == table.defaults.end()) {
+            throw std::runtime_error("unit_types.csv is missing unit kind: "
+                + std::string(unit_kind_to_string(kind)));
+        }
+    }
+    return table;
+}
+
+const UnitTypeTable& unit_type_table() {
+    static const UnitTypeTable table = parse_unit_type_table(unit_type_csv_path());
+    return table;
+}
+
+const UnitDefaults& unit_type_defaults(UnitKind kind) {
+    const UnitTypeTable& table = unit_type_table();
+    const auto found = table.defaults.find(kind);
+    if (found == table.defaults.end()) {
+        throw std::runtime_error("unit type data missing kind: " + std::string(unit_kind_to_string(kind)));
+    }
+    return found->second;
+}
+
+int default_hp(UnitKind kind) {
+    return unit_type_defaults(kind).hp;
 }
 
 int default_move(UnitKind kind) {
-    if (kind == UnitKind::Herd) {
-        return 3;
-    }
-    if (kind == UnitKind::HorseArcher) {
-        return 4;
-    }
-    if (kind == UnitKind::ChineseCavalry) {
-        return 3;
-    }
-    if (kind == UnitKind::MongolLancer) {
-        return 4;
-    }
-    if (kind == UnitKind::Infantry) {
-        return 2;
-    }
-    if (kind == UnitKind::Horde) {
-        return 3;
-    }
-    return 0;
+    return unit_type_defaults(kind).move;
 }
 
 int default_attack(UnitKind kind) {
-    if (kind == UnitKind::HorseArcher) {
-        return 4;
-    }
-    if (kind == UnitKind::ChineseCavalry || kind == UnitKind::MongolLancer) {
-        return 5;
-    }
-    if (kind == UnitKind::Infantry) {
-        return 3;
-    }
-    if (kind == UnitKind::Horde) {
-        return 2;
-    }
-    return 0;
+    return unit_type_defaults(kind).attack;
 }
 
 int default_defense(UnitKind kind) {
-    if (kind == UnitKind::HorseArcher) {
-        return 3;
-    }
-    if (kind == UnitKind::ChineseCavalry || kind == UnitKind::MongolLancer) {
-        return 3;
-    }
-    if (kind == UnitKind::Infantry) {
-        return 5;
-    }
-    if (kind == UnitKind::Horde) {
-        return 3;
-    }
-    return 1;
+    return unit_type_defaults(kind).defense;
 }
 
 int default_readiness_damage(UnitKind kind) {
-    if (kind == UnitKind::HorseArcher) {
-        return 25;
-    }
-    if (kind == UnitKind::Infantry) {
-        return 10;
-    }
-    if (kind == UnitKind::ChineseCavalry || kind == UnitKind::MongolLancer) {
-        return 10;
-    }
-    return 0;
+    return unit_type_defaults(kind).readiness_damage;
+}
+
+int default_readiness(UnitKind kind) {
+    return unit_type_defaults(kind).readiness;
 }
 
 bool default_projects_zoc(UnitKind kind) {
-    return kind == UnitKind::HorseArcher
-        || kind == UnitKind::ChineseCavalry
-        || kind == UnitKind::MongolLancer
-        || kind == UnitKind::Infantry
-        || kind == UnitKind::Horde;
+    return unit_type_defaults(kind).projects_zoc;
 }
 
 bool default_respects_zoc(UnitKind kind) {
-    return kind == UnitKind::ChineseCavalry
-        || kind == UnitKind::Infantry
-        || kind == UnitKind::Horde;
+    return unit_type_defaults(kind).respects_zoc;
 }
 
 UnitStance default_stance(UnitKind kind) {
-    return kind == UnitKind::HorseArcher ? UnitStance::FeignedRetreat : UnitStance::Default;
+    return unit_type_defaults(kind).stance;
 }
 
 std::vector<UnitStance> legal_stances(UnitKind kind) {
-    if (kind == UnitKind::HorseArcher) {
-        return {UnitStance::FeignedRetreat, UnitStance::Defensive};
-    }
-    return {UnitStance::Default};
+    return unit_type_defaults(kind).legal_stances;
 }
 
 bool legal_stance(UnitKind kind, UnitStance stance) {
@@ -313,7 +526,6 @@ constexpr int create_horse_archers_horses_cost = 3;
 constexpr int create_mongol_lancers_population_cost = 1;
 constexpr int create_mongol_lancers_metal_cost = 2;
 constexpr int create_mongol_lancers_horses_cost = 3;
-constexpr int default_max_readiness = 100;
 constexpr int minimum_combat_readiness_percent = 25;
 constexpr int full_move_readiness_cost = 8;
 constexpr int max_move_readiness_cost = 8;
@@ -570,6 +782,10 @@ const char* unit_kind_key(UnitKind kind) {
     return unit_kind_to_string(kind);
 }
 
+void load_unit_types() {
+    (void)unit_type_table();
+}
+
 const char* unit_stance_key(UnitStance stance) {
     return unit_stance_to_string(stance);
 }
@@ -579,31 +795,11 @@ UnitStance unit_stance_from_key(const std::string& stance) {
 }
 
 std::vector<UnitKind> unit_kinds() {
-    return {
-        UnitKind::Camp,
-        UnitKind::Herd,
-        UnitKind::HorseArcher,
-        UnitKind::ChineseCavalry,
-        UnitKind::MongolLancer,
-        UnitKind::Infantry,
-        UnitKind::Horde,
-    };
+    return unit_type_table().order;
 }
 
 UnitDefaults unit_defaults(UnitKind kind) {
-    UnitDefaults defaults;
-    defaults.kind = kind;
-    defaults.stance = default_stance(kind);
-    defaults.legal_stances = legal_stances(kind);
-    defaults.hp = default_hp(kind);
-    defaults.attack = default_attack(kind);
-    defaults.defense = default_defense(kind);
-    defaults.readiness_damage = default_readiness_damage(kind);
-    defaults.readiness = default_max_readiness;
-    defaults.move = default_move(kind);
-    defaults.projects_zoc = default_projects_zoc(kind);
-    defaults.respects_zoc = default_respects_zoc(kind);
-    return defaults;
+    return unit_type_defaults(kind);
 }
 
 SettlementKind settlement_kind_from_town(const Town& town) {
@@ -749,15 +945,14 @@ GameState create_default_play_sandbox(int width, int height, int faction_count) 
         unit.attack = default_attack(unit.kind);
         unit.defense = default_defense(unit.kind);
         unit.readiness_damage = default_readiness_damage(unit.kind);
-        unit.max_readiness = default_max_readiness;
+        unit.max_readiness = default_readiness(unit.kind);
         unit.readiness = unit.max_readiness;
         unit.scaled_move = to_scaled_move(default_move(unit.kind));
         unit.remaining_scaled_move = unit.scaled_move;
-        if (unit.kind == UnitKind::Horde) {
-            unit.population = 4;
-            unit.metal = 4;
-            unit.horses = 12;
-        }
+        const UnitDefaults defaults = unit_defaults(unit.kind);
+        unit.population = defaults.population;
+        unit.metal = defaults.metal;
+        unit.horses = defaults.horses;
         unit.projects_zoc = default_projects_zoc(kind);
         unit.respects_zoc = default_respects_zoc(kind);
         return unit;
@@ -772,6 +967,7 @@ GameState create_default_play_sandbox(int width, int height, int faction_count) 
         make_unit(6, chinese_owner, UnitKind::Infantry, {8, 7}),
         make_unit(7, chinese_owner, UnitKind::Horde, {8, 6}),
         make_unit(8, chinese_owner, UnitKind::Herd, {9, 6}),
+        make_unit(9, chinese_owner, UnitKind::ChineseMilitia, {7, 7}),
     };
     return state;
 }
@@ -1468,7 +1664,7 @@ bool detach_herd(GameState& state, int unit_id, int horses, Coord destination) {
     herd.attack = default_attack(herd.kind);
     herd.defense = default_defense(herd.kind);
     herd.readiness_damage = default_readiness_damage(herd.kind);
-    herd.max_readiness = default_max_readiness;
+    herd.max_readiness = default_readiness(herd.kind);
     herd.readiness = herd.max_readiness;
     herd.scaled_move = to_scaled_move(default_move(herd.kind));
     herd.remaining_scaled_move = herd.scaled_move;
@@ -1568,7 +1764,7 @@ bool create_unit_from_horde(GameState& state, int unit_id, UnitKind kind, Coord 
     created.attack = default_attack(created.kind);
     created.defense = default_defense(created.kind);
     created.readiness_damage = default_readiness_damage(created.kind);
-    created.max_readiness = default_max_readiness;
+    created.max_readiness = default_readiness(created.kind);
     created.readiness = created.max_readiness;
     created.scaled_move = to_scaled_move(default_move(created.kind));
     created.remaining_scaled_move = created.scaled_move;
@@ -2072,19 +2268,20 @@ GameState parse_game_state_json(const std::string& json) {
         if (!legal_stance(unit.kind, unit.stance)) {
             unit.stance = default_stance(unit.kind);
         }
+        const UnitDefaults defaults = unit_defaults(unit.kind);
         unit.coord = {int_field(unit_json, "q", 0), int_field(unit_json, "r", 0)};
-        unit.hp = int_field(unit_json, "hp", default_hp(unit.kind));
+        unit.hp = int_field(unit_json, "hp", defaults.hp);
         unit.max_hp = int_field(unit_json, "maxHp", unit.hp);
-        unit.attack = std::max(0, int_field(unit_json, "attack", default_attack(unit.kind)));
-        unit.defense = std::max(1, int_field(unit_json, "defense", default_defense(unit.kind)));
-        unit.readiness_damage = std::max(0, int_field(unit_json, "readinessDamage", default_readiness_damage(unit.kind)));
-        unit.max_readiness = std::max(1, int_field(unit_json, "maxReadiness", default_max_readiness));
+        unit.attack = std::max(0, int_field(unit_json, "attack", defaults.attack));
+        unit.defense = std::max(1, int_field(unit_json, "defense", defaults.defense));
+        unit.readiness_damage = std::max(0, int_field(unit_json, "readinessDamage", defaults.readiness_damage));
+        unit.max_readiness = std::max(1, int_field(unit_json, "maxReadiness", defaults.readiness));
         unit.readiness = std::max(0, std::min(int_field(unit_json, "readiness", unit.max_readiness), unit.max_readiness));
-        const int default_scaled_move = to_scaled_move(default_move(unit.kind));
+        const int default_scaled_move = to_scaled_move(defaults.move);
         unit.scaled_move = int_field(
             unit_json,
             "scaledMove",
-            to_scaled_move(number_field(unit_json, "refMove", number_field(unit_json, "move", default_move(unit.kind))))
+            to_scaled_move(number_field(unit_json, "refMove", number_field(unit_json, "move", defaults.move)))
         );
         unit.remaining_scaled_move = int_field(
             unit_json,
@@ -2095,15 +2292,15 @@ GameState parse_game_state_json(const std::string& json) {
             unit.scaled_move = default_scaled_move;
         }
         unit.remaining_scaled_move = std::max(0, std::min(unit.remaining_scaled_move, unit.scaled_move));
-        unit.population = std::max(0, int_field(unit_json, "population", 0));
-        unit.metal = std::max(0, int_field(unit_json, "metal", 0));
-        unit.horses = std::max(0, int_field(unit_json, "horses", 0));
+        unit.population = std::max(0, int_field(unit_json, "population", defaults.population));
+        unit.metal = std::max(0, int_field(unit_json, "metal", defaults.metal));
+        unit.horses = std::max(0, int_field(unit_json, "horses", defaults.horses));
         unit.move_done = bool_field(unit_json, "moveDone", false);
         unit.moved_this_turn = bool_field(unit_json, "movedThisTurn", false);
         unit.combat_done = bool_field(unit_json, "combatDone", false);
         unit.contacted_enemy_this_turn = bool_field(unit_json, "contactedEnemyThisTurn", false);
-        unit.projects_zoc = bool_field(unit_json, "projectsZoc", default_projects_zoc(unit.kind));
-        unit.respects_zoc = bool_field(unit_json, "respectsZoc", default_respects_zoc(unit.kind));
+        unit.projects_zoc = bool_field(unit_json, "projectsZoc", defaults.projects_zoc);
+        unit.respects_zoc = bool_field(unit_json, "respectsZoc", defaults.respects_zoc);
         state.units.push_back(unit);
     }
 

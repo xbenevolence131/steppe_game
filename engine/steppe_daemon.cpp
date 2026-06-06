@@ -570,6 +570,7 @@ void serve_client(SOCKET client) {
 
 int main(int argc, char** argv) {
     try {
+        steppe::game::load_unit_types();
         const WinsockSession winsock;
         const int port = parse_port(argc, argv);
         SOCKET server = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);

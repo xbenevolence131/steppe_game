@@ -60,6 +60,7 @@ enum class UnitKind {
     HorseArcher,
     ChineseCavalry,
     MongolLancer,
+    ChineseMilitia,
     Infantry,
     Horde,
 };
@@ -256,6 +257,7 @@ PastureState initial_pasture_for_terrain(Terrain terrain);
 GameState game_state_from_generated_map(const GeneratedMap& generated);
 GameState generate_game_state(const GenerateArgs& args);
 GameState create_default_play_sandbox(int width = 10, int height = 10, int faction_count = 2);
+void load_unit_types();
 const char* unit_kind_key(UnitKind kind);
 const char* unit_stance_key(UnitStance stance);
 UnitStance unit_stance_from_key(const std::string& stance);
