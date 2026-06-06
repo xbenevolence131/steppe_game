@@ -1294,7 +1294,7 @@ function drawWalls(walls) {
       continue;
     }
     ctx.strokeStyle = terrainStyles.wall.stroke;
-    ctx.lineWidth = 5 / viewport.scale;
+    ctx.lineWidth = 8.5 / viewport.scale;
     for (const edge of wall.edge_path) {
       const boundary = edgeBoundaryPoints(edge);
       if (!boundary) {
@@ -1307,7 +1307,7 @@ function drawWalls(walls) {
     }
 
     ctx.strokeStyle = terrainStyles.wall.highlight;
-    ctx.lineWidth = 1.5 / viewport.scale;
+    ctx.lineWidth = 2 / viewport.scale;
     for (const edge of wall.edge_path) {
       const boundary = edgeBoundaryPoints(edge);
       if (!boundary) {
@@ -1973,8 +1973,8 @@ function drawMap() {
   }
 
   drawRoads(currentMap.roads);
-  drawRiverEdges(currentMap.edges);
   drawWalls(currentMap.walls);
+  drawRiverEdges(currentMap.edges);
   drawWallGates(currentMap.wall_gates);
   drawCrossings(currentMap.crossings);
   drawMapMarkers(currentMap.river_sources, terrainStyles.river.source, 5);
