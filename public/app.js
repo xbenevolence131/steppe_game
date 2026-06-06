@@ -1094,6 +1094,10 @@ function appendCombatSide(parent, title, combatant, mode, preview) {
   appendCombatRow(side, "RDY factor", `${combatant.readinessPercent}%`);
   appendCombatRow(side, "Retreat", retreatStatusForSide(preview, mode));
   appendCombatRow(side, "Terrain", mode === "attack" ? "-" : `${combatant.terrainDefensePercent}%`);
+  appendCombatRow(side, "Flanking", mode === "defense"
+    ? (preview.defenderFlanked ? `${preview.flankingDefensePercent}% defense` : "NO")
+    : "-"
+  );
   appendCombatRow(side, "Score", String(mode === "attack" ? combatant.effectiveAttack : combatant.effectiveDefense));
   appendCombatRow(side, mode === "attack" ? "Damage" : "Taken", String(
     mode === "attack" ? combatant.damageDealt : combatant.damageTaken
@@ -1114,7 +1118,14 @@ function renderCombatPreview(preview, clientX, clientY) {
   combatPreview.replaceChildren();
   const title = document.createElement("div");
   title.className = "combat-preview-title";
-  title.textContent = preview.defenderRetaliates ? "Combat Preview" : "Combat Preview - No Retaliation";
+  const titleParts = ["Combat Preview"];
+  if (preview.defenderFlanked) {
+    titleParts.push("Flanked");
+  }
+  if (!preview.defenderRetaliates) {
+    titleParts.push("No Retaliation");
+  }
+  title.textContent = titleParts.join(" - ");
   const summary = document.createElement("div");
   summary.className = "combat-preview-summary";
   appendCombatRow(summary, "A-D", String(preview.baseDifferential));

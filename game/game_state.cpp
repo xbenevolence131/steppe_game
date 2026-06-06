@@ -288,6 +288,7 @@ constexpr int full_move_readiness_cost = 8;
 constexpr int max_move_readiness_cost = 8;
 constexpr int attack_readiness_cost = 10;
 constexpr int turn_readiness_recovery = 25;
+constexpr int flanked_defense_percent = 75;
 
 constexpr int move_scale = 8;
 
@@ -838,15 +839,16 @@ int effective_attack_score(const Unit& attacker) {
     return std::max(0, attacker.attack);
 }
 
-int effective_defense_score(const GameState& state, const Unit& defender) {
+int effective_defense_score(const GameState& state, const Unit& defender, int flanking_defense_percent = 100) {
     const int defense_strength = std::max(1, defender.defense);
     if (defense_strength <= 0) {
         return 0;
     }
-    return std::max(
+    const int terrain_adjusted = std::max(
         1,
         (defense_strength * terrain_defense_percent_at(state, defender.coord) + 99) / 100
     );
+    return std::max(1, (terrain_adjusted * std::max(0, flanking_defense_percent) + 50) / 100);
 }
 
 double hp_ratio(const Unit& attacker, const Unit& defender) {
@@ -1001,6 +1003,19 @@ bool enemy_unit_adjacent_to(const GameState& state, const Unit& source) {
     }) != state.units.end();
 }
 
+bool defender_flanked_by_separated_unit(const GameState& state, const Unit& attacker, const Unit& defender) {
+    return std::find_if(state.units.begin(), state.units.end(), [&](const Unit& unit) {
+        return unit.id != attacker.id
+            && unit.id != defender.id
+            && unit.owner == attacker.owner
+            && unit.hp > 0
+            && can_attack(unit.kind)
+            && unit.attack > 0
+            && adjacent(unit.coord, defender.coord)
+            && !adjacent(unit.coord, attacker.coord);
+    }) != state.units.end();
+}
+
 std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id) {
     std::vector<ReachableHex> reachable;
     const Unit* unit = find_unit(state, unit_id);
@@ -1092,7 +1107,7 @@ std::vector<AttackableUnit> attackable_units(const GameState& state, int unit_id
     return attackable;
 }
 
-CombatantPreview combatant_preview(const GameState& state, const Unit& unit) {
+CombatantPreview combatant_preview(const GameState& state, const Unit& unit, int flanking_defense_percent = 100) {
     CombatantPreview preview;
     preview.unit_id = unit.id;
     preview.owner = unit.owner;
@@ -1110,8 +1125,9 @@ CombatantPreview combatant_preview(const GameState& state, const Unit& unit) {
     preview.max_readiness = std::max(1, unit.max_readiness);
     preview.readiness_percent = readiness_percent(unit);
     preview.terrain_defense_percent = terrain_defense_percent_at(state, unit.coord);
+    preview.flanking_defense_percent = flanking_defense_percent;
     preview.effective_attack = effective_attack_score(unit);
-    preview.effective_defense = effective_defense_score(state, unit);
+    preview.effective_defense = effective_defense_score(state, unit, flanking_defense_percent);
     preview.result_hp = unit.hp;
     preview.result_readiness = clamped_readiness(unit);
     return preview;
@@ -1139,7 +1155,9 @@ CombatPreview combat_preview(const GameState& state, int attacker_id, int defend
 
     preview.valid = true;
     preview.attacker = combatant_preview(state, *attacker);
-    preview.defender = combatant_preview(state, *defender);
+    preview.defender_flanked = defender_flanked_by_separated_unit(state, *attacker, *defender);
+    preview.flanking_defense_percent = preview.defender_flanked ? flanked_defense_percent : 100;
+    preview.defender = combatant_preview(state, *defender, preview.flanking_defense_percent);
 
     preview.base_differential = preview.attacker.effective_attack - preview.defender.effective_defense;
     const double hp_multiplier = hp_ratio(*attacker, *defender);
@@ -1684,6 +1702,7 @@ void print_combatant_preview_json(const CombatantPreview& preview, std::ostream&
         << ",\"maxReadiness\":" << preview.max_readiness
         << ",\"readinessPercent\":" << preview.readiness_percent
         << ",\"terrainDefensePercent\":" << preview.terrain_defense_percent
+        << ",\"flankingDefensePercent\":" << preview.flanking_defense_percent
         << ",\"effectiveAttack\":" << preview.effective_attack
         << ",\"effectiveDefense\":" << preview.effective_defense
         << ",\"damageDealt\":" << preview.damage_dealt
@@ -1699,6 +1718,8 @@ void print_combatant_preview_json(const CombatantPreview& preview, std::ostream&
 void print_combat_preview_json(const CombatPreview& preview, std::ostream& out) {
     out << "{\"valid\":" << (preview.valid ? "true" : "false")
         << ",\"defenderRetaliates\":" << (preview.defender_retaliates ? "true" : "false")
+        << ",\"defenderFlanked\":" << (preview.defender_flanked ? "true" : "false")
+        << ",\"flankingDefensePercent\":" << preview.flanking_defense_percent
         << ",\"baseDifferential\":" << preview.base_differential
         << ",\"hpRatioPercent\":" << preview.hp_ratio_percent
         << ",\"readinessRatioPercent\":" << preview.readiness_ratio_percent

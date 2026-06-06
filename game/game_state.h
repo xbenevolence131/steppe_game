@@ -160,6 +160,7 @@ struct CombatantPreview {
     int max_readiness = 100;
     int readiness_percent = 100;
     int terrain_defense_percent = 100;
+    int flanking_defense_percent = 100;
     int effective_attack = 0;
     int effective_defense = 0;
     int damage_dealt = 0;
@@ -174,6 +175,8 @@ struct CombatantPreview {
 struct CombatPreview {
     bool valid = false;
     bool defender_retaliates = false;
+    bool defender_flanked = false;
+    int flanking_defense_percent = 100;
     int base_differential = 0;
     int hp_ratio_percent = 100;
     int readiness_ratio_percent = 100;

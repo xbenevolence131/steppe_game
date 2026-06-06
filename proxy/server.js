@@ -413,6 +413,7 @@ function serveStatic(req, res) {
     res.writeHead(200, {
       "Content-Type": mimeTypes[path.extname(filePath)] || "application/octet-stream",
       "Content-Length": content.length,
+      "Cache-Control": "no-store",
     });
     res.end(content);
   });

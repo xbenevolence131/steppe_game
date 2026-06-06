@@ -104,6 +104,32 @@ function combatGameState(defenderTerrain = "grassland") {
   };
 }
 
+function flankingCombatGameState(flankerCoord) {
+  const hexes = [];
+  for (let r = 1; r <= 3; r += 1) {
+    for (let q = 1; q <= 3; q += 1) {
+      hexes.push({ q, r, terrain: "grassland", labels: [] });
+    }
+  }
+  return {
+    width: 3,
+    height: 3,
+    seed: 0,
+    hexes,
+    units: [
+      { id: 1, owner: 1, faction: "mongol", kind: "horse_archer", q: 1, r: 1, hp: 10, maxHp: 10, remainingScaledMove: 32 },
+      { id: 2, owner: 2, faction: "chinese", kind: "horse_archer", q: 2, r: 1, hp: 10, maxHp: 10, remainingScaledMove: 32 },
+      { id: 3, owner: 1, faction: "mongol", kind: "infantry", q: flankerCoord.q, r: flankerCoord.r, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+    ],
+    game: {
+      round: 1,
+      activeFactionIndex: 0,
+      selectedUnitId: 1,
+      turnOrder: [1, 2],
+    },
+  };
+}
+
 test("movement can pass through friendly units without stacking", async ({ isMobile }) => {
   test.skip(isMobile, "engine rule is covered once on desktop");
 
@@ -193,6 +219,25 @@ test("combat uses unit stats terrain defense and retaliation", async ({ isMobile
   expect(hordePreview.attacker.baseReadinessDamage).toBe(0);
   expect(hordePreview.attacker.readinessDamageDealt).toBe(0);
   expect(hordePreview.defender.resultReadiness).toBe(100);
+});
+
+test("combat flanking requires separated support", async ({ isMobile }) => {
+  test.skip(isMobile, "engine combat rule is covered once on desktop");
+
+  const separated = runEngineJson(["game-combat-preview", "--attacker", "1", "--defender", "2"], flankingCombatGameState({ q: 3, r: 1 }));
+  expect(separated.valid).toBe(true);
+  expect(separated.defenderFlanked).toBe(true);
+  expect(separated.flankingDefensePercent).toBe(75);
+  expect(separated.defender.flankingDefensePercent).toBe(75);
+  expect(separated.defender.effectiveDefense).toBe(2);
+  expect(separated.baseDifferential).toBe(2);
+
+  const adjacentToAttacker = runEngineJson(["game-combat-preview", "--attacker", "1", "--defender", "2"], flankingCombatGameState({ q: 1, r: 2 }));
+  expect(adjacentToAttacker.valid).toBe(true);
+  expect(adjacentToAttacker.defenderFlanked).toBe(false);
+  expect(adjacentToAttacker.flankingDefensePercent).toBe(100);
+  expect(adjacentToAttacker.defender.effectiveDefense).toBe(3);
+  expect(adjacentToAttacker.baseDifferential).toBe(1);
 });
 
 test("combat damage tapers against worn down targets", async ({ isMobile }) => {
