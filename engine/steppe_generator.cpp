@@ -3188,11 +3188,30 @@ std::optional<Coord> find_wall_sw_center_south_mountain_anchor(
     const std::vector<Town>& towns,
     const std::map<Coord, Terrain, decltype(coord_less)*>& terrain_by_coord
 ) {
-    const int min_q = std::max(1, static_cast<int>(std::round(static_cast<double>(args.width) * 0.36)));
-    const int max_q = std::min(args.width, static_cast<int>(std::round(static_cast<double>(args.width) * 0.64)));
+    std::vector<Town> chinese_towns;
+    std::copy_if(towns.begin(), towns.end(), std::back_inserter(chinese_towns), [](const Town& town) {
+        return town.feature == "chinese_town";
+    });
+    const int western_chinese_q = chinese_towns.empty()
+        ? args.width
+        : std::min_element(chinese_towns.begin(), chinese_towns.end(), [](const Town& first, const Town& second) {
+            if (first.coord.q != second.coord.q) {
+                return first.coord.q < second.coord.q;
+            }
+            return first.coord.r < second.coord.r;
+        })->coord.q;
+    const int min_q = std::max(1, static_cast<int>(std::round(static_cast<double>(args.width) * 0.48)));
+    const int max_q = std::min({
+        args.width,
+        static_cast<int>(std::round(static_cast<double>(args.width) * 0.72)),
+        std::max(1, western_chinese_q - 6)
+    });
     const int min_r = std::max(1, static_cast<int>(std::round(static_cast<double>(args.height) * 0.54)));
     const int max_r = std::min(args.height, static_cast<int>(std::round(static_cast<double>(args.height) * 0.86)));
-    const double preferred_q = static_cast<double>(args.width) * 0.52;
+    const double preferred_q = std::max(
+        static_cast<double>(min_q),
+        std::min(static_cast<double>(args.width) * 0.64, static_cast<double>(western_chinese_q - 12))
+    );
     const double preferred_r = static_cast<double>(args.height) * 0.70;
 
     std::vector<Coord> candidates;
@@ -3340,32 +3359,13 @@ std::optional<Coord> find_wall_sw_mountain_valley_anchor(
     return mountain_candidates.front();
 }
 
-std::optional<Coord> find_wall_sw_anchor(
+std::optional<Coord> find_wall_sw_town_anchor(
     const GenerateArgs& args,
     const std::vector<Town>& towns,
-    const RiverNetwork& rivers,
     const std::vector<RiverEdge>& river_edges,
     const std::set<Coord, decltype(coord_less)*>& lake_hexes,
-    const std::set<Coord, decltype(coord_less)*>& valley_hexes,
-    const std::map<Coord, Terrain, decltype(coord_less)*>& terrain_by_coord,
-    bool* used_mountain_valley_anchor
+    const std::set<Coord, decltype(coord_less)*>& valley_hexes
 ) {
-    if (const std::optional<Coord> center_mountain_anchor = find_wall_sw_center_south_mountain_anchor(args, lake_hexes, towns, terrain_by_coord);
-        center_mountain_anchor.has_value()) {
-        if (used_mountain_valley_anchor != nullptr) {
-            *used_mountain_valley_anchor = true;
-        }
-        return center_mountain_anchor;
-    }
-
-    if (const std::optional<Coord> mountain_anchor = find_wall_sw_mountain_valley_anchor(args, rivers, lake_hexes, towns, terrain_by_coord);
-        mountain_anchor.has_value()) {
-        if (used_mountain_valley_anchor != nullptr) {
-            *used_mountain_valley_anchor = true;
-        }
-        return mountain_anchor;
-    }
-
     std::vector<Town> chinese_towns;
     std::copy_if(towns.begin(), towns.end(), std::back_inserter(chinese_towns), [](const Town& town) {
         return town.feature == "chinese_town";
@@ -3522,6 +3522,16 @@ struct WallRouteOptions {
     bool require_map_edge_terminal = false;
 };
 
+struct WallAccessMetrics {
+    bool blocks_chinese_towns = false;
+    int enclosed_passable_hexes = 0;
+};
+
+struct WallStartCandidate {
+    Coord coord;
+    bool mountain_anchor = false;
+};
+
 double wall_edge_mid_q(const BoundaryEdge& edge) {
     return (static_cast<double>(edge.edge.a.q) + static_cast<double>(edge.edge.b.q)) * 0.5;
 }
@@ -3558,14 +3568,14 @@ Coord wall_edge_mid_coord(const GenerateArgs& args, const BoundaryEdge& edge) {
     };
 }
 
-bool wall_blocks_outside_access_to_chinese_towns(
+WallAccessMetrics wall_access_metrics(
     const GenerateArgs& args,
     const std::vector<Town>& towns,
     const std::vector<RiverEdge>& wall_edges,
     const std::map<Coord, Terrain, decltype(coord_less)*>& terrain_by_coord
 ) {
     if (wall_edges.empty()) {
-        return false;
+        return {};
     }
 
     std::vector<Coord> chinese_towns;
@@ -3575,7 +3585,7 @@ bool wall_blocks_outside_access_to_chinese_towns(
         }
     }
     if (chinese_towns.empty()) {
-        return true;
+        return {true, 0};
     }
 
     std::set<RiverEdge, decltype(edge_less)*> wall_edge_set(edge_less);
@@ -3606,6 +3616,12 @@ bool wall_blocks_outside_access_to_chinese_towns(
             return coord_equal(coord, town);
         }) != chinese_towns.end();
     };
+    int passable_hexes = 0;
+    for (const auto& entry : terrain_by_coord) {
+        if (!blocks_hex(entry.first)) {
+            ++passable_hexes;
+        }
+    }
 
     std::queue<Coord> frontier;
     std::set<Coord, decltype(coord_less)*> visited(coord_less);
@@ -3624,11 +3640,12 @@ bool wall_blocks_outside_access_to_chinese_towns(
         add_outside_seed({1, r});
     }
 
+    bool reached_town = false;
     while (!frontier.empty()) {
         const Coord current = frontier.front();
         frontier.pop();
         if (reached_chinese_town(current)) {
-            return false;
+            reached_town = true;
         }
 
         for (int direction = 0; direction < 6; ++direction) {
@@ -3644,7 +3661,16 @@ bool wall_blocks_outside_access_to_chinese_towns(
         }
     }
 
-    return true;
+    return {!reached_town, std::max(0, passable_hexes - static_cast<int>(visited.size()))};
+}
+
+bool wall_blocks_outside_access_to_chinese_towns(
+    const GenerateArgs& args,
+    const std::vector<Town>& towns,
+    const std::vector<RiverEdge>& wall_edges,
+    const std::map<Coord, Terrain, decltype(coord_less)*>& terrain_by_coord
+) {
+    return wall_access_metrics(args, towns, wall_edges, terrain_by_coord).blocks_chinese_towns;
 }
 
 std::vector<RiverEdge> route_bowed_wall_edge_path(
@@ -3695,6 +3721,9 @@ std::vector<RiverEdge> route_bowed_wall_edge_path(
     const auto touches_left_edge = [&](const BoundaryEdge& edge) {
         return edge.edge.a.q == 1 || edge.edge.b.q == 1;
     };
+    const auto touches_bottom_edge = [&](const BoundaryEdge& edge) {
+        return edge.edge.a.r == args.height || edge.edge.b.r == args.height;
+    };
     const auto touches_right_edge = [&](const BoundaryEdge& edge) {
         return edge.edge.a.q == args.width || edge.edge.b.q == args.width;
     };
@@ -3720,14 +3749,17 @@ std::vector<RiverEdge> route_bowed_wall_edge_path(
                 continue;
             }
             if (options.require_map_edge_terminal) {
-                if (coord_equal(anchor, start) && !touches_left_edge(edge)) {
+                if (coord_equal(anchor, start) && !touches_left_edge(edge) && !touches_bottom_edge(edge)) {
                     continue;
                 }
                 if (coord_equal(anchor, end) && !touches_right_edge(edge)) {
                     continue;
                 }
+                const bool southwest_bottom_terminal = coord_equal(anchor, start) && touches_bottom_edge(edge);
                 const double row_drift = std::abs(wall_edge_mid_r(edge) - static_cast<double>(anchor.r));
-                const double max_row_drift = std::max(10.0, static_cast<double>(args.height) * 0.22);
+                const double max_row_drift = southwest_bottom_terminal
+                    ? std::max(10.0, static_cast<double>(args.height) * 0.42)
+                    : std::max(10.0, static_cast<double>(args.height) * 0.22);
                 if (row_drift > max_row_drift) {
                     continue;
                 }
@@ -3740,10 +3772,17 @@ std::vector<RiverEdge> route_bowed_wall_edge_path(
             const double terminal_bonus = touches_mountain(edge)
                 ? options.mountain_terminal_bonus
                 : options.map_edge_terminal_bonus;
+            const double left_edge_penalty = options.require_map_edge_terminal
+                && coord_equal(anchor, start)
+                && touches_left_edge(edge)
+                && !touches_bottom_edge(edge)
+                    ? 18.0
+                    : 0.0;
             const double score = distance
                 + lateral * 1.6
                 - projection * 0.18
                 + terminal_bonus
+                + left_edge_penalty
                 + unit_noise(args.seed, static_cast<std::uint32_t>(81800 + i * 193 + anchor.q * 389 + anchor.r * 733)) * 0.1;
             if (score < fallback_score) {
                 fallback_score = score;
@@ -3903,68 +3942,79 @@ std::vector<Wall> generate_walls(
         terrain_by_coord[hex.coord] = hex.terrain;
     }
 
-    bool used_mountain_valley_anchor = false;
-    const std::optional<Coord> start = find_wall_sw_anchor(
-        args,
-        towns,
-        rivers,
-        river_edges,
-        lake_hexes,
-        valley_hexes,
-        terrain_by_coord,
-        &used_mountain_valley_anchor
-    );
+    std::vector<WallStartCandidate> start_candidates;
+    const auto add_start_candidate = [&](const std::optional<Coord>& coord, bool mountain_anchor) {
+        if (!coord.has_value()) {
+            return;
+        }
+        const bool exists = std::find_if(start_candidates.begin(), start_candidates.end(), [&](const WallStartCandidate& candidate) {
+            return coord_equal(candidate.coord, coord.value());
+        }) != start_candidates.end();
+        if (!exists) {
+            start_candidates.push_back({coord.value(), mountain_anchor});
+        }
+    };
+    add_start_candidate(find_wall_sw_center_south_mountain_anchor(args, lake_hexes, towns, terrain_by_coord), true);
+    add_start_candidate(find_wall_sw_mountain_valley_anchor(args, rivers, lake_hexes, towns, terrain_by_coord), true);
+    add_start_candidate(find_wall_sw_town_anchor(args, towns, river_edges, lake_hexes, valley_hexes), false);
+
     const std::optional<Coord> end = find_wall_ne_anchor(args, towns, lake_hexes);
-    if (!start.has_value() || !end.has_value() || coord_equal(start.value(), end.value())) {
+    if (start_candidates.empty() || !end.has_value()) {
         return {};
     }
 
     const WallRouteOptions attempts[] = {
         {},
-        {1.2, 0.55, 1.0, -8.0, false},
         {1.45, 0.35, 2.5, -11.0, false},
-        {1.75, 0.15, 4.0, -13.0, false},
         {2.1, 0.0, 6.0, -16.0, false},
         {1.85, 0.0, 0.0, -20.0, true},
-        {2.25, 0.0, 0.0, -24.0, true},
     };
     std::vector<RiverEdge> fallback_path;
-    for (const WallRouteOptions& options : attempts) {
-        if (used_mountain_valley_anchor && options.require_map_edge_terminal) {
+    std::vector<RiverEdge> best_path;
+    int best_enclosed_hexes = std::numeric_limits<int>::max();
+    for (const WallStartCandidate& start : start_candidates) {
+        if (coord_equal(start.coord, end.value())) {
             continue;
         }
-        const std::vector<RiverEdge> edge_path = route_bowed_wall_edge_path(
-            args,
-            start.value(),
-            end.value(),
-            lake_hexes,
-            towns,
-            terrain_by_coord,
-            options
-        );
-        if (edge_path.empty()) {
-            continue;
-        }
-        if (fallback_path.empty()) {
-            fallback_path = edge_path;
-        }
-        if (wall_blocks_outside_access_to_chinese_towns(args, towns, edge_path, terrain_by_coord)) {
-            Wall wall;
-            wall.id = 1;
-            wall.feature = "great_wall";
-            wall.edge_path = edge_path;
-            return {wall};
+        for (const WallRouteOptions& options : attempts) {
+            const std::vector<RiverEdge> edge_path = route_bowed_wall_edge_path(
+                args,
+                start.coord,
+                end.value(),
+                lake_hexes,
+                towns,
+                terrain_by_coord,
+                options
+            );
+            if (edge_path.empty()) {
+                continue;
+            }
+            if (fallback_path.empty()) {
+                fallback_path = edge_path;
+            }
+            const WallAccessMetrics metrics = wall_access_metrics(args, towns, edge_path, terrain_by_coord);
+            if (!metrics.blocks_chinese_towns) {
+                continue;
+            }
+            if (best_path.empty()
+                || metrics.enclosed_passable_hexes < best_enclosed_hexes
+                || (metrics.enclosed_passable_hexes == best_enclosed_hexes && edge_path.size() < best_path.size())) {
+                best_path = edge_path;
+                best_enclosed_hexes = metrics.enclosed_passable_hexes;
+            }
+            break;
         }
     }
 
-    if (fallback_path.empty()) {
+    const std::vector<RiverEdge>& wall_path = best_path.empty() ? fallback_path : best_path;
+    if (wall_path.empty()) {
         return {};
     }
 
     Wall wall;
     wall.id = 1;
     wall.feature = "great_wall";
-    wall.edge_path = fallback_path;
+    wall.edge_path = wall_path;
     return {wall};
 }
 

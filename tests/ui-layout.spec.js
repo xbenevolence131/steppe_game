@@ -216,14 +216,75 @@ test("great wall avoids the southwest corner on southern access seeds", async ({
     const chineseRows = map.towns
       .filter((town) => town.feature === "chinese_town")
       .map((town) => town.r);
+    const coordKey = (coord) => `${coord.q},${coord.r}`;
+    const edgeKey = (edge) => {
+      const before = edge.a.r < edge.b.r || (edge.a.r === edge.b.r && edge.a.q <= edge.b.q);
+      const a = before ? edge.a : edge.b;
+      const b = before ? edge.b : edge.a;
+      return `${coordKey(a)}|${coordKey(b)}`;
+    };
+    const neighbor = (coord, direction) => {
+      const shiftedDown = ((coord.q - 1) % 2) === 1;
+      return [
+        { q: coord.q + 1, r: coord.r },
+        shiftedDown ? { q: coord.q + 1, r: coord.r + 1 } : { q: coord.q + 1, r: coord.r - 1 },
+        { q: coord.q, r: coord.r - 1 },
+        { q: coord.q - 1, r: coord.r },
+        shiftedDown ? { q: coord.q - 1, r: coord.r + 1 } : { q: coord.q - 1, r: coord.r - 1 },
+        { q: coord.q, r: coord.r + 1 },
+      ][direction];
+    };
+    const wallEdges = new Set(wall.edge_path.map(edgeKey));
+    const leftWallRows = wall.edge_path
+      .flatMap((edge) => [edge.a, edge.b].filter((coord) => coord.q === 1).map((coord) => coord.r));
+    const maxLeftSeedRow = leftWallRows.length > 0 ? Math.min(...leftWallRows) : map.height;
+    const blocked = (coord) => {
+      const value = terrain.get(coordKey(coord));
+      return value === "mountain" || value === "lake";
+    };
+    const frontier = [];
+    const visited = new Set();
+    const add = (coord) => {
+      const key = coordKey(coord);
+      if (coord.q < 1 || coord.q > map.width || coord.r < 1 || coord.r > map.height || blocked(coord) || visited.has(key)) {
+        return;
+      }
+      visited.add(key);
+      frontier.push(coord);
+    };
+    for (let q = 1; q <= map.width; q += 1) {
+      add({ q, r: 1 });
+    }
+    for (let r = 1; r <= maxLeftSeedRow; r += 1) {
+      add({ q: 1, r });
+    }
+    while (frontier.length > 0) {
+      const current = frontier.shift();
+      for (let direction = 0; direction < 6; direction += 1) {
+        const next = neighbor(current, direction);
+        if (next.q < 1 || next.q > map.width || next.r < 1 || next.r > map.height || blocked(next) || visited.has(coordKey(next))) {
+          continue;
+        }
+        if (wallEdges.has(edgeKey({ a: current, b: next }))) {
+          continue;
+        }
+        add(next);
+      }
+    }
+    const passableHexes = map.hexes.filter((hex) => !blocked(hex)).length;
+    const enclosedPassablePercent = ((passableHexes - visited.size) / passableHexes) * 100;
+    const leakedChineseTowns = map.towns
+      .filter((town) => town.feature === "chinese_town" && visited.has(coordKey(town)))
+      .map(coordKey);
 
     expect(wallSouthwestEdges).toHaveLength(0);
-    expect(firstEdgeTerrain).toContain("mountain");
+    expect(firstEdgeTerrain.includes("mountain") || firstEdge.a.r === map.height || firstEdge.b.r === map.height).toBe(true);
     expect(Math.min(firstEdge.a.q, firstEdge.b.q)).toBeGreaterThanOrEqual(40);
     expect(Math.max(firstEdge.a.q, firstEdge.b.q)).toBeLessThanOrEqual(80);
     expect(Math.min(...wallQs)).toBeGreaterThan(1);
-    expect(Math.max(...wallRows)).toBeLessThanOrEqual(72);
     expect(Math.max(...chineseRows)).toBeLessThanOrEqual(66);
+    expect(leakedChineseTowns).toEqual([]);
+    expect(enclosedPassablePercent).toBeLessThanOrEqual(30);
   }
 });
 
