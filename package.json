@@ -4,6 +4,7 @@
   "private": true,
   "description": "Prototype C++ engine and raw Node.js proxy for a steppe terrain generator.",
   "scripts": {
+    "launch": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/launch.ps1",
     "start": "node proxy/server.js",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed"
