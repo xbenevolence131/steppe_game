@@ -112,12 +112,18 @@ test("combat uses unit stats terrain defense and retaliation", async ({ isMobile
   expect(preview.retreatImpact).toBe("No retreat");
   expect(preview.attacker.damageDealt).toBe(3);
   expect(preview.attacker.damageTaken).toBe(2);
+  expect(preview.attacker.readinessDamageDealt).toBe(20);
+  expect(preview.attacker.readinessDamageTaken).toBe(30);
   expect(preview.attacker.resultHp).toBe(8);
+  expect(preview.attacker.resultReadiness).toBe(70);
   expect(preview.attacker.readiness).toBe(100);
   expect(preview.attacker.readinessPercent).toBe(100);
   expect(preview.defender.effectiveDefense).toBe(3);
+  expect(preview.defender.readinessDamageDealt).toBe(30);
+  expect(preview.defender.readinessDamageTaken).toBe(20);
   expect(preview.defender.damageTaken).toBe(3);
   expect(preview.defender.resultHp).toBe(7);
+  expect(preview.defender.resultReadiness).toBe(80);
 
   const grass = runEngineJson(["game-attack", "--attacker", "1", "--defender", "2"], combatGameState("grassland"));
   const grassAttacker = grass.units.find((unit) => unit.id === 1);
@@ -147,6 +153,31 @@ test("combat uses unit stats terrain defense and retaliation", async ({ isMobile
   expect(hill.ok).toBe(true);
   expect(hillAttacker.hp).toBe(8);
   expect(hillDefender.hp).toBe(8);
+});
+
+test("combat damage tapers against worn down targets", async ({ isMobile }) => {
+  test.skip(isMobile, "engine combat rule is covered once on desktop");
+
+  const wornState = combatGameState("grassland");
+  wornState.units[1].hp = 4;
+  wornState.units[1].readiness = 40;
+
+  const preview = runEngineJson(["game-combat-preview", "--attacker", "1", "--defender", "2"], wornState);
+  expect(preview.valid).toBe(true);
+  expect(preview.hpRatioPercent).toBe(250);
+  expect(preview.readinessRatioPercent).toBe(250);
+  expect(preview.crtIndex).toBe(6);
+  expect(preview.retreatOption).toBe("defender");
+  expect(preview.defender.damageTaken).toBe(2);
+  expect(preview.defender.resultHp).toBe(2);
+  expect(preview.defender.readinessDamageTaken).toBe(8);
+  expect(preview.defender.resultReadiness).toBe(32);
+
+  const resolved = runEngineJson(["game-attack", "--attacker", "1", "--defender", "2"], wornState);
+  const defender = resolved.units.find((unit) => unit.id === 2);
+  expect(resolved.ok).toBe(true);
+  expect(defender.hp).toBe(2);
+  expect(defender.readiness).toBe(32);
 });
 
 test("movement spends readiness in proportion to movement cost", async ({ isMobile }) => {
@@ -709,6 +740,8 @@ test("horde resource actions are unavailable next to enemies", async ({ page, is
   await expect(page.locator("#combat-preview")).toContainText("Retreat");
   await expect(page.locator("#combat-preview")).toContainText("No");
   await expect(page.locator("#combat-preview")).toContainText("Result");
+  await expect(page.locator("#combat-preview")).toContainText("RDY damage");
+  await expect(page.locator("#combat-preview")).toContainText("Result RDY");
   await page.mouse.click(result.x, result.y, { button: "right" });
   await expect(page.locator("#context-menu [data-action='detach-herd']")).toHaveCount(0);
   await expect(page.locator("#context-menu [data-action='create-horse-archers']")).toHaveCount(0);

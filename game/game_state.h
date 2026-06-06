@@ -145,7 +145,10 @@ struct CombatantPreview {
     int effective_defense = 0;
     int damage_dealt = 0;
     int damage_taken = 0;
+    int readiness_damage_dealt = 0;
+    int readiness_damage_taken = 0;
     int result_hp = 0;
+    int result_readiness = 100;
     bool destroyed = false;
 };
 

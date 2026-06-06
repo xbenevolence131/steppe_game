@@ -872,10 +872,14 @@ function appendCombatSide(parent, title, combatant, mode, preview) {
   appendCombatRow(side, mode === "attack" ? "Damage" : "Taken", String(
     mode === "attack" ? combatant.damageDealt : combatant.damageTaken
   ));
+  appendCombatRow(side, mode === "attack" ? "RDY damage" : "RDY taken", String(
+    mode === "attack" ? combatant.readinessDamageDealt : combatant.readinessDamageTaken
+  ));
 
   const result = document.createElement("div");
   result.className = "combat-preview-result";
   appendCombatRow(result, "Result", `${combatant.resultHp}/${combatant.maxHp}${combatant.destroyed ? " destroyed" : ""}`);
+  appendCombatRow(result, "Result RDY", `${combatant.resultReadiness}/${combatant.maxReadiness}`);
   side.appendChild(result);
   parent.appendChild(side);
 }

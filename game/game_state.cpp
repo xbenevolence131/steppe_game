@@ -836,6 +836,13 @@ CrtOutcome crt_outcome(int index) {
     return {0, 5, "defender"};
 }
 
+int scaled_damage_for_remaining(int base_damage, int current, int maximum) {
+    if (base_damage <= 0 || current <= 0 || maximum <= 0) {
+        return 0;
+    }
+    return std::max(1, (base_damage * current + maximum - 1) / maximum);
+}
+
 std::string readiness_impact_text(int readiness_ratio_percent) {
     if (readiness_ratio_percent >= 115) {
         return "Attacker readiness improves CRT";
@@ -1031,6 +1038,7 @@ CombatantPreview combatant_preview(const GameState& state, const Unit& unit) {
     preview.effective_attack = effective_attack_score(unit);
     preview.effective_defense = effective_defense_score(state, unit);
     preview.result_hp = unit.hp;
+    preview.result_readiness = clamped_readiness(unit);
     return preview;
 }
 
@@ -1072,15 +1080,26 @@ CombatPreview combat_preview(const GameState& state, int attacker_id, int defend
     preview.readiness_impact = readiness_impact_text(preview.readiness_ratio_percent);
     preview.retreat_impact = retreat_impact_text(preview.retreat_option);
 
-    preview.attacker.damage_dealt = outcome.defender_damage;
-    preview.defender.damage_taken = outcome.defender_damage;
-    preview.defender.result_hp = std::max(0, defender->hp - outcome.defender_damage);
+    const int defender_hp_damage = scaled_damage_for_remaining(outcome.defender_damage, defender->hp, defender->max_hp);
+    const int attacker_hp_damage = scaled_damage_for_remaining(outcome.attacker_damage, attacker->hp, attacker->max_hp);
+    const int defender_readiness_damage = scaled_damage_for_remaining(defense_readiness_cost, clamped_readiness(*defender), defender->max_readiness);
+    const int attacker_readiness_damage = scaled_damage_for_remaining(attack_readiness_cost, clamped_readiness(*attacker), attacker->max_readiness);
+
+    preview.attacker.damage_dealt = defender_hp_damage;
+    preview.defender.damage_taken = defender_hp_damage;
+    preview.defender.result_hp = std::max(0, defender->hp - defender_hp_damage);
+    preview.attacker.readiness_damage_dealt = defender_readiness_damage;
+    preview.defender.readiness_damage_taken = defender_readiness_damage;
+    preview.defender.result_readiness = std::max(0, clamped_readiness(*defender) - defender_readiness_damage);
     preview.defender.destroyed = preview.defender.result_hp <= 0;
 
-    preview.defender_retaliates = !preview.defender.destroyed && outcome.attacker_damage > 0;
-    preview.defender.damage_dealt = outcome.attacker_damage;
-    preview.attacker.damage_taken = outcome.attacker_damage;
-    preview.attacker.result_hp = std::max(0, attacker->hp - outcome.attacker_damage);
+    preview.defender_retaliates = !preview.defender.destroyed && attacker_hp_damage > 0;
+    preview.defender.damage_dealt = attacker_hp_damage;
+    preview.attacker.damage_taken = attacker_hp_damage;
+    preview.defender.readiness_damage_dealt = attacker_readiness_damage;
+    preview.attacker.readiness_damage_taken = attacker_readiness_damage;
+    preview.attacker.result_hp = std::max(0, attacker->hp - attacker_hp_damage);
+    preview.attacker.result_readiness = std::max(0, clamped_readiness(*attacker) - attacker_readiness_damage);
     preview.attacker.destroyed = preview.attacker.result_hp <= 0;
     return preview;
 }
@@ -1139,8 +1158,8 @@ bool attack_unit(GameState& state, int attacker_id, int defender_id) {
 
     defender->hp = preview.defender.result_hp;
     attacker->hp = preview.attacker.result_hp;
-    reduce_readiness(*attacker, attack_readiness_cost);
-    reduce_readiness(*defender, defense_readiness_cost);
+    defender->readiness = preview.defender.result_readiness;
+    attacker->readiness = preview.attacker.result_readiness;
     attacker = find_unit(state, attacker_id);
     if (attacker != nullptr) {
         attacker->remaining_scaled_move = 0;
@@ -1561,7 +1580,10 @@ void print_combatant_preview_json(const CombatantPreview& preview, std::ostream&
         << ",\"effectiveDefense\":" << preview.effective_defense
         << ",\"damageDealt\":" << preview.damage_dealt
         << ",\"damageTaken\":" << preview.damage_taken
+        << ",\"readinessDamageDealt\":" << preview.readiness_damage_dealt
+        << ",\"readinessDamageTaken\":" << preview.readiness_damage_taken
         << ",\"resultHp\":" << preview.result_hp
+        << ",\"resultReadiness\":" << preview.result_readiness
         << ",\"destroyed\":" << (preview.destroyed ? "true" : "false")
         << "}";
 }
