@@ -241,12 +241,19 @@ const unitSpriteZoomLevels = [
   { key: "large", pixelSize: 128, targetWidth: 20, targetHeight: 10, minFitMultiplier: 2 },
 ];
 const unitSpriteTintCache = new Map();
-const horseArcherSpriteSources = {
-  small: "/unit-sprites/horse_archer_48.png",
-  medium: "/unit-sprites/horse_archer_96.png",
-  large: "/unit-sprites/horse_archer_128.png",
+const bitmapUnitSpriteSources = {
+  infantry: {
+    small: "/unit-sprites/infantry_48.png",
+    medium: "/unit-sprites/infantry_96.png",
+    large: "/unit-sprites/infantry_128.png",
+  },
+  horse_archer: {
+    small: "/unit-sprites/horse_archer_48.png",
+    medium: "/unit-sprites/horse_archer_96.png",
+    large: "/unit-sprites/horse_archer_128.png",
+  },
 };
-const horseArcherSpriteImages = {};
+const bitmapUnitSpriteImages = {};
 let unitSpriteSheetReady = false;
 
 function terrainStyle(key) {
@@ -258,8 +265,9 @@ function terrainStyle(key) {
   };
 }
 
-function loadHorseArcherSprites() {
-  const entries = Object.entries(horseArcherSpriteSources);
+function loadBitmapUnitSprites() {
+  const entries = Object.entries(bitmapUnitSpriteSources)
+    .flatMap(([kind, levels]) => Object.entries(levels).map(([key, src]) => ({ kind, key, src })));
   if (entries.length === 0) {
     unitSpriteSheetReady = true;
     return;
@@ -276,12 +284,15 @@ function loadHorseArcherSprites() {
     }
   };
 
-  for (const [key, src] of entries) {
+  for (const { kind, key, src } of entries) {
     const image = new Image();
     image.onload = markLoaded;
     image.onerror = markLoaded;
     image.src = src;
-    horseArcherSpriteImages[key] = image;
+    if (!bitmapUnitSpriteImages[kind]) {
+      bitmapUnitSpriteImages[kind] = {};
+    }
+    bitmapUnitSpriteImages[kind][key] = image;
   }
 }
 
@@ -1794,8 +1805,9 @@ function tintedUnitSprite(kind, color, level) {
     return null;
   }
   spriteCtx.imageSmoothingEnabled = false;
-  if (normalizedKind === "horse_archer") {
-    const source = horseArcherSpriteImages[spriteLevel.key];
+  const bitmapSources = bitmapUnitSpriteImages[normalizedKind];
+  if (bitmapSources) {
+    const source = bitmapSources[spriteLevel.key];
     if (!unitSpriteSheetReady || !source || !source.complete || source.naturalWidth === 0) {
       return null;
     }
@@ -1826,7 +1838,7 @@ function unitCounterMetrics() {
     iconCenterX: dividerOffset * 0.5,
     hpX: dividerOffset + (width - dividerOffset) * 0.5,
     iconSize: Math.min(height * 0.94, dividerOffset * 0.9),
-    hpFont: height * 0.52,
+    hpFont: height * 0.42,
     cornerRadius: geometry.size * 0.18,
     strokeWidth: geometry.size * 0.1,
     selectedStrokeWidth: geometry.size * 0.17,
@@ -3256,5 +3268,5 @@ new ResizeObserver(() => {
 
 initializeTerrainPalette();
 syncModeControls();
-loadHorseArcherSprites();
+loadBitmapUnitSprites();
 createDefaultPlayScenario();
