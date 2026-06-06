@@ -17,11 +17,11 @@
 
     <main id="app-shell" class="app-shell is-intro">
       <section id="scenario-controls" class="scenario-topbar" aria-label="Scenario edit controls">
-        <article class="scenario-region" data-scenario-region="scenario">
-          <button class="scenario-region-rail is-active" type="button" data-scenario-activate="scenario" aria-pressed="true">Scenario</button>
+        <article class="scenario-region" data-scenario-region="session">
+          <button class="scenario-region-rail is-active" type="button" data-scenario-activate="session" aria-pressed="true">Session</button>
           <div class="scenario-region-body">
-            <button class="scenario-region-toggle" type="button" data-scenario-toggle="scenario" aria-expanded="true" aria-label="Collapse Scenario">-</button>
-            <div class="scenario-tool-panel" data-scenario-panel="scenario">
+            <button class="scenario-region-toggle" type="button" data-scenario-toggle="session" aria-expanded="true" aria-label="Collapse Session">-</button>
+            <div class="scenario-tool-panel session-tool-panel" data-scenario-panel="session">
               <div class="panel-actions">
                 <button id="generate-button" type="button">Generate</button>
                 <button id="blank-map-button" class="secondary" type="button">New Scenario</button>
@@ -29,28 +29,22 @@
                 <button id="load-button" class="secondary" type="button">Load Scenario</button>
                 <input id="load-file-input" class="hidden-file-input" type="file" accept="application/json,.json">
               </div>
-            </div>
-          </div>
-        </article>
-
-        <article class="scenario-region" data-scenario-region="parameters">
-          <button class="scenario-region-rail" type="button" data-scenario-activate="parameters" aria-pressed="false">Parameters</button>
-          <div class="scenario-region-body">
-            <button class="scenario-region-toggle" type="button" data-scenario-toggle="parameters" aria-expanded="true" aria-label="Collapse Parameters">-</button>
-            <div class="scenario-tool-panel" data-scenario-panel="parameters">
               <div class="field-grid parameters-grid">
-                <label>
-                  <span>Name</span>
+                <label class="scenario-name-field">
+                  <span>Scenario Name</span>
                   <input id="scenario-name" type="text" value="Untitled Scenario">
                 </label>
-                <label>
-                  <span>Width</span>
-                  <input id="map-width" type="number" min="1" max="120" value="120">
-                </label>
-                <label>
-                  <span>Height</span>
-                  <input id="map-height" type="number" min="1" max="80" value="80">
-                </label>
+                <div class="map-size-row" aria-label="Map size">
+                  <label>
+                    <span>Map Width</span>
+                    <input id="map-width" type="number" min="1" max="120" value="120">
+                  </label>
+                  <span class="map-size-separator">by</span>
+                  <label>
+                    <span>Map Height</span>
+                    <input id="map-height" type="number" min="1" max="80" value="80">
+                  </label>
+                </div>
                 <fieldset class="faction-selector" aria-label="Scenario factions">
                   <legend>Factions</legend>
                   <label><input class="scenario-faction-checkbox" type="checkbox" value="mongol" checked> Mongol</label>
@@ -167,7 +161,6 @@
                   <option value="mongol_lancer">Mongol Lancers</option>
                   <option value="infantry">Infantry</option>
                   <option value="horde">Horde</option>
-                  <option value="camp">Camp</option>
                   <option value="herd">Herd</option>
                 </select>
               </div>
@@ -207,10 +200,6 @@
             <h2>Clan</h2>
             <dl class="status-list">
               <div>
-                <dt>Camps</dt>
-                <dd id="camp-count">0</dd>
-              </div>
-              <div>
                 <dt>Herds</dt>
                 <dd id="herd-count">0</dd>
               </div>
@@ -236,7 +225,6 @@
 
         <section class="map-section" aria-label="Shared map view">
           <div class="map-toolbar" aria-label="Map view controls">
-            <button id="undo-button" class="secondary undo-button" type="button" aria-label="Undo" title="Undo" disabled>Undo</button>
             <button id="zoom-out-button" class="secondary icon-button" type="button" aria-label="Zoom out" title="Zoom out">-</button>
             <button id="zoom-in-button" class="secondary icon-button" type="button" aria-label="Zoom in" title="Zoom in">+</button>
             <button id="fit-button" class="secondary fit-button" type="button" aria-label="Fit map" title="Fit map">Fit</button>
@@ -287,8 +275,8 @@
                     <select id="unit-type-input" class="inspector-edit" aria-label="Unit type"></select>
                   </dd>
                 </div>
-                <div>
-                  <dt>HP/RDY</dt>
+                <div class="unit-status-row">
+                  <dt>Status</dt>
                   <dd class="unit-condition-pair">
                     <span class="unit-condition-label">HP</span>
                     <span id="unit-hp" class="inspector-read">-</span>
@@ -296,11 +284,7 @@
                     <span class="unit-condition-label">RDY</span>
                     <span id="unit-readiness" class="inspector-read">-</span>
                     <input id="unit-readiness-input" class="inspector-edit" type="number" min="0" max="100" step="1">
-                  </dd>
-                </div>
-                <div>
-                  <dt>Stance</dt>
-                  <dd>
+                    <span class="unit-condition-label">Stance</span>
                     <span id="unit-stance" class="inspector-read">-</span>
                     <select id="unit-stance-input" class="inspector-edit" aria-label="Unit stance"></select>
                   </dd>
@@ -311,45 +295,51 @@
                 <span id="unit-defense">-</span>
                 <span id="unit-move">-</span>
               </div>
-              <dl id="unit-resources" class="status-list unit-resources" hidden>
-                <div>
-                  <dt>Population</dt>
-                  <dd id="unit-population">0</dd>
-                </div>
-                <div>
-                  <dt>Metal</dt>
-                  <dd id="unit-metal">0</dd>
-                </div>
-                <div>
-                  <dt>Horses</dt>
-                  <dd id="unit-horses">0</dd>
+              <dl id="unit-resources" class="status-list unit-inspector-list unit-resources" hidden>
+                <div class="unit-resource-row">
+                  <dt>Resources</dt>
+                  <dd class="unit-resource-pair">
+                    <span id="unit-population-row" class="unit-resource-field">
+                      <span class="unit-condition-label">Pop</span>
+                    <span id="unit-population" class="inspector-read">0</span>
+                    <input id="unit-population-input" class="inspector-edit" type="number" min="0" step="1">
+                    </span>
+                    <span id="unit-metal-row" class="unit-resource-field">
+                      <span class="unit-condition-label">Metal</span>
+                    <span id="unit-metal" class="inspector-read">0</span>
+                    <input id="unit-metal-input" class="inspector-edit" type="number" min="0" step="1">
+                    </span>
+                    <span id="unit-horses-row" class="unit-resource-field">
+                      <span class="unit-condition-label">Horses</span>
+                    <span id="unit-horses" class="inspector-read">0</span>
+                    <input id="unit-horses-input" class="inspector-edit" type="number" min="0" step="1">
+                    </span>
+                  </dd>
                 </div>
               </dl>
             </section>
-            <section class="play-detail-region turn-control-region" aria-label="Turn controls">
-              <h2>Control</h2>
+            <section class="hex-inspector play-detail-region" aria-label="Hex inspector">
+              <h2>Hex Inspector</h2>
+            </section>
+            <section class="control-status-region play-detail-region" aria-label="Control status">
+              <h2>Control Status</h2>
               <dl class="status-list">
                 <div>
-                  <dt>Faction</dt>
-                  <dd id="active-faction-name">Mongol</dd>
-                </div>
-                <div>
-                  <dt>Round</dt>
+                  <dt>Current Turn</dt>
                   <dd id="round-count">1</dd>
                 </div>
-              </dl>
-              <button id="control-end-turn-button" type="button">End Turn</button>
-            </section>
-            <section class="play-detail-region turn-status-region" aria-label="Status">
-              <h2>Status</h2>
-              <dl class="status-list">
                 <div>
-                  <dt>Faction</dt>
+                  <dt>Active Faction</dt>
                   <dd id="status-active-faction-name">Mongol</dd>
                 </div>
               </dl>
-              <div id="turn-status-readout" class="selection-readout">Mongol turn</div>
-              <button id="status-end-turn-button" class="turn-play-button" type="button" aria-label="End current turn" title="End current turn"></button>
+              <div class="control-button-row">
+                <button id="undo-button" class="secondary undo-button" type="button" aria-label="Undo" title="Undo" disabled>Undo</button>
+                <button id="status-end-turn-button" class="turn-play-button" type="button" aria-label="End current turn" title="End current turn"></button>
+              </div>
+              <div id="active-faction-name" hidden>Mongol</div>
+              <div id="turn-status-readout" hidden>Mongol turn</div>
+              <button id="control-end-turn-button" type="button" hidden>End Turn</button>
             </section>
           </div>
         </section>

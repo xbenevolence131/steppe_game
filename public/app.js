@@ -68,7 +68,6 @@ const factionHorsesTotal = document.querySelector("#faction-horses-total");
 const factionMetalTotal = document.querySelector("#faction-metal-total");
 const roundCount = document.querySelector("#round-count");
 const turnStatusReadout = document.querySelector("#turn-status-readout");
-const campCount = document.querySelector("#camp-count");
 const herdCount = document.querySelector("#herd-count");
 const horseArcherCount = document.querySelector("#horse-archer-count");
 const hordeCount = document.querySelector("#horde-count");
@@ -88,9 +87,15 @@ const unitMove = document.querySelector("#unit-move");
 const unitStance = document.querySelector("#unit-stance");
 const unitStanceInput = document.querySelector("#unit-stance-input");
 const unitResources = document.querySelector("#unit-resources");
+const unitPopulationRow = document.querySelector("#unit-population-row");
 const unitPopulation = document.querySelector("#unit-population");
+const unitPopulationInput = document.querySelector("#unit-population-input");
+const unitMetalRow = document.querySelector("#unit-metal-row");
 const unitMetal = document.querySelector("#unit-metal");
+const unitMetalInput = document.querySelector("#unit-metal-input");
+const unitHorsesRow = document.querySelector("#unit-horses-row");
 const unitHorses = document.querySelector("#unit-horses");
+const unitHorsesInput = document.querySelector("#unit-horses-input");
 
 let currentMap = null;
 let appMode = "intro";
@@ -98,10 +103,10 @@ let isPanning = false;
 let isPainting = false;
 let lastPointer = { x: 0, y: 0 };
 let selectedTerrain = "lake";
-let scenarioTool = "scenario";
+let scenarioTool = "session";
 let unitTool = "place";
 let editorSelectedUnitId = 0;
-let openScenarioRegions = new Set(["scenario", "parameters", "terrain", "units"]);
+let openScenarioRegions = new Set(["session", "terrain", "units"]);
 let paintStrokeKeys = new Set();
 let paintUndoRecorded = false;
 let terrainUndo = new Map();
@@ -258,10 +263,8 @@ const unitDisplayKindNames = {
   infantry: "Infantry",
   horde: "Horde",
   herd: "Herd",
-  camp: "Camp",
 };
 const unitKindLabels = {
-  camp: "Camp",
   herd: "Herd",
   horse_archer: "Horse Archers",
   chinese_cavalry: "Chinese Cavalry",
@@ -294,7 +297,6 @@ const unitSpriteColumns = {
   chinese_cavalry: "chinese_cavalry",
   chinese_militia: "chinese_militia",
   mongol_lancer: "mongol_lancer",
-  camp: "camp",
 };
 const unitSpriteZoomLevels = [
   { key: "small", pixelSize: 48, visibleHexColumns: null },
@@ -935,7 +937,7 @@ function syncScenarioToolControls() {
 }
 
 function setScenarioTool(tool) {
-  scenarioTool = ["scenario", "parameters", "terrain", "units"].includes(tool) ? tool : "scenario";
+  scenarioTool = ["session", "terrain", "units"].includes(tool) ? tool : "session";
   openScenarioRegions.add(scenarioTool);
   isPainting = false;
   paintStrokeKeys = new Set();
@@ -947,7 +949,7 @@ function setScenarioTool(tool) {
 }
 
 function toggleScenarioRegion(region) {
-  if (!["scenario", "parameters", "terrain", "units"].includes(region)) {
+  if (!["session", "terrain", "units"].includes(region)) {
     return;
   }
   if (openScenarioRegions.has(region)) {
@@ -970,6 +972,8 @@ function setEditorEdgeFeature(feature) {
 
 function setUnitTool(tool) {
   unitTool = tool === "edit" ? "edit" : "place";
+  scenarioTool = "units";
+  openScenarioRegions.add("units");
   isPainting = false;
   paintStrokeKeys = new Set();
   paintUndoRecorded = false;
@@ -1696,6 +1700,19 @@ function legalStancesForUnit(unit) {
   return defaults.legalStances && defaults.legalStances.length > 0 ? defaults.legalStances : ["default"];
 }
 
+function resourceFieldsForUnit(unit) {
+  if (!unit) {
+    return [];
+  }
+  if (unit.kind === "horde") {
+    return ["population", "metal", "horses"];
+  }
+  if (unit.kind === "herd") {
+    return ["horses"];
+  }
+  return [];
+}
+
 function defaultUnitDisplayNameFor(unit, kind = unit.kind) {
   const faction = factions[unit.faction] || factions.mongol;
   const displayKind = unitDisplayKindNames[kind] || kind;
@@ -1785,6 +1802,16 @@ function updateEditorUnitStance() {
   });
 }
 
+function updateEditorUnitResource(field, input) {
+  mutateEditorInspectorUnit((unit) => {
+    if (!resourceFieldsForUnit(unit).includes(field)) {
+      return;
+    }
+    const value = Number.parseInt(input.value, 10);
+    unit[field] = Number.isFinite(value) ? Math.max(0, value) : (Number.isInteger(unit[field]) ? unit[field] : 0);
+  });
+}
+
 function syncUnitRoster() {
   if (!unitRoster) {
     return;
@@ -1855,9 +1882,15 @@ function syncUnitInspector() {
     unitStance.textContent = "-";
     unitStanceInput.replaceChildren();
     unitResources.hidden = true;
+    unitPopulationRow.hidden = false;
+    unitMetalRow.hidden = false;
+    unitHorsesRow.hidden = false;
     unitPopulation.textContent = "0";
+    unitPopulationInput.value = "";
     unitMetal.textContent = "0";
+    unitMetalInput.value = "";
     unitHorses.textContent = "0";
+    unitHorsesInput.value = "";
     return;
   }
   sidebarSelectionReadout.textContent = unitDisplayName(unit);
@@ -1887,11 +1920,20 @@ function syncUnitInspector() {
   unitStanceInput.value = stances.includes(unit.stance)
     ? unit.stance
     : (stances.includes(previousStance) ? previousStance : stances[0]);
-  const showResources = unit.kind === "horde";
-  unitResources.hidden = !showResources;
-  unitPopulation.textContent = String(Number.isInteger(unit.population) ? unit.population : 0);
-  unitMetal.textContent = String(Number.isInteger(unit.metal) ? unit.metal : 0);
-  unitHorses.textContent = String(Number.isInteger(unit.horses) ? unit.horses : 0);
+  const resourceFields = resourceFieldsForUnit(unit);
+  unitResources.hidden = resourceFields.length === 0;
+  unitPopulationRow.hidden = !resourceFields.includes("population");
+  unitMetalRow.hidden = !resourceFields.includes("metal");
+  unitHorsesRow.hidden = !resourceFields.includes("horses");
+  const population = Number.isInteger(unit.population) ? unit.population : 0;
+  const metal = Number.isInteger(unit.metal) ? unit.metal : 0;
+  const horses = Number.isInteger(unit.horses) ? unit.horses : 0;
+  unitPopulation.textContent = String(population);
+  unitPopulationInput.value = String(population);
+  unitMetal.textContent = String(metal);
+  unitMetalInput.value = String(metal);
+  unitHorses.textContent = String(horses);
+  unitHorsesInput.value = String(horses);
 }
 
 function syncPlayControls() {
@@ -1904,7 +1946,6 @@ function syncPlayControls() {
   factionStatusName.textContent = faction.name;
   roundCount.textContent = String(currentTurn);
   turnStatusReadout.textContent = `${faction.name} turn`;
-  campCount.textContent = String(countUnits("camp", owner));
   herdCount.textContent = String(countUnits("herd", owner));
   horseArcherCount.textContent = String(countUnits("horse_archer", owner));
   hordeCount.textContent = String(countUnits("horde", owner));
@@ -2385,22 +2426,12 @@ function drawMongolLancerSprite(spriteCtx, size, color) {
   spriteLine(spriteCtx, 29, 6, 27, 11, size, color);
 }
 
-function drawCampSprite(spriteCtx, size, color) {
-  spriteLine(spriteCtx, 7, 26, 16, 6, size, color);
-  spriteLine(spriteCtx, 16, 6, 25, 26, size, color);
-  spriteLine(spriteCtx, 25, 26, 7, 26, size, color);
-  spriteLine(spriteCtx, 13, 26, 13, 18, size, color);
-  spriteLine(spriteCtx, 19, 26, 19, 18, size, color);
-  spriteLine(spriteCtx, 13, 18, 19, 18, size, color);
-}
-
 const unitSpriteDrawers = {
   infantry: drawInfantrySprite,
   horde: drawHordeSprite,
   herd: drawHerdSprite,
   chinese_cavalry: drawChineseCavalrySprite,
   mongol_lancer: drawMongolLancerSprite,
-  camp: drawCampSprite,
 };
 
 function tintedUnitSprite(kind, color, level) {
@@ -4023,6 +4054,9 @@ unitTypeInput.addEventListener("change", updateEditorUnitType);
 unitHpInput.addEventListener("change", updateEditorUnitHp);
 unitReadinessInput.addEventListener("change", updateEditorUnitReadiness);
 unitStanceInput.addEventListener("change", updateEditorUnitStance);
+unitPopulationInput.addEventListener("change", () => updateEditorUnitResource("population", unitPopulationInput));
+unitMetalInput.addEventListener("change", () => updateEditorUnitResource("metal", unitMetalInput));
+unitHorsesInput.addEventListener("change", () => updateEditorUnitResource("horses", unitHorsesInput));
 saveButton.addEventListener("click", saveCurrentMap);
 loadButton.addEventListener("click", chooseMapFile);
 loadFileInput.addEventListener("change", () => loadMapFile(loadFileInput.files[0]));

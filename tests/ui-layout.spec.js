@@ -597,6 +597,10 @@ test("scenario controls sit above the shared map", async ({ page }) => {
   await page.getByRole("button", { name: "Scenario Edit" }).click();
 
   await expect(page.locator("#scenario-controls")).toBeVisible();
+  await expect(page.locator(".app-header .mode-chooser")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Session", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Parameters", exact: true })).toHaveCount(0);
+  await expect(page.locator('[data-scenario-region="session"]')).toHaveClass(/is-active/);
   await expect(page.locator("#play-controls")).toBeVisible();
   await expect(page.locator("#end-turn-button")).toBeDisabled();
   await expect(page.locator(".map-section")).toBeVisible();
@@ -605,6 +609,22 @@ test("scenario controls sit above the shared map", async ({ page }) => {
     await expect(page.locator("#play-details-bar")).toBeHidden();
   } else {
     await expect(page.locator("#play-details-bar")).toBeVisible();
+    const sessionRows = await page.evaluate(() => {
+      const top = (selector) => Math.round(document.querySelector(selector).getBoundingClientRect().top);
+      return {
+        generate: top("#generate-button"),
+        newScenario: top("#blank-map-button"),
+        save: top("#save-button"),
+        load: top("#load-button"),
+        name: top("#scenario-name"),
+        width: top("#map-width"),
+        height: top("#map-height"),
+      };
+    });
+    expect(new Set([sessionRows.generate, sessionRows.newScenario, sessionRows.save, sessionRows.load]).size).toBe(1);
+    expect(sessionRows.name).toBeGreaterThan(sessionRows.generate);
+    expect(sessionRows.width).toBe(sessionRows.height);
+    expect(sessionRows.width).toBeGreaterThan(sessionRows.name);
   }
 
   const layout = await page.evaluate(() => {
@@ -888,6 +908,15 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   await expect(page.locator("#unit-hp")).toHaveText("10");
   await expect(page.locator("#unit-readiness")).toHaveText("100");
   await expect(page.locator("#unit-stance")).toHaveText("Feigned Retreat");
+  await expect.poll(() => page.evaluate(() => {
+    const inspector = document.querySelector(".unit-inspector").getBoundingClientRect();
+    const hexInspector = document.querySelector(".hex-inspector").getBoundingClientRect();
+    const stance = document.querySelector("#unit-stance").getBoundingClientRect();
+    return {
+      inspectorBeforeHex: inspector.right <= hexInspector.left + 1,
+      stanceInsideInspector: stance.right <= inspector.right - 1,
+    };
+  })).toEqual({ inspectorBeforeHex: true, stanceInsideInspector: true });
   await expect(page.evaluate(() => [
     unitHpReadinessColor({ readiness: 100, maxReadiness: 100 }),
     unitHpReadinessColor({ readiness: 65, maxReadiness: 100 }),
@@ -897,13 +926,28 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   ])).resolves.toEqual(["#237a3b", "#237a3b", "#a97800", "#a97800", "#c93632"]);
   await expect(page.locator("#unit-resources")).toBeHidden();
   await expect(page.locator("#play-details-bar")).toBeVisible();
+  await expect(page.locator(".hex-inspector h2")).toHaveText("Hex Inspector");
+  await expect(page.locator(".control-status-region h2")).toHaveText("Control Status");
+  await expect(page.locator(".control-status-region")).toContainText("Current Turn");
+  await expect(page.locator(".control-status-region")).toContainText("Active Faction");
   await expect(page.locator("#herd-count")).toHaveText("1");
+  await expect(page.locator("#round-count")).toHaveText("1");
   await expect(page.locator("#status-active-faction-name")).toHaveText("Mongol");
   await expect(page.locator("#status-end-turn-button")).toBeVisible();
+  const detailWidths = await page.evaluate(() => {
+    const unit = document.querySelector(".unit-inspector").getBoundingClientRect();
+    const hex = document.querySelector(".hex-inspector").getBoundingClientRect();
+    const status = document.querySelector(".control-status-region").getBoundingClientRect();
+    return { unit: unit.width, hex: hex.width, status: status.width };
+  });
+  expect(detailWidths.unit).toBeGreaterThan(detailWidths.hex * 1.8);
+  expect(detailWidths.unit).toBeGreaterThan(detailWidths.status * 1.8);
+  expect(detailWidths.hex).toBeGreaterThan(detailWidths.status * 0.9);
+  expect(detailWidths.hex).toBeLessThan(detailWidths.status * 1.1);
 
   await page.locator("#status-end-turn-button").click();
   await expect(page.locator("#status-active-faction-name")).toHaveText("Chinese");
-  await expect(page.locator("#turn-status-readout")).toHaveText("Chinese turn");
+  await expect(page.locator("#round-count")).toHaveText("1");
   await expect(page.locator("#faction-status-name")).toHaveText("Chinese");
   await expect(page.locator("#faction-population-total")).toHaveText("4");
   await expect(page.locator("#faction-horses-total")).toHaveText("12");
@@ -933,7 +977,7 @@ test("unit counters use sprite glyph zoom bands", async ({ page, isMobile }) => 
   await openPlayMode(page);
   await expect.poll(() => page.evaluate(() => unitSpriteSheetReady)).toBe(true);
   await expect(page.evaluate(() => {
-    const kinds = ["infantry", "horde", "herd", "horse_archer", "chinese_cavalry", "chinese_militia", "mongol_lancer", "camp"];
+    const kinds = ["infantry", "horde", "herd", "horse_archer", "chinese_cavalry", "chinese_militia", "mongol_lancer"];
     const medium = unitSpriteZoomLevels.find((level) => level.key === "medium");
     return {
       levels: unitSpriteZoomLevels.map((level) => level.key),
@@ -1440,6 +1484,13 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect(page.locator("#editor-unit-type")).toBeVisible();
   await expect(page.locator('[data-scenario-region="terrain"]')).toHaveClass(/is-active/);
 
+  await page.locator('.unit-tool-button[data-unit-tool="edit"]').click();
+  await expect(page.locator('[data-scenario-region="units"]')).toHaveClass(/is-active/);
+  await page.locator('.unit-tool-button[data-unit-tool="place"]').click();
+  await expect(page.locator('[data-scenario-region="units"]')).toHaveClass(/is-active/);
+  await expect(page.locator("#editor-unit-type")).toBeVisible();
+  await page.getByRole("button", { name: "Terrain", exact: true }).click();
+
   await page.getByRole("button", { name: "Edges" }).click();
   await expect(page.locator("#edge-feature-choices")).toBeVisible();
   await expect(page.locator("#terrain-palette")).toBeHidden();
@@ -1496,15 +1547,53 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect(page.locator("#unit-name-input")).toBeVisible();
   await expect(page.locator("#unit-type")).toBeHidden();
   await expect(page.locator("#unit-type-input")).toHaveValue("herd");
+  await expect.poll(() => page.evaluate(() => {
+    const inspector = document.querySelector(".unit-inspector").getBoundingClientRect();
+    const hexInspector = document.querySelector(".hex-inspector").getBoundingClientRect();
+    const stanceInput = document.querySelector("#unit-stance-input").getBoundingClientRect();
+    return {
+      inspectorBeforeHex: inspector.right <= hexInspector.left + 1,
+      stanceInsideInspector: stanceInput.right <= inspector.right - 1,
+    };
+  })).toEqual({ inspectorBeforeHex: true, stanceInsideInspector: true });
   await page.locator("#unit-name-input").fill("Forward Herd");
   await page.locator("#unit-name-input").dispatchEvent("change");
   await expect.poll(() => page.evaluate(() => currentMap.units[0].name)).toBe("Forward Herd");
   await page.locator("#unit-readiness-input").fill("42");
   await page.locator("#unit-readiness-input").dispatchEvent("change");
   await expect.poll(() => page.evaluate(() => currentMap.units[0].readiness)).toBe(42);
+  await expect(page.locator("#unit-resources")).toBeVisible();
+  await expect(page.locator("#unit-population-row")).toBeHidden();
+  await expect(page.locator("#unit-metal-row")).toBeHidden();
+  await expect(page.locator("#unit-horses-row")).toBeVisible();
+  await expect(page.locator("#unit-horses")).toBeHidden();
+  await expect(page.locator("#unit-horses-input")).toBeVisible();
+  await page.locator("#unit-horses-input").fill("9");
+  await page.locator("#unit-horses-input").dispatchEvent("change");
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].horses)).toBe(9);
+  await page.locator("#unit-type-input").selectOption("horde");
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].kind)).toBe("horde");
+  await expect(page.locator("#unit-population-row")).toBeVisible();
+  await expect(page.locator("#unit-metal-row")).toBeVisible();
+  await expect(page.locator("#unit-horses-row")).toBeVisible();
+  await expect(page.locator("#unit-population-input")).toHaveValue("4");
+  await expect(page.locator("#unit-metal-input")).toHaveValue("4");
+  await expect(page.locator("#unit-horses-input")).toHaveValue("12");
+  await page.locator("#unit-population-input").fill("6");
+  await page.locator("#unit-population-input").dispatchEvent("change");
+  await page.locator("#unit-metal-input").fill("2");
+  await page.locator("#unit-metal-input").dispatchEvent("change");
+  await page.locator("#unit-horses-input").fill("15");
+  await page.locator("#unit-horses-input").dispatchEvent("change");
+  await expect.poll(() => page.evaluate(() => ({
+    population: currentMap.units[0].population,
+    metal: currentMap.units[0].metal,
+    horses: currentMap.units[0].horses,
+  }))).toEqual({ population: 6, metal: 2, horses: 15 });
   await page.locator("#unit-type-input").selectOption("chinese_militia");
   await expect.poll(() => page.evaluate(() => currentMap.units[0].kind)).toBe("chinese_militia");
   await expect(page.locator("#unit-type-input")).toHaveValue("chinese_militia");
+  await expect(page.locator("#unit-resources")).toBeHidden();
   await page.locator("#unit-hp-input").fill("7");
   await page.locator("#unit-hp-input").dispatchEvent("change");
   await expect.poll(() => page.evaluate(() => currentMap.units[0].hp)).toBe(7);

@@ -55,7 +55,6 @@ enum class SettlementKind {
 };
 
 enum class UnitKind {
-    Camp,
     Herd,
     HorseArcher,
     ChineseCavalry,

@@ -139,7 +139,6 @@ Terrain terrain_from_string(const std::string& terrain) {
 
 const char* unit_kind_to_string(UnitKind kind) {
     switch (kind) {
-        case UnitKind::Camp: return "camp";
         case UnitKind::Herd: return "herd";
         case UnitKind::HorseArcher: return "horse_archer";
         case UnitKind::ChineseCavalry: return "chinese_cavalry";
@@ -152,10 +151,6 @@ const char* unit_kind_to_string(UnitKind kind) {
 }
 
 bool try_unit_kind_from_string(const std::string& kind, UnitKind& out) {
-    if (kind == "camp") {
-        out = UnitKind::Camp;
-        return true;
-    }
     if (kind == "herd") {
         out = UnitKind::Herd;
         return true;
@@ -307,7 +302,6 @@ struct UnitTypeTable {
 
 std::vector<UnitKind> required_unit_kinds() {
     return {
-        UnitKind::Camp,
         UnitKind::Herd,
         UnitKind::HorseArcher,
         UnitKind::ChineseCavalry,
