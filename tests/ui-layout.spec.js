@@ -55,6 +55,30 @@ function corridorGameState() {
   };
 }
 
+function openMovementGameState() {
+  const hexes = [];
+  for (let r = 1; r <= 2; r += 1) {
+    for (let q = 1; q <= 5; q += 1) {
+      hexes.push({ q, r, terrain: "grassland", labels: [] });
+    }
+  }
+  return {
+    width: 5,
+    height: 2,
+    seed: 0,
+    hexes,
+    units: [
+      { id: 1, owner: 1, faction: "mongol", kind: "horse_archer", q: 1, r: 1, hp: 10, maxHp: 10, remainingScaledMove: 32 },
+    ],
+    game: {
+      round: 1,
+      activeFactionIndex: 0,
+      selectedUnitId: 1,
+      turnOrder: [1],
+    },
+  };
+}
+
 function combatGameState(defenderTerrain = "grassland") {
   const hexes = [];
   for (let r = 1; r <= 2; r += 1) {
@@ -106,36 +130,37 @@ test("combat uses unit stats terrain defense and retaliation", async ({ isMobile
   expect(preview.baseDifferential).toBe(1);
   expect(preview.hpRatioPercent).toBe(100);
   expect(preview.readinessRatioPercent).toBe(100);
+  expect(preview.conditionRatioPercent).toBe(100);
   expect(preview.crtIndex).toBe(1);
   expect(preview.retreatOption).toBe("none");
   expect(preview.readinessImpact).toBe("Even readiness");
   expect(preview.retreatImpact).toBe("No retreat");
-  expect(preview.attacker.damageDealt).toBe(3);
-  expect(preview.attacker.damageTaken).toBe(2);
+  expect(preview.attacker.damageDealt).toBe(2);
+  expect(preview.attacker.damageTaken).toBe(1);
   expect(preview.attacker.readinessDamageDealt).toBe(25);
-  expect(preview.attacker.readinessDamageTaken).toBe(30);
-  expect(preview.attacker.resultHp).toBe(8);
-  expect(preview.attacker.resultReadiness).toBe(70);
+  expect(preview.attacker.readinessDamageTaken).toBe(10);
+  expect(preview.attacker.resultHp).toBe(9);
+  expect(preview.attacker.resultReadiness).toBe(90);
   expect(preview.attacker.readiness).toBe(100);
   expect(preview.attacker.readinessPercent).toBe(100);
   expect(preview.attacker.baseReadinessDamage).toBe(25);
   expect(preview.defender.effectiveDefense).toBe(3);
   expect(preview.defender.readinessDamageDealt).toBe(0);
   expect(preview.defender.readinessDamageTaken).toBe(25);
-  expect(preview.defender.damageTaken).toBe(3);
-  expect(preview.defender.resultHp).toBe(7);
+  expect(preview.defender.damageTaken).toBe(2);
+  expect(preview.defender.resultHp).toBe(8);
   expect(preview.defender.resultReadiness).toBe(75);
 
   const grass = runEngineJson(["game-attack", "--attacker", "1", "--defender", "2"], combatGameState("grassland"));
   const grassAttacker = grass.units.find((unit) => unit.id === 1);
   const grassDefender = grass.units.find((unit) => unit.id === 2);
   expect(grass.ok).toBe(true);
-  expect(grassAttacker.hp).toBe(8);
+  expect(grassAttacker.hp).toBe(9);
   expect(grassAttacker.remainingScaledMove).toBe(0);
   expect(grassAttacker.moveDone).toBe(true);
   expect(grassAttacker.combatDone).toBe(true);
-  expect(grassAttacker.readiness).toBe(70);
-  expect(grassDefender.hp).toBe(7);
+  expect(grassAttacker.readiness).toBe(90);
+  expect(grassDefender.hp).toBe(8);
   expect(grassDefender.readiness).toBe(75);
 
   const recovered = runEngineJson(["game-end-turn"], grass);
@@ -150,10 +175,10 @@ test("combat uses unit stats terrain defense and retaliation", async ({ isMobile
   expect(hillPreview.defender.effectiveDefense).toBe(4);
   expect(hillPreview.baseDifferential).toBe(0);
   expect(hillPreview.crtIndex).toBe(0);
-  expect(hillPreview.defender.damageTaken).toBe(2);
+  expect(hillPreview.defender.damageTaken).toBe(1);
   expect(hill.ok).toBe(true);
-  expect(hillAttacker.hp).toBe(8);
-  expect(hillDefender.hp).toBe(8);
+  expect(hillAttacker.hp).toBe(9);
+  expect(hillDefender.hp).toBe(9);
 
   const infantryState = combatGameState("grassland");
   infantryState.units[0].kind = "infantry";
@@ -181,6 +206,7 @@ test("combat damage tapers against worn down targets", async ({ isMobile }) => {
   expect(preview.valid).toBe(true);
   expect(preview.hpRatioPercent).toBe(250);
   expect(preview.readinessRatioPercent).toBe(250);
+  expect(preview.conditionRatioPercent).toBe(625);
   expect(preview.crtIndex).toBe(6);
   expect(preview.retreatOption).toBe("defender");
   expect(preview.defender.damageTaken).toBe(2);
@@ -201,7 +227,12 @@ test("movement spends readiness in proportion to movement cost", async ({ isMobi
   const moved = runEngineJson(["game-move", "--unit", "1", "--q", "4", "--r", "2"], corridorGameState());
   const unit = moved.units.find((candidate) => candidate.id === 1);
   expect(moved.ok).toBe(true);
-  expect(unit.readiness).toBe(87);
+  expect(unit.readiness).toBe(96);
+
+  const fullMove = runEngineJson(["game-move", "--unit", "1", "--q", "5", "--r", "1"], openMovementGameState());
+  const fullMoveUnit = fullMove.units.find((candidate) => candidate.id === 1);
+  expect(fullMove.ok).toBe(true);
+  expect(fullMoveUnit.readiness).toBe(92);
 });
 
 test("inactive units can be selected for inspection without legal actions", async ({ isMobile }) => {
@@ -503,7 +534,7 @@ test("clicking attackable enemies resolves combat", async ({ page, isMobile }) =
   }, result)).toEqual({
     selectedUnitId: result.hordeId,
     hordeCombatDone: true,
-    enemyHp: result.enemyHp - 2,
+    enemyHp: result.enemyHp - 1,
   });
 });
 
@@ -843,6 +874,7 @@ test("horde resource actions are unavailable next to enemies", async ({ page, is
   await expect(page.locator("#combat-preview")).toContainText("Defender");
   await expect(page.locator("#combat-preview")).toContainText("Readiness");
   await expect(page.locator("#combat-preview")).toContainText("RDY factor");
+  await expect(page.locator("#combat-preview")).toContainText("HP/RDY factor");
   await expect(page.locator("#combat-preview")).toContainText("Readiness impact");
   await expect(page.locator("#combat-preview")).toContainText("Retreat impact");
   await expect(page.locator("#combat-preview")).toContainText("CRT");

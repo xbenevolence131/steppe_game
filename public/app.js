@@ -957,6 +957,7 @@ function renderCombatPreview(preview, clientX, clientY) {
   appendCombatRow(summary, "A-D", String(preview.baseDifferential));
   appendCombatRow(summary, "HP ratio", `${preview.hpRatioPercent}%`);
   appendCombatRow(summary, "RDY ratio", `${preview.readinessRatioPercent}%`);
+  appendCombatRow(summary, "HP/RDY factor", `${preview.conditionRatioPercent}%`);
   appendCombatRow(summary, "CRT", String(preview.crtIndex));
   appendCombatRow(summary, "Retreat", preview.retreatOption === "none" ? "-" : preview.retreatOption);
   const impacts = document.createElement("div");

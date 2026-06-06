@@ -252,8 +252,9 @@ constexpr int create_horse_archers_metal_cost = 1;
 constexpr int create_horse_archers_horses_cost = 3;
 constexpr int default_max_readiness = 100;
 constexpr int minimum_combat_readiness_percent = 25;
-constexpr int full_move_readiness_cost = 25;
-constexpr int attack_readiness_cost = 30;
+constexpr int full_move_readiness_cost = 8;
+constexpr int max_move_readiness_cost = 8;
+constexpr int attack_readiness_cost = 10;
 constexpr int turn_readiness_recovery = 25;
 
 constexpr int move_scale = 8;
@@ -758,7 +759,8 @@ int move_readiness_cost(const Unit& unit, int scaled_cost) {
     if (scaled_cost <= 0 || unit.scaled_move <= 0) {
         return 0;
     }
-    return std::max(1, (full_move_readiness_cost * scaled_cost + unit.scaled_move - 1) / unit.scaled_move);
+    const int proportional_cost = (full_move_readiness_cost * scaled_cost + unit.scaled_move - 1) / unit.scaled_move;
+    return std::max(1, std::min(max_move_readiness_cost, proportional_cost));
 }
 
 void reduce_readiness(Unit& unit, int amount) {
@@ -814,36 +816,36 @@ struct CrtOutcome {
 
 CrtOutcome crt_outcome(int index) {
     if (index <= -5) {
-        return {5, 0, "attacker"};
-    }
-    if (index == -4) {
         return {4, 0, "attacker"};
     }
+    if (index == -4) {
+        return {3, 0, "attacker"};
+    }
     if (index == -3) {
-        return {4, 1, "attacker"};
+        return {3, 0, "attacker"};
     }
     if (index == -2) {
-        return {3, 1, "attacker"};
+        return {2, 0, "attacker"};
     }
     if (index == -1) {
-        return {3, 2, "none"};
+        return {2, 1, "none"};
     }
     if (index == 0) {
-        return {2, 2, "none"};
+        return {1, 1, "none"};
     }
     if (index == 1) {
-        return {2, 3, "none"};
+        return {1, 2, "none"};
     }
     if (index == 2) {
-        return {1, 3, "defender"};
+        return {0, 2, "defender"};
     }
     if (index == 3) {
-        return {1, 4, "defender"};
+        return {0, 3, "defender"};
     }
     if (index == 4) {
-        return {0, 4, "defender"};
+        return {0, 3, "defender"};
     }
-    return {0, 5, "defender"};
+    return {0, 4, "defender"};
 }
 
 int scaled_damage_for_remaining(int base_damage, int current, int maximum) {
@@ -1080,11 +1082,13 @@ CombatPreview combat_preview(const GameState& state, int attacker_id, int defend
     preview.base_differential = preview.attacker.effective_attack - preview.defender.effective_defense;
     const double hp_multiplier = hp_ratio(*attacker, *defender);
     const double readiness_multiplier = readiness_ratio_for_combat(*attacker, *defender);
+    const double condition_multiplier = hp_multiplier * readiness_multiplier;
     preview.hp_ratio_percent = ratio_percent(hp_multiplier);
     preview.readiness_ratio_percent = ratio_percent(readiness_multiplier);
+    preview.condition_ratio_percent = ratio_percent(condition_multiplier);
     preview.crt_index = std::max(
         -6,
-        std::min(6, static_cast<int>(std::lround(preview.base_differential * hp_multiplier * readiness_multiplier)))
+        std::min(6, static_cast<int>(std::lround(preview.base_differential * condition_multiplier)))
     );
     const CrtOutcome outcome = crt_outcome(preview.crt_index);
     preview.retreat_option = outcome.retreat_option;
@@ -1608,6 +1612,7 @@ void print_combat_preview_json(const CombatPreview& preview, std::ostream& out) 
         << ",\"baseDifferential\":" << preview.base_differential
         << ",\"hpRatioPercent\":" << preview.hp_ratio_percent
         << ",\"readinessRatioPercent\":" << preview.readiness_ratio_percent
+        << ",\"conditionRatioPercent\":" << preview.condition_ratio_percent
         << ",\"crtIndex\":" << preview.crt_index
         << ",\"retreatOption\":\"" << escape_json(preview.retreat_option) << "\""
         << ",\"readinessImpact\":\"" << escape_json(preview.readiness_impact) << "\""
