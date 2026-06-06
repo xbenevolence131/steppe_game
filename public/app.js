@@ -237,9 +237,9 @@ const unitSpriteColumns = {
   camp: 6,
 };
 const unitSpriteZoomLevels = [
-  { key: "small", row: 0, targetWidth: null, targetHeight: null, minFitMultiplier: 1, counterWidth: 32, counterHeight: 19, dividerX: 16, iconSize: 11, iconCenterX: 8, hpX: 24, hpFont: 10 },
-  { key: "medium", row: 1, targetWidth: 40, targetHeight: 20, minFitMultiplier: 1.4, counterWidth: 40, counterHeight: 24, dividerX: 20, iconSize: 15, iconCenterX: 10, hpX: 30, hpFont: 12 },
-  { key: "large", row: 2, targetWidth: 20, targetHeight: 10, minFitMultiplier: 2, counterWidth: 50, counterHeight: 30, dividerX: 25, iconSize: 19, iconCenterX: 12.5, hpX: 37.5, hpFont: 14 },
+  { key: "small", row: 0, targetWidth: null, targetHeight: null, minFitMultiplier: 1 },
+  { key: "medium", row: 1, targetWidth: 40, targetHeight: 20, minFitMultiplier: 1.4 },
+  { key: "large", row: 2, targetWidth: 20, targetHeight: 10, minFitMultiplier: 2 },
 ];
 const unitSpriteSheet = new Image();
 const unitSpriteTintCache = new Map();
@@ -1651,36 +1651,56 @@ function tintedUnitSprite(kind, color, level) {
   return canvas;
 }
 
-function drawUnitSpriteGlyph(unit, faction, x, y, counterHeight) {
+function unitCounterMetrics() {
+  const hexHeight = Math.sqrt(3) * geometry.size;
+  const width = geometry.size * 1.26;
+  const height = hexHeight * 0.58;
+  const dividerOffset = width * 0.52;
+  return {
+    width,
+    height,
+    dividerOffset,
+    iconCenterX: dividerOffset * 0.5,
+    hpX: dividerOffset + (width - dividerOffset) * 0.5,
+    iconSize: Math.min(height * 0.94, dividerOffset * 0.9),
+    hpFont: height * 0.52,
+    cornerRadius: geometry.size * 0.18,
+    strokeWidth: geometry.size * 0.1,
+    selectedStrokeWidth: geometry.size * 0.17,
+    selectedInset: geometry.size * 0.16,
+  };
+}
+
+function drawUnitSpriteGlyph(unit, faction, x, y, metrics) {
   const level = currentUnitSpriteLevel();
   const sprite = tintedUnitSprite(unit.kind, faction.color, level);
   if (!sprite) {
     return false;
   }
-  const size = level.iconSize / viewport.scale;
-  const centerX = x + level.iconCenterX / viewport.scale;
-  const centerY = y + counterHeight / 2;
+  const size = metrics.iconSize;
+  const centerX = x + metrics.iconCenterX;
+  const centerY = y + metrics.height / 2;
   ctx.drawImage(sprite, centerX - size / 2, centerY - size / 2, size, size);
   return true;
 }
 
-function drawFallbackUnitGlyph(unit, faction, x, y, dividerX, counterHeight) {
+function drawFallbackUnitGlyph(unit, faction, x, y, dividerX, metrics) {
   ctx.strokeStyle = faction.color;
-  ctx.lineWidth = 2 / viewport.scale;
+  ctx.lineWidth = metrics.strokeWidth;
   if (unit.kind === "infantry") {
-    const iconInsetX = 5 / viewport.scale;
-    const iconInsetY = 5 / viewport.scale;
+    const iconInsetX = metrics.width * 0.13;
+    const iconInsetY = metrics.height * 0.22;
     ctx.beginPath();
     ctx.moveTo(x + iconInsetX, y + iconInsetY);
-    ctx.lineTo(dividerX - iconInsetX, y + counterHeight - iconInsetY);
+    ctx.lineTo(dividerX - iconInsetX, y + metrics.height - iconInsetY);
     ctx.moveTo(dividerX - iconInsetX, y + iconInsetY);
-    ctx.lineTo(x + iconInsetX, y + counterHeight - iconInsetY);
+    ctx.lineTo(x + iconInsetX, y + metrics.height - iconInsetY);
     ctx.stroke();
   } else if (unit.kind === "horde") {
-    const left = x + 5 / viewport.scale;
-    const right = dividerX - 5 / viewport.scale;
-    const top = y + 5 / viewport.scale;
-    const bottom = y + counterHeight - 5 / viewport.scale;
+    const left = x + metrics.width * 0.13;
+    const right = dividerX - metrics.width * 0.1;
+    const top = y + metrics.height * 0.22;
+    const bottom = y + metrics.height * 0.78;
     ctx.beginPath();
     ctx.moveTo((left + right) / 2, top);
     ctx.lineTo(right, bottom);
@@ -1688,40 +1708,40 @@ function drawFallbackUnitGlyph(unit, faction, x, y, dividerX, counterHeight) {
     ctx.closePath();
     ctx.stroke();
   } else if (unit.kind === "herd") {
-    const ovalY = y + counterHeight / 2;
-    const ovalCenters = [7.2, 10.2, 13.2].map((offset) => x + offset / viewport.scale);
+    const ovalY = y + metrics.height / 2;
+    const ovalCenters = [0.18, 0.26, 0.34].map((offset) => x + metrics.width * offset);
     for (const ovalX of ovalCenters) {
       ctx.beginPath();
-      ctx.ellipse(ovalX, ovalY, 4.4 / viewport.scale, 2.7 / viewport.scale, 0, 0, Math.PI * 2);
+      ctx.ellipse(ovalX, ovalY, metrics.width * 0.11, metrics.height * 0.13, 0, 0, Math.PI * 2);
       ctx.stroke();
     }
   } else if (unit.kind === "horse_archer") {
     ctx.beginPath();
-    ctx.ellipse(x + 9.5 / viewport.scale, y + counterHeight / 2, 5.5 / viewport.scale, 3.1 / viewport.scale, 0, 0, Math.PI * 2);
+    ctx.ellipse(x + metrics.iconCenterX, y + metrics.height / 2, metrics.width * 0.14, metrics.height * 0.15, 0, 0, Math.PI * 2);
     ctx.stroke();
   } else if (unit.kind === "chinese_cavalry") {
-    const centerX = x + 9.5 / viewport.scale;
-    const centerY = y + counterHeight / 2;
+    const centerX = x + metrics.iconCenterX;
+    const centerY = y + metrics.height / 2;
     ctx.beginPath();
-    ctx.ellipse(centerX, centerY, 5.5 / viewport.scale, 3.1 / viewport.scale, 0, 0, Math.PI * 2);
-    ctx.moveTo(centerX, centerY - 4.3 / viewport.scale);
-    ctx.lineTo(centerX, centerY + 4.3 / viewport.scale);
+    ctx.ellipse(centerX, centerY, metrics.width * 0.14, metrics.height * 0.15, 0, 0, Math.PI * 2);
+    ctx.moveTo(centerX, centerY - metrics.height * 0.21);
+    ctx.lineTo(centerX, centerY + metrics.height * 0.21);
     ctx.stroke();
   } else if (unit.kind === "mongol_lancer") {
-    const left = x + 5.5 / viewport.scale;
-    const right = dividerX - 6 / viewport.scale;
-    const top = y + 5 / viewport.scale;
-    const bottom = y + counterHeight - 5 / viewport.scale;
+    const left = x + metrics.width * 0.14;
+    const right = dividerX - metrics.width * 0.12;
+    const top = y + metrics.height * 0.21;
+    const bottom = y + metrics.height * 0.79;
     ctx.beginPath();
     ctx.moveTo(left, bottom);
     ctx.lineTo(right, top);
-    ctx.moveTo(left + 2 / viewport.scale, top);
+    ctx.moveTo(left + metrics.width * 0.05, top);
     ctx.lineTo(right, top);
-    ctx.lineTo(right - 3 / viewport.scale, top + 3 / viewport.scale);
+    ctx.lineTo(right - metrics.width * 0.08, top + metrics.height * 0.14);
     ctx.stroke();
   } else {
     ctx.beginPath();
-    ctx.rect(x + 5.5 / viewport.scale, y + 6 / viewport.scale, 8 / viewport.scale, 8 / viewport.scale);
+    ctx.rect(x + metrics.width * 0.14, y + metrics.height * 0.25, metrics.width * 0.2, metrics.height * 0.42);
     ctx.fillStyle = faction.color;
     ctx.fill();
   }
@@ -1738,15 +1758,15 @@ function drawUnitCounters(units) {
     : 0;
   for (const unit of units) {
     const faction = factions[unit.faction] || factions.mongol;
-    const level = currentUnitSpriteLevel();
+    const metrics = unitCounterMetrics();
     const center = hexCenter(unit);
-    const counterWidth = level.counterWidth / viewport.scale;
-    const counterHeight = level.counterHeight / viewport.scale;
+    const counterWidth = metrics.width;
+    const counterHeight = metrics.height;
     const x = center.x - counterWidth / 2;
     const y = center.y - counterHeight / 2;
-    const dividerX = x + level.dividerX / viewport.scale;
+    const dividerX = x + metrics.dividerOffset;
 
-    roundedRectPath(x, y, counterWidth, counterHeight, 4 / viewport.scale);
+    roundedRectPath(x, y, counterWidth, counterHeight, metrics.cornerRadius);
     ctx.fillStyle = "#fffdf8";
     ctx.fill();
     if (legalAttackForUnit(unit)) {
@@ -1754,31 +1774,37 @@ function drawUnitCounters(units) {
       ctx.fill();
     }
     ctx.strokeStyle = faction.color;
-    ctx.lineWidth = (unit.id === selectedUnitId ? 4.5 : 2.5) / viewport.scale;
+    ctx.lineWidth = unit.id === selectedUnitId ? metrics.selectedStrokeWidth : metrics.strokeWidth;
     ctx.stroke();
     if (unit.id === selectedUnitId) {
-      roundedRectPath(x - 3 / viewport.scale, y - 3 / viewport.scale, counterWidth + 6 / viewport.scale, counterHeight + 6 / viewport.scale, 6 / viewport.scale);
+      roundedRectPath(
+        x - metrics.selectedInset,
+        y - metrics.selectedInset,
+        counterWidth + metrics.selectedInset * 2,
+        counterHeight + metrics.selectedInset * 2,
+        metrics.cornerRadius + metrics.selectedInset
+      );
       ctx.strokeStyle = "#f4e48a";
-      ctx.lineWidth = 2 / viewport.scale;
+      ctx.lineWidth = metrics.strokeWidth * 0.8;
       ctx.stroke();
     }
 
     ctx.beginPath();
-    ctx.moveTo(dividerX, y + 3 / viewport.scale);
-    ctx.lineTo(dividerX, y + counterHeight - 3 / viewport.scale);
+    ctx.moveTo(dividerX, y + counterHeight * 0.13);
+    ctx.lineTo(dividerX, y + counterHeight * 0.87);
     ctx.strokeStyle = "#b9ad96";
-    ctx.lineWidth = 1 / viewport.scale;
+    ctx.lineWidth = metrics.strokeWidth * 0.45;
     ctx.stroke();
 
-    if (!drawUnitSpriteGlyph(unit, faction, x, y, counterHeight)) {
-      drawFallbackUnitGlyph(unit, faction, x, y, dividerX, counterHeight);
+    if (!drawUnitSpriteGlyph(unit, faction, x, y, metrics)) {
+      drawFallbackUnitGlyph(unit, faction, x, y, dividerX, metrics);
     }
 
     ctx.fillStyle = unitHpReadinessColor(unit);
-    ctx.font = `${level.hpFont / viewport.scale}px Segoe UI, Arial, sans-serif`;
+    ctx.font = `${metrics.hpFont}px Segoe UI, Arial, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(String(unit.hp), x + level.hpX / viewport.scale, y + counterHeight / 2 + 0.5 / viewport.scale);
+    ctx.fillText(String(unit.hp), x + metrics.hpX, y + counterHeight / 2 + metrics.height * 0.02);
   }
   ctx.restore();
 }
@@ -1843,9 +1869,9 @@ function findUnitAtPoint(point) {
   if (!currentMap || !Array.isArray(currentMap.units)) {
     return null;
   }
-  const level = currentUnitSpriteLevel();
-  const counterWidth = level.counterWidth / viewport.scale;
-  const counterHeight = level.counterHeight / viewport.scale;
+  const metrics = unitCounterMetrics();
+  const counterWidth = metrics.width;
+  const counterHeight = metrics.height;
   for (let index = currentMap.units.length - 1; index >= 0; index -= 1) {
     const unit = currentMap.units[index];
     const center = hexCenter(unit);

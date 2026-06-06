@@ -663,33 +663,43 @@ test("unit counters use sprite glyph zoom bands", async ({ page, isMobile }) => 
       levels: unitSpriteZoomLevels.map((level) => level.key),
       initialIndex: viewport.zoomLevelIndex,
       initialScale: viewport.scale,
-      counterWidths: unitSpriteZoomLevels.map((level) => level.counterWidth),
+      counterAreaRatio: (unitCounterMetrics().width * unitCounterMetrics().height)
+        / ((3 * Math.sqrt(3) / 2) * geometry.size * geometry.size),
       sprites: kinds.every((kind) => Boolean(tintedUnitSprite(kind, "#2368c4", medium))),
     };
   })).resolves.toEqual(expect.objectContaining({
     levels: ["small", "medium", "large"],
     initialIndex: 0,
     initialScale: expect.any(Number),
-    counterWidths: [32, 40, 50],
+    counterAreaRatio: expect.any(Number),
     sprites: true,
   }));
+  const counterAreaRatio = await page.evaluate(() => (
+    (unitCounterMetrics().width * unitCounterMetrics().height)
+      / ((3 * Math.sqrt(3) / 2) * geometry.size * geometry.size)
+  ));
+  expect(counterAreaRatio).toBeGreaterThan(0.45);
+  expect(counterAreaRatio).toBeLessThan(0.53);
   const initialScale = await page.evaluate(() => viewport.scale);
+  const initialCounterScreenWidth = await page.evaluate(() => unitCounterMetrics().width * viewport.scale);
   await page.locator("#zoom-in-button").click();
   await expect(page.evaluate(() => ({
     index: viewport.zoomLevelIndex,
     level: currentUnitSpriteLevel().key,
-    counterWidth: currentUnitSpriteLevel().counterWidth,
+    counterScreenWidth: unitCounterMetrics().width * viewport.scale,
     scale: viewport.scale,
-  }))).resolves.toEqual(expect.objectContaining({ index: 1, level: "medium", counterWidth: 40 }));
+  }))).resolves.toEqual(expect.objectContaining({ index: 1, level: "medium" }));
   const mediumScale = await page.evaluate(() => viewport.scale);
+  const mediumCounterScreenWidth = await page.evaluate(() => unitCounterMetrics().width * viewport.scale);
   expect(mediumScale).toBeGreaterThan(initialScale);
+  expect(mediumCounterScreenWidth).toBeGreaterThan(initialCounterScreenWidth);
   await page.locator("#zoom-in-button").click();
   await expect(page.evaluate(() => ({
     index: viewport.zoomLevelIndex,
     level: currentUnitSpriteLevel().key,
-    counterWidth: currentUnitSpriteLevel().counterWidth,
+    counterScreenWidth: unitCounterMetrics().width * viewport.scale,
     scale: viewport.scale,
-  }))).resolves.toEqual(expect.objectContaining({ index: 2, level: "large", counterWidth: 50 }));
+  }))).resolves.toEqual(expect.objectContaining({ index: 2, level: "large" }));
   const largeScale = await page.evaluate(() => viewport.scale);
   expect(largeScale).toBeGreaterThan(mediumScale);
   expect(largeScale / initialScale).toBeLessThanOrEqual(2.01);
