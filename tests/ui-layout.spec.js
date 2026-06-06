@@ -112,18 +112,19 @@ test("combat uses unit stats terrain defense and retaliation", async ({ isMobile
   expect(preview.retreatImpact).toBe("No retreat");
   expect(preview.attacker.damageDealt).toBe(3);
   expect(preview.attacker.damageTaken).toBe(2);
-  expect(preview.attacker.readinessDamageDealt).toBe(20);
+  expect(preview.attacker.readinessDamageDealt).toBe(25);
   expect(preview.attacker.readinessDamageTaken).toBe(30);
   expect(preview.attacker.resultHp).toBe(8);
   expect(preview.attacker.resultReadiness).toBe(70);
   expect(preview.attacker.readiness).toBe(100);
   expect(preview.attacker.readinessPercent).toBe(100);
+  expect(preview.attacker.baseReadinessDamage).toBe(25);
   expect(preview.defender.effectiveDefense).toBe(3);
-  expect(preview.defender.readinessDamageDealt).toBe(30);
-  expect(preview.defender.readinessDamageTaken).toBe(20);
+  expect(preview.defender.readinessDamageDealt).toBe(0);
+  expect(preview.defender.readinessDamageTaken).toBe(25);
   expect(preview.defender.damageTaken).toBe(3);
   expect(preview.defender.resultHp).toBe(7);
-  expect(preview.defender.resultReadiness).toBe(80);
+  expect(preview.defender.resultReadiness).toBe(75);
 
   const grass = runEngineJson(["game-attack", "--attacker", "1", "--defender", "2"], combatGameState("grassland"));
   const grassAttacker = grass.units.find((unit) => unit.id === 1);
@@ -135,7 +136,7 @@ test("combat uses unit stats terrain defense and retaliation", async ({ isMobile
   expect(grassAttacker.combatDone).toBe(true);
   expect(grassAttacker.readiness).toBe(70);
   expect(grassDefender.hp).toBe(7);
-  expect(grassDefender.readiness).toBe(80);
+  expect(grassDefender.readiness).toBe(75);
 
   const recovered = runEngineJson(["game-end-turn"], grass);
   const recoveredDefender = recovered.units.find((unit) => unit.id === 2);
@@ -153,6 +154,20 @@ test("combat uses unit stats terrain defense and retaliation", async ({ isMobile
   expect(hill.ok).toBe(true);
   expect(hillAttacker.hp).toBe(8);
   expect(hillDefender.hp).toBe(8);
+
+  const infantryState = combatGameState("grassland");
+  infantryState.units[0].kind = "infantry";
+  const infantryPreview = runEngineJson(["game-combat-preview", "--attacker", "1", "--defender", "2"], infantryState);
+  expect(infantryPreview.attacker.baseReadinessDamage).toBe(10);
+  expect(infantryPreview.attacker.readinessDamageDealt).toBe(10);
+  expect(infantryPreview.defender.resultReadiness).toBe(90);
+
+  const hordeState = combatGameState("grassland");
+  hordeState.units[0].kind = "horde";
+  const hordePreview = runEngineJson(["game-combat-preview", "--attacker", "1", "--defender", "2"], hordeState);
+  expect(hordePreview.attacker.baseReadinessDamage).toBe(0);
+  expect(hordePreview.attacker.readinessDamageDealt).toBe(0);
+  expect(hordePreview.defender.resultReadiness).toBe(100);
 });
 
 test("combat damage tapers against worn down targets", async ({ isMobile }) => {
@@ -170,14 +185,14 @@ test("combat damage tapers against worn down targets", async ({ isMobile }) => {
   expect(preview.retreatOption).toBe("defender");
   expect(preview.defender.damageTaken).toBe(2);
   expect(preview.defender.resultHp).toBe(2);
-  expect(preview.defender.readinessDamageTaken).toBe(8);
-  expect(preview.defender.resultReadiness).toBe(32);
+  expect(preview.defender.readinessDamageTaken).toBe(10);
+  expect(preview.defender.resultReadiness).toBe(30);
 
   const resolved = runEngineJson(["game-attack", "--attacker", "1", "--defender", "2"], wornState);
   const defender = resolved.units.find((unit) => unit.id === 2);
   expect(resolved.ok).toBe(true);
   expect(defender.hp).toBe(2);
-  expect(defender.readiness).toBe(32);
+  expect(defender.readiness).toBe(30);
 });
 
 test("movement spends readiness in proportion to movement cost", async ({ isMobile }) => {

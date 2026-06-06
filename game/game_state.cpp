@@ -217,6 +217,16 @@ int default_defense(UnitKind kind) {
     return 1;
 }
 
+int default_readiness_damage(UnitKind kind) {
+    if (kind == UnitKind::HorseArcher) {
+        return 25;
+    }
+    if (kind == UnitKind::Infantry) {
+        return 10;
+    }
+    return 0;
+}
+
 bool default_projects_zoc(UnitKind kind) {
     return kind == UnitKind::HorseArcher || kind == UnitKind::Infantry || kind == UnitKind::Horde;
 }
@@ -244,7 +254,6 @@ constexpr int default_max_readiness = 100;
 constexpr int minimum_combat_readiness_percent = 25;
 constexpr int full_move_readiness_cost = 25;
 constexpr int attack_readiness_cost = 30;
-constexpr int defense_readiness_cost = 20;
 constexpr int turn_readiness_recovery = 25;
 
 constexpr int move_scale = 8;
@@ -632,6 +641,7 @@ GameState create_default_play_sandbox(int width, int height, int faction_count) 
         unit.max_hp = unit.hp;
         unit.attack = default_attack(unit.kind);
         unit.defense = default_defense(unit.kind);
+        unit.readiness_damage = default_readiness_damage(unit.kind);
         unit.max_readiness = default_max_readiness;
         unit.readiness = unit.max_readiness;
         unit.scaled_move = to_scaled_move(default_move(unit.kind));
@@ -1030,6 +1040,7 @@ CombatantPreview combatant_preview(const GameState& state, const Unit& unit) {
     preview.max_hp = unit.max_hp;
     preview.base_attack = unit.attack;
     preview.base_defense = unit.defense;
+    preview.base_readiness_damage = unit.readiness_damage;
     preview.hp_percent = hp_percent(unit);
     preview.readiness = clamped_readiness(unit);
     preview.max_readiness = std::max(1, unit.max_readiness);
@@ -1082,7 +1093,7 @@ CombatPreview combat_preview(const GameState& state, int attacker_id, int defend
 
     const int defender_hp_damage = scaled_damage_for_remaining(outcome.defender_damage, defender->hp, defender->max_hp);
     const int attacker_hp_damage = scaled_damage_for_remaining(outcome.attacker_damage, attacker->hp, attacker->max_hp);
-    const int defender_readiness_damage = scaled_damage_for_remaining(defense_readiness_cost, clamped_readiness(*defender), defender->max_readiness);
+    const int defender_readiness_damage = scaled_damage_for_remaining(attacker->readiness_damage, clamped_readiness(*defender), defender->max_readiness);
     const int attacker_readiness_damage = scaled_damage_for_remaining(attack_readiness_cost, clamped_readiness(*attacker), attacker->max_readiness);
 
     preview.attacker.damage_dealt = defender_hp_damage;
@@ -1096,7 +1107,6 @@ CombatPreview combat_preview(const GameState& state, int attacker_id, int defend
     preview.defender_retaliates = !preview.defender.destroyed && attacker_hp_damage > 0;
     preview.defender.damage_dealt = attacker_hp_damage;
     preview.attacker.damage_taken = attacker_hp_damage;
-    preview.defender.readiness_damage_dealt = attacker_readiness_damage;
     preview.attacker.readiness_damage_taken = attacker_readiness_damage;
     preview.attacker.result_hp = std::max(0, attacker->hp - attacker_hp_damage);
     preview.attacker.result_readiness = std::max(0, clamped_readiness(*attacker) - attacker_readiness_damage);
@@ -1222,6 +1232,7 @@ bool detach_herd(GameState& state, int unit_id, int horses, Coord destination) {
     herd.max_hp = herd.hp;
     herd.attack = default_attack(herd.kind);
     herd.defense = default_defense(herd.kind);
+    herd.readiness_damage = default_readiness_damage(herd.kind);
     herd.max_readiness = default_max_readiness;
     herd.readiness = herd.max_readiness;
     herd.scaled_move = to_scaled_move(default_move(herd.kind));
@@ -1288,6 +1299,7 @@ bool create_horse_archers(GameState& state, int unit_id, Coord destination) {
     horse_archers.max_hp = horse_archers.hp;
     horse_archers.attack = default_attack(horse_archers.kind);
     horse_archers.defense = default_defense(horse_archers.kind);
+    horse_archers.readiness_damage = default_readiness_damage(horse_archers.kind);
     horse_archers.max_readiness = default_max_readiness;
     horse_archers.readiness = horse_archers.max_readiness;
     horse_archers.scaled_move = to_scaled_move(default_move(horse_archers.kind));
@@ -1358,6 +1370,7 @@ void print_unit_json(const Unit& unit, std::ostream& out) {
         << ",\"maxHp\":" << unit.max_hp
         << ",\"attack\":" << unit.attack
         << ",\"defense\":" << unit.defense
+        << ",\"readinessDamage\":" << unit.readiness_damage
         << ",\"readiness\":" << clamped_readiness(unit)
         << ",\"maxReadiness\":" << std::max(1, unit.max_readiness)
         << ",\"scaledMove\":" << unit.scaled_move
@@ -1571,6 +1584,7 @@ void print_combatant_preview_json(const CombatantPreview& preview, std::ostream&
         << ",\"maxHp\":" << preview.max_hp
         << ",\"baseAttack\":" << preview.base_attack
         << ",\"baseDefense\":" << preview.base_defense
+        << ",\"baseReadinessDamage\":" << preview.base_readiness_damage
         << ",\"hpPercent\":" << preview.hp_percent
         << ",\"readiness\":" << preview.readiness
         << ",\"maxReadiness\":" << preview.max_readiness
@@ -1759,6 +1773,7 @@ GameState parse_game_state_json(const std::string& json) {
         unit.max_hp = int_field(unit_json, "maxHp", unit.hp);
         unit.attack = std::max(0, int_field(unit_json, "attack", default_attack(unit.kind)));
         unit.defense = std::max(1, int_field(unit_json, "defense", default_defense(unit.kind)));
+        unit.readiness_damage = std::max(0, int_field(unit_json, "readinessDamage", default_readiness_damage(unit.kind)));
         unit.max_readiness = std::max(1, int_field(unit_json, "maxReadiness", default_max_readiness));
         unit.readiness = std::max(0, std::min(int_field(unit_json, "readiness", unit.max_readiness), unit.max_readiness));
         const int default_scaled_move = to_scaled_move(default_move(unit.kind));

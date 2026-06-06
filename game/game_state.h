@@ -102,6 +102,7 @@ struct Unit {
     int max_hp = 10;
     int attack = 0;
     int defense = 1;
+    int readiness_damage = 0;
     int readiness = 100;
     int max_readiness = 100;
     int scaled_move = 32;
@@ -136,6 +137,7 @@ struct CombatantPreview {
     int max_hp = 0;
     int base_attack = 0;
     int base_defense = 0;
+    int base_readiness_damage = 0;
     int hp_percent = 0;
     int readiness = 100;
     int max_readiness = 100;

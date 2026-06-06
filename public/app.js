@@ -209,11 +209,11 @@ const factionCount = 2;
 const factionTurnOrder = ["mongol", "chinese", "persian"].slice(0, factionCount);
 
 const unitTypeDefaults = {
-  camp: { hp: 1, attack: 0, defense: 1, readiness: 100, move: 0 },
-  herd: { hp: 1, attack: 0, defense: 1, readiness: 100, move: 3 },
-  horse_archer: { hp: 10, attack: 4, defense: 3, readiness: 100, move: 4 },
-  infantry: { hp: 10, attack: 3, defense: 5, readiness: 100, move: 2 },
-  horde: { hp: 10, attack: 2, defense: 3, readiness: 100, move: 3, projectsZoc: true, respectsZoc: true, population: 0, metal: 0, horses: 0 },
+  camp: { hp: 1, attack: 0, defense: 1, readinessDamage: 0, readiness: 100, move: 0 },
+  herd: { hp: 1, attack: 0, defense: 1, readinessDamage: 0, readiness: 100, move: 3 },
+  horse_archer: { hp: 10, attack: 4, defense: 3, readinessDamage: 25, readiness: 100, move: 4 },
+  infantry: { hp: 10, attack: 3, defense: 5, readinessDamage: 10, readiness: 100, move: 2 },
+  horde: { hp: 10, attack: 2, defense: 3, readinessDamage: 0, readiness: 100, move: 3, projectsZoc: true, respectsZoc: true, population: 0, metal: 0, horses: 0 },
 };
 
 function terrainStyle(key) {
@@ -735,6 +735,9 @@ function normalizeUnit(unit, index) {
   if (Number.isFinite(unit.maxHp)) normalized.maxHp = unit.maxHp;
   normalized.attack = Number.isFinite(unit.attack) ? Math.max(0, Math.trunc(unit.attack)) : defaults.attack;
   normalized.defense = Number.isFinite(unit.defense) ? Math.max(1, Math.trunc(unit.defense)) : defaults.defense;
+  normalized.readinessDamage = Number.isFinite(unit.readinessDamage)
+    ? Math.max(0, Math.trunc(unit.readinessDamage))
+    : defaults.readinessDamage;
   normalized.maxReadiness = Number.isFinite(unit.maxReadiness) ? Math.max(1, Math.trunc(unit.maxReadiness)) : 100;
   normalized.readiness = Number.isFinite(unit.readiness)
     ? Math.max(0, Math.min(Math.trunc(unit.readiness), normalized.maxReadiness))
@@ -2097,6 +2100,7 @@ function makeEditorUnit(coord) {
     maxHp: defaults.hp,
     attack: defaults.attack,
     defense: defaults.defense,
+    readinessDamage: defaults.readinessDamage,
     readiness: defaults.readiness,
     maxReadiness: 100,
     move: defaults.move,
