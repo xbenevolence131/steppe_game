@@ -226,31 +226,28 @@ const unitTypeDefaults = {
   horde: { hp: 10, attack: 2, defense: 3, readinessDamage: 0, readiness: 100, move: 3, projectsZoc: true, respectsZoc: true, population: 0, metal: 0, horses: 0 },
 };
 
-const unitSpriteCellSize = 48;
 const unitSpriteColumns = {
-  infantry: 0,
-  horde: 1,
-  herd: 2,
-  horse_archer: 3,
-  chinese_cavalry: 4,
-  mongol_lancer: 5,
-  camp: 6,
+  infantry: "infantry",
+  horde: "horde",
+  herd: "herd",
+  horse_archer: "horse_archer",
+  chinese_cavalry: "chinese_cavalry",
+  mongol_lancer: "mongol_lancer",
+  camp: "camp",
 };
 const unitSpriteZoomLevels = [
-  { key: "small", row: 0, targetWidth: null, targetHeight: null, minFitMultiplier: 1 },
-  { key: "medium", row: 1, targetWidth: 40, targetHeight: 20, minFitMultiplier: 1.4 },
-  { key: "large", row: 2, targetWidth: 20, targetHeight: 10, minFitMultiplier: 2 },
+  { key: "small", pixelSize: 48, targetWidth: null, targetHeight: null, minFitMultiplier: 1 },
+  { key: "medium", pixelSize: 96, targetWidth: 40, targetHeight: 20, minFitMultiplier: 1.4 },
+  { key: "large", pixelSize: 128, targetWidth: 20, targetHeight: 10, minFitMultiplier: 2 },
 ];
-const unitSpriteSheet = new Image();
 const unitSpriteTintCache = new Map();
-let unitSpriteSheetReady = false;
-unitSpriteSheet.onload = () => {
-  unitSpriteSheetReady = true;
-  if (currentMap) {
-    drawMap();
-  }
+const horseArcherSpriteSources = {
+  small: "/unit-sprites/horse_archer_48.png",
+  medium: "/unit-sprites/horse_archer_96.png",
+  large: "/unit-sprites/horse_archer_128.png",
 };
-unitSpriteSheet.src = "/unit-glyphs.svg";
+const horseArcherSpriteImages = {};
+let unitSpriteSheetReady = false;
 
 function terrainStyle(key) {
   const terrain = editorTerrains.find((entry) => entry.key === key);
@@ -259,6 +256,33 @@ function terrainStyle(key) {
     stroke: terrain.stroke,
     label: terrain.labelColor,
   };
+}
+
+function loadHorseArcherSprites() {
+  const entries = Object.entries(horseArcherSpriteSources);
+  if (entries.length === 0) {
+    unitSpriteSheetReady = true;
+    return;
+  }
+
+  let loaded = 0;
+  const markLoaded = () => {
+    loaded += 1;
+    if (loaded === entries.length) {
+      unitSpriteSheetReady = true;
+      if (currentMap) {
+        drawMap();
+      }
+    }
+  };
+
+  for (const [key, src] of entries) {
+    const image = new Image();
+    image.onload = markLoaded;
+    image.onerror = markLoaded;
+    image.src = src;
+    horseArcherSpriteImages[key] = image;
+  }
 }
 
 function clampDimension(value, min, max, fallback) {
@@ -1616,37 +1640,176 @@ function currentUnitSpriteLevel() {
   return unitSpriteZoomLevels[viewport.zoomLevelIndex] || unitSpriteZoomLevels[0];
 }
 
+function fillSpritePixel(spriteCtx, x, y, color) {
+  spriteCtx.fillStyle = color;
+  spriteCtx.fillRect(x, y, 1, 1);
+}
+
+function fillSpriteRect(spriteCtx, x, y, width, height, color) {
+  spriteCtx.fillStyle = color;
+  spriteCtx.fillRect(x, y, width, height);
+}
+
+function drawSpriteLine(spriteCtx, x0, y0, x1, y1, color) {
+  let currentX = Math.round(x0);
+  let currentY = Math.round(y0);
+  const targetX = Math.round(x1);
+  const targetY = Math.round(y1);
+  const dx = Math.abs(targetX - currentX);
+  const sx = currentX < targetX ? 1 : -1;
+  const dy = -Math.abs(targetY - currentY);
+  const sy = currentY < targetY ? 1 : -1;
+  let error = dx + dy;
+
+  while (true) {
+    fillSpritePixel(spriteCtx, currentX, currentY, color);
+    if (currentX === targetX && currentY === targetY) {
+      break;
+    }
+    const doubledError = 2 * error;
+    if (doubledError >= dy) {
+      error += dy;
+      currentX += sx;
+    }
+    if (doubledError <= dx) {
+      error += dx;
+      currentY += sy;
+    }
+  }
+}
+
+function drawSpriteEllipseOutline(spriteCtx, centerX, centerY, radiusX, radiusY, color) {
+  const steps = Math.max(12, Math.round(Math.max(radiusX, radiusY) * 5));
+  for (let i = 0; i < steps; i += 1) {
+    const angle = (i / steps) * Math.PI * 2;
+    const x = Math.round(centerX + Math.cos(angle) * radiusX);
+    const y = Math.round(centerY + Math.sin(angle) * radiusY);
+    fillSpritePixel(spriteCtx, x, y, color);
+  }
+}
+
+function spriteScale(size) {
+  return size / 32;
+}
+
+function px(value, size) {
+  return Math.round(value * spriteScale(size));
+}
+
+function spriteRect(spriteCtx, x, y, width, height, size, color) {
+  fillSpriteRect(
+    spriteCtx,
+    px(x, size),
+    px(y, size),
+    Math.max(1, px(width, size)),
+    Math.max(1, px(height, size)),
+    color
+  );
+}
+
+function spriteLine(spriteCtx, x0, y0, x1, y1, size, color) {
+  drawSpriteLine(spriteCtx, px(x0, size), px(y0, size), px(x1, size), px(y1, size), color);
+}
+
+function spriteEllipse(spriteCtx, centerX, centerY, radiusX, radiusY, size, color) {
+  drawSpriteEllipseOutline(spriteCtx, px(centerX, size), px(centerY, size), px(radiusX, size), px(radiusY, size), color);
+}
+
+function drawInfantrySprite(spriteCtx, size, color) {
+  spriteLine(spriteCtx, 8, 24, 24, 8, size, color);
+  spriteLine(spriteCtx, 8, 8, 24, 24, size, color);
+  spriteRect(spriteCtx, 14, 6, 4, 4, size, color);
+  spriteLine(spriteCtx, 16, 11, 16, 25, size, color);
+}
+
+function drawHordeSprite(spriteCtx, size, color) {
+  spriteLine(spriteCtx, 16, 6, 27, 26, size, color);
+  spriteLine(spriteCtx, 27, 26, 5, 26, size, color);
+  spriteLine(spriteCtx, 5, 26, 16, 6, size, color);
+}
+
+function drawHerdSprite(spriteCtx, size, color) {
+  spriteEllipse(spriteCtx, 11, 17, 6, 4, size, color);
+  spriteEllipse(spriteCtx, 16, 17, 6, 4, size, color);
+  spriteEllipse(spriteCtx, 21, 17, 6, 4, size, color);
+}
+
+function drawChineseCavalrySprite(spriteCtx, size, color) {
+  spriteEllipse(spriteCtx, 15, 19, 9, 5, size, color);
+  spriteLine(spriteCtx, 23, 18, 27, 15, size, color);
+  spriteLine(spriteCtx, 8, 23, 6, 27, size, color);
+  spriteLine(spriteCtx, 13, 23, 14, 28, size, color);
+  spriteLine(spriteCtx, 20, 23, 19, 28, size, color);
+  spriteLine(spriteCtx, 24, 23, 27, 27, size, color);
+  spriteLine(spriteCtx, 16, 8, 16, 24, size, color);
+  spriteLine(spriteCtx, 10, 13, 22, 13, size, color);
+}
+
+function drawMongolLancerSprite(spriteCtx, size, color) {
+  spriteEllipse(spriteCtx, 14, 20, 8, 4, size, color);
+  spriteLine(spriteCtx, 21, 19, 25, 17, size, color);
+  spriteLine(spriteCtx, 8, 23, 6, 27, size, color);
+  spriteLine(spriteCtx, 14, 23, 15, 28, size, color);
+  spriteLine(spriteCtx, 20, 23, 19, 28, size, color);
+  spriteLine(spriteCtx, 7, 27, 28, 6, size, color);
+  spriteLine(spriteCtx, 24, 6, 29, 6, size, color);
+  spriteLine(spriteCtx, 29, 6, 27, 11, size, color);
+}
+
+function drawCampSprite(spriteCtx, size, color) {
+  spriteLine(spriteCtx, 7, 26, 16, 6, size, color);
+  spriteLine(spriteCtx, 16, 6, 25, 26, size, color);
+  spriteLine(spriteCtx, 25, 26, 7, 26, size, color);
+  spriteLine(spriteCtx, 13, 26, 13, 18, size, color);
+  spriteLine(spriteCtx, 19, 26, 19, 18, size, color);
+  spriteLine(spriteCtx, 13, 18, 19, 18, size, color);
+}
+
+const unitSpriteDrawers = {
+  infantry: drawInfantrySprite,
+  horde: drawHordeSprite,
+  herd: drawHerdSprite,
+  chinese_cavalry: drawChineseCavalrySprite,
+  mongol_lancer: drawMongolLancerSprite,
+  camp: drawCampSprite,
+};
+
 function tintedUnitSprite(kind, color, level) {
-  if (!unitSpriteSheetReady || !Object.prototype.hasOwnProperty.call(unitSpriteColumns, kind)) {
+  const normalizedKind = kind === "cavalry" ? "horse_archer" : kind;
+  if (!Object.prototype.hasOwnProperty.call(unitSpriteColumns, normalizedKind)) {
     return null;
   }
-  const cacheKey = `${kind}:${color}:${level.key}`;
+  const spriteLevel = level || currentUnitSpriteLevel();
+  const cacheKey = `${normalizedKind}:${color}:${spriteLevel.key}`;
   const cached = unitSpriteTintCache.get(cacheKey);
   if (cached) {
     return cached;
   }
 
   const canvas = document.createElement("canvas");
-  canvas.width = unitSpriteCellSize;
-  canvas.height = unitSpriteCellSize;
+  canvas.width = spriteLevel.pixelSize;
+  canvas.height = spriteLevel.pixelSize;
   const spriteCtx = canvas.getContext("2d");
   if (!spriteCtx) {
     return null;
   }
-  spriteCtx.drawImage(
-    unitSpriteSheet,
-    unitSpriteColumns[kind] * unitSpriteCellSize,
-    level.row * unitSpriteCellSize,
-    unitSpriteCellSize,
-    unitSpriteCellSize,
-    0,
-    0,
-    unitSpriteCellSize,
-    unitSpriteCellSize
-  );
-  spriteCtx.globalCompositeOperation = "source-in";
-  spriteCtx.fillStyle = color;
-  spriteCtx.fillRect(0, 0, unitSpriteCellSize, unitSpriteCellSize);
+  spriteCtx.imageSmoothingEnabled = false;
+  if (normalizedKind === "horse_archer") {
+    const source = horseArcherSpriteImages[spriteLevel.key];
+    if (!unitSpriteSheetReady || !source || !source.complete || source.naturalWidth === 0) {
+      return null;
+    }
+    spriteCtx.drawImage(source, 0, 0, spriteLevel.pixelSize, spriteLevel.pixelSize);
+    spriteCtx.globalCompositeOperation = "source-in";
+    spriteCtx.fillStyle = color;
+    spriteCtx.fillRect(0, 0, spriteLevel.pixelSize, spriteLevel.pixelSize);
+  } else {
+    const drawSprite = unitSpriteDrawers[normalizedKind];
+    if (!drawSprite) {
+      return null;
+    }
+    drawSprite(spriteCtx, spriteLevel.pixelSize, color);
+  }
   unitSpriteTintCache.set(cacheKey, canvas);
   return canvas;
 }
@@ -1680,7 +1843,10 @@ function drawUnitSpriteGlyph(unit, faction, x, y, metrics) {
   const size = metrics.iconSize;
   const centerX = x + metrics.iconCenterX;
   const centerY = y + metrics.height / 2;
+  const smoothing = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = true;
   ctx.drawImage(sprite, centerX - size / 2, centerY - size / 2, size, size);
+  ctx.imageSmoothingEnabled = smoothing;
   return true;
 }
 
@@ -3090,4 +3256,5 @@ new ResizeObserver(() => {
 
 initializeTerrainPalette();
 syncModeControls();
+loadHorseArcherSprites();
 createDefaultPlayScenario();
