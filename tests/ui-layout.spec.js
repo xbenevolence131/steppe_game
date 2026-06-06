@@ -884,34 +884,29 @@ test("unit counters use sprite glyph zoom bands", async ({ page, isMobile }) => 
   }))).resolves.toEqual(expect.objectContaining({ index: 2, level: "large" }));
   const largeScale = await page.evaluate(() => viewport.scale);
   expect(largeScale).toBeGreaterThan(mediumScale);
-  expect(largeScale / initialScale).toBeLessThanOrEqual(2.01);
   await page.locator("#zoom-in-button").click();
   await expect(page.evaluate(() => viewport.zoomLevelIndex)).resolves.toBe(2);
   const coverageScales = await page.evaluate(() => {
     currentMap = { width: 120, height: 80 };
     updateGeometry(currentMap);
     viewport.fitScale = Math.min(viewport.width / geometry.width, viewport.height / geometry.height);
-    const mediumTarget = worldSizeForHexSpan(40, 20);
-    const largeTarget = worldSizeForHexSpan(20, 10);
     const mediumLevel = unitSpriteZoomLevels.find((level) => level.key === "medium");
     const largeLevel = unitSpriteZoomLevels.find((level) => level.key === "large");
+    const mediumTarget = worldSizeForHexSpan(mediumLevel.visibleHexColumns, 1);
+    const largeTarget = worldSizeForHexSpan(largeLevel.visibleHexColumns, 1);
     return {
       fitDelta: Math.abs(zoomScaleForLevel(0) - viewport.fitScale),
-      mediumDelta: Math.abs(zoomScaleForLevel(1) - Math.max(
-        viewport.fitScale,
-        viewport.fitScale * mediumLevel.minFitMultiplier,
-        Math.min(viewport.width / mediumTarget.width, viewport.height / mediumTarget.height)
-      )),
-      largeDelta: Math.abs(zoomScaleForLevel(2) - Math.max(
-        viewport.fitScale,
-        viewport.fitScale * largeLevel.minFitMultiplier,
-        Math.min(viewport.width / largeTarget.width, viewport.height / largeTarget.height)
-      )),
+      mediumDelta: Math.abs(zoomScaleForLevel(1) - Math.max(viewport.fitScale, viewport.width / mediumTarget.width)),
+      largeDelta: Math.abs(zoomScaleForLevel(2) - Math.max(viewport.fitScale, viewport.width / largeTarget.width)),
+      mediumColumns: mediumTarget.width / (viewport.width / zoomScaleForLevel(1)),
+      largeColumns: largeTarget.width / (viewport.width / zoomScaleForLevel(2)),
     };
   });
   expect(coverageScales.fitDelta).toBeLessThan(0.000001);
   expect(coverageScales.mediumDelta).toBeLessThan(0.000001);
   expect(coverageScales.largeDelta).toBeLessThan(0.000001);
+  expect(coverageScales.mediumColumns).toBeCloseTo(1, 5);
+  expect(coverageScales.largeColumns).toBeCloseTo(1, 5);
 });
 
 test("horde inspector shows resource counters", async ({ page, isMobile }) => {

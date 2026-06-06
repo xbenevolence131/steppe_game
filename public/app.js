@@ -264,9 +264,9 @@ const unitSpriteColumns = {
   camp: "camp",
 };
 const unitSpriteZoomLevels = [
-  { key: "small", pixelSize: 48, targetWidth: null, targetHeight: null, minFitMultiplier: 1 },
-  { key: "medium", pixelSize: 96, targetWidth: 40, targetHeight: 20, minFitMultiplier: 1.4 },
-  { key: "large", pixelSize: 128, targetWidth: 20, targetHeight: 10, minFitMultiplier: 2 },
+  { key: "small", pixelSize: 48, visibleHexColumns: null },
+  { key: "medium", pixelSize: 96, visibleHexColumns: 40 },
+  { key: "large", pixelSize: 128, visibleHexColumns: 20 },
 ];
 const unitSpriteTintCache = new Map();
 const bitmapUnitSpriteSources = {
@@ -747,16 +747,13 @@ function constrainViewport() {
 
 function zoomScaleForLevel(index) {
   const level = unitSpriteZoomLevels[clamp(index, 0, unitSpriteZoomLevels.length - 1)] || unitSpriteZoomLevels[0];
-  const minimumTierScale = viewport.fitScale * (level.minFitMultiplier || 1);
-  if (!level.targetWidth || !level.targetHeight) {
-    return clamp(minimumTierScale, viewport.minScale, viewport.maxScale);
+  if (!level.visibleHexColumns || !currentMap) {
+    return clamp(viewport.fitScale, viewport.minScale, viewport.maxScale);
   }
-  const target = worldSizeForHexSpan(
-    Math.min(currentMap ? currentMap.width : level.targetWidth, level.targetWidth),
-    Math.min(currentMap ? currentMap.height : level.targetHeight, level.targetHeight)
-  );
-  const targetScale = Math.min(viewport.width / target.width, viewport.height / target.height);
-  return clamp(Math.max(viewport.fitScale, minimumTierScale, targetScale), viewport.minScale, viewport.maxScale);
+  const targetColumns = Math.max(1, Math.min(currentMap.width, level.visibleHexColumns));
+  const target = worldSizeForHexSpan(targetColumns, 1);
+  const targetScale = viewport.width / target.width;
+  return clamp(Math.max(viewport.fitScale, targetScale), viewport.minScale, viewport.maxScale);
 }
 
 function setZoomLevelAt(panelX, panelY, nextIndex) {
