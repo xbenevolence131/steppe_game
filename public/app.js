@@ -30,6 +30,7 @@ const blankMapButton = document.querySelector("#blank-map-button");
 const saveButton = document.querySelector("#save-button");
 const loadButton = document.querySelector("#load-button");
 const loadFileInput = document.querySelector("#load-file-input");
+const undoButton = document.querySelector("#undo-button");
 const zoomInButton = document.querySelector("#zoom-in-button");
 const zoomOutButton = document.querySelector("#zoom-out-button");
 const fitButton = document.querySelector("#fit-button");
@@ -76,7 +77,10 @@ let isPainting = false;
 let lastPointer = { x: 0, y: 0 };
 let selectedTerrain = "lake";
 let paintStrokeKeys = new Set();
+let paintUndoRecorded = false;
 let terrainUndo = new Map();
+let localUndoStack = [];
+let playUndoDepth = 0;
 let currentTurn = 1;
 let activeFactionIndex = 0;
 let activeContextMenu = null;
@@ -103,6 +107,8 @@ const geometry = {
   width: 0,
   height: 0,
 };
+
+const maxUndoDepth = 64;
 
 const editorTerrains = [
   { key: "grassland", label: "Grassland", fill: "#d8c596", stroke: "#7e735f", labelColor: "#29251d" },
@@ -650,6 +656,7 @@ function stopPanning() {
 function stopPainting() {
   isPainting = false;
   paintStrokeKeys = new Set();
+  paintUndoRecorded = false;
 }
 
 function activeFactionKey() {
@@ -713,6 +720,53 @@ function ensureGameMeta() {
   currentMap.game = currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {};
   currentTurn = Number.isInteger(currentMap.game.round) ? currentMap.game.round : 1;
   activeFactionIndex = Number.isInteger(currentMap.game.activeFactionIndex) ? currentMap.game.activeFactionIndex : 0;
+}
+
+function cloneMapState(map) {
+  return map ? JSON.parse(JSON.stringify(map)) : null;
+}
+
+function canUndo() {
+  return appMode === "play" ? playUndoDepth > 0 : localUndoStack.length > 0;
+}
+
+function syncUndoControls() {
+  if (undoButton) {
+    undoButton.disabled = !canUndo();
+  }
+}
+
+function clearUndoHistory() {
+  localUndoStack = [];
+  playUndoDepth = 0;
+  syncUndoControls();
+}
+
+function recordLocalUndo() {
+  if (!currentMap) {
+    return;
+  }
+  localUndoStack.push(cloneMapState(currentMap));
+  if (localUndoStack.length > maxUndoDepth) {
+    localUndoStack.shift();
+  }
+  syncUndoControls();
+}
+
+function recordPlayUndo() {
+  playUndoDepth = Math.min(maxUndoDepth, playUndoDepth + 1);
+  syncUndoControls();
+}
+
+function restoreLocalUndo(snapshot) {
+  if (!snapshot) {
+    return;
+  }
+  currentMap = refreshDerivedTopology(snapshot);
+  terrainUndo = new Map();
+  ensureGameMeta();
+  syncModeControls();
+  drawMap();
 }
 
 function normalizeUnit(unit, index) {
@@ -792,6 +846,12 @@ async function postAppCommand(command, gameId = "local-dev") {
     throw new Error(payload.error || "engine command failed");
   }
   return payload.view;
+}
+
+async function postUndoableGameCommand(command) {
+  const payload = await postAppCommand(command);
+  recordPlayUndo();
+  return payload;
 }
 
 function legalMoves() {
@@ -1156,6 +1216,7 @@ function syncModeControls() {
   scenarioModeButton.setAttribute("aria-pressed", String(appMode === "scenario"));
   playModeButton.setAttribute("aria-pressed", String(appMode === "play"));
   syncPlayControls();
+  syncUndoControls();
 }
 
 function setAppMode(mode) {
@@ -1833,7 +1894,7 @@ async function deployDetachedHerdAt(coord) {
   if (!detachHerdPlacement || !detachDeployableAt(coord)) {
     return false;
   }
-  const payload = await postAppCommand({
+  const payload = await postUndoableGameCommand({
     type: "detach_herd",
     unitId: detachHerdPlacement.unitId,
     horses: detachHerdPlacement.horses,
@@ -1882,7 +1943,7 @@ async function deployCreatedHorseArchersAt(coord) {
   if (!createHorseArchersPlacement || !createHorseArchersDeployableAt(coord)) {
     return false;
   }
-  const payload = await postAppCommand({
+  const payload = await postUndoableGameCommand({
     type: "create_horse_archers",
     unitId: createHorseArchersPlacement.unitId,
     to: { q: coord.q, r: coord.r },
@@ -1916,7 +1977,7 @@ async function moveSelectedUnitTo(coord) {
     return false;
   }
   hideCombatPreview();
-  const payload = await postAppCommand({
+  const payload = await postUndoableGameCommand({
     type: "move_unit",
     unitId: unit.id,
     to: { q: coord.q, r: coord.r },
@@ -1933,7 +1994,7 @@ async function attackSelectedUnit(defender) {
     return false;
   }
   hideCombatPreview();
-  const payload = await postAppCommand({
+  const payload = await postUndoableGameCommand({
     type: "attack_unit",
     attackerId: attacker.id,
     defenderId: defender.id,
@@ -1947,12 +2008,48 @@ async function attackSelectedUnit(defender) {
 async function advanceTurn() {
   hideCombatPreview();
   try {
-    applyGamePatch(await postAppCommand({ type: "end_turn" }));
+    applyGamePatch(await postUndoableGameCommand({ type: "end_turn" }));
   } catch (error) {
     window.alert(error.message);
   }
   syncModeControls();
   drawMap();
+}
+
+async function undoLastAction() {
+  hideCombatPreview();
+  hideContextMenu();
+  hideDetachHerdAmount();
+  cancelDetachHerdPlacement();
+  cancelCreateHorseArchersPlacement();
+
+  if (appMode === "play") {
+    if (playUndoDepth <= 0) {
+      syncUndoControls();
+      return false;
+    }
+    try {
+      const payload = await postAppCommand({ type: "undo" });
+      playUndoDepth = Math.max(0, playUndoDepth - 1);
+      applyGamePatch(payload);
+      syncModeControls();
+      drawMap();
+      return true;
+    } catch (error) {
+      playUndoDepth = 0;
+      syncUndoControls();
+      window.alert(error.message);
+      return false;
+    }
+  }
+
+  const snapshot = localUndoStack.pop();
+  if (!snapshot) {
+    syncUndoControls();
+    return false;
+  }
+  restoreLocalUndo(snapshot);
+  return true;
 }
 
 function drawMap() {
@@ -2189,6 +2286,10 @@ function paintAtPointer(event) {
       return;
     }
     paintStrokeKeys.add(key);
+    if (!paintUndoRecorded) {
+      recordLocalUndo();
+      paintUndoRecorded = true;
+    }
     if (editorEdgeFeatureSelect.value === "road") {
       toggleRoadEdge(edge);
     } else {
@@ -2213,6 +2314,10 @@ function paintAtPointer(event) {
       return;
     }
     paintStrokeKeys.add(key);
+    if (!paintUndoRecorded) {
+      recordLocalUndo();
+      paintUndoRecorded = true;
+    }
     toggleEditorUnit(hex);
     syncModeControls();
     drawMap();
@@ -2225,6 +2330,10 @@ function paintAtPointer(event) {
     return;
   }
   paintStrokeKeys.add(key);
+  if (!paintUndoRecorded) {
+    recordLocalUndo();
+    paintUndoRecorded = true;
+  }
   toggleHexTerrain(hex, terrain);
   refreshDerivedTopology();
   drawMap();
@@ -2289,6 +2398,7 @@ async function generateMap() {
     currentMap.units = Array.isArray(currentMap.units) ? currentMap.units : [];
     currentMap.game = currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {};
     terrainUndo = new Map();
+    clearUndoHistory();
     ensureGameMeta();
     refreshDerivedTopology();
     syncModeControls();
@@ -2339,6 +2449,7 @@ function createBlankMap(options = {}) {
     },
   };
   terrainUndo = new Map();
+  clearUndoHistory();
   currentMap.game = {};
   ensureGameMeta();
   refreshDerivedTopology();
@@ -2356,6 +2467,7 @@ async function createDefaultPlayScenario() {
     });
     currentMap.units = Array.isArray(currentMap.units) ? currentMap.units.map(normalizeUnit) : [];
     terrainUndo = new Map();
+    clearUndoHistory();
     ensureGameMeta();
     refreshDerivedTopology();
     syncModeControls();
@@ -2425,6 +2537,17 @@ function mapFilePickerTypes() {
   }];
 }
 
+function isTextEditingTarget(target) {
+  if (!target) {
+    return false;
+  }
+  const tagName = target.tagName;
+  return target.isContentEditable
+    || tagName === "INPUT"
+    || tagName === "TEXTAREA"
+    || tagName === "SELECT";
+}
+
 function mapBlob() {
   refreshDerivedTopology();
   return new Blob([`${JSON.stringify(currentMap, null, 2)}\n`], { type: "application/json" });
@@ -2471,6 +2594,7 @@ async function loadMapText(text) {
   try {
     currentMap = normalizeLoadedMap(JSON.parse(text));
     terrainUndo = new Map();
+    clearUndoHistory();
     ensureGameMeta();
     widthInput.value = currentMap.width;
     heightInput.value = currentMap.height;
@@ -2526,6 +2650,9 @@ editorUnitSideSelect.addEventListener("change", syncEditorControls);
 saveButton.addEventListener("click", saveCurrentMap);
 loadButton.addEventListener("click", chooseMapFile);
 loadFileInput.addEventListener("change", () => loadMapFile(loadFileInput.files[0]));
+undoButton.addEventListener("click", () => {
+  undoLastAction().catch((error) => window.alert(error.message));
+});
 endTurnButton.addEventListener("click", advanceTurn);
 controlEndTurnButton.addEventListener("click", advanceTurn);
 statusEndTurnButton.addEventListener("click", advanceTurn);
@@ -2604,6 +2731,7 @@ mapPanel.addEventListener("pointerdown", async (event) => {
     event.preventDefault();
     isPainting = true;
     paintStrokeKeys = new Set();
+    paintUndoRecorded = false;
     paintAtPointer(event);
     mapPanel.setPointerCapture(event.pointerId);
     return;
@@ -2690,6 +2818,17 @@ mapPanel.addEventListener("keydown", (event) => {
   }
   event.preventDefault();
   panBy(move[0], move[1]);
+});
+
+window.addEventListener("keydown", (event) => {
+  if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey || event.key.toLowerCase() !== "z") {
+    return;
+  }
+  if (isTextEditingTarget(event.target) || !canUndo()) {
+    return;
+  }
+  event.preventDefault();
+  undoLastAction().catch((error) => window.alert(error.message));
 });
 
 window.addEventListener("resize", () => {

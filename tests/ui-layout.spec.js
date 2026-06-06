@@ -507,6 +507,39 @@ test("clicking attackable enemies resolves combat", async ({ page, isMobile }) =
   });
 });
 
+test("undo reverts play movement through the engine", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop pointer geometry is simpler for undo assertions");
+
+  await openPlayMode(page);
+  await expect(page.locator("#undo-button")).toBeDisabled();
+
+  const moved = await page.evaluate(async () => {
+    const unit = currentMap.units.find((candidate) => candidate.kind === "horse_archer" && candidate.faction === "mongol");
+    await selectUnit(unit);
+    const move = currentMap.game.legalMoves[0];
+    const before = { q: unit.q, r: unit.r };
+    await moveSelectedUnitTo(move);
+    return {
+      unitId: unit.id,
+      before,
+      after: { q: move.q, r: move.r },
+    };
+  });
+
+  await expect(page.locator("#undo-button")).toBeEnabled();
+  await expect.poll(() => page.evaluate((unitId) => {
+    const unit = currentMap.units.find((candidate) => candidate.id === unitId);
+    return { q: unit.q, r: unit.r };
+  }, moved.unitId)).toEqual(moved.after);
+
+  await page.locator("#undo-button").click();
+  await expect.poll(() => page.evaluate((unitId) => {
+    const unit = currentMap.units.find((candidate) => candidate.id === unitId);
+    return { q: unit.q, r: unit.r };
+  }, moved.unitId)).toEqual(moved.before);
+  await expect(page.locator("#undo-button")).toBeDisabled();
+});
+
 test("play sidebar lists deployed units and bottom panel inspects selection", async ({ page, isMobile }) => {
   test.skip(isMobile, "desktop-only bottom panel assertion");
 
@@ -944,8 +977,10 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   let point = await edgePoint({ q: 2, r: 2 }, { q: 3, r: 2 });
   await page.mouse.click(point.x, point.y);
   await expect.poll(() => page.evaluate(() => currentMap.roads.length)).toBe(1);
-  await page.mouse.click(point.x, point.y);
+  await expect(page.locator("#undo-button")).toBeEnabled();
+  await page.locator("#undo-button").click();
   await expect.poll(() => page.evaluate(() => currentMap.roads.length)).toBe(0);
+  await expect(page.locator("#undo-button")).toBeDisabled();
 
   await page.locator("#editor-edge-feature").selectOption("river");
   point = await edgePoint({ q: 2, r: 2 }, { q: 3, r: 2 });

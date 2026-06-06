@@ -11,6 +11,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -45,6 +46,8 @@ public:
 };
 
 std::map<std::string, steppe::game::GameState> games;
+std::map<std::string, std::vector<steppe::game::GameState>> undo_stacks;
+constexpr std::size_t max_undo_depth = 64;
 
 std::size_t find_matching(const std::string& json, std::size_t open_index, char open, char close) {
     int depth = 0;
@@ -218,6 +221,14 @@ std::string command_response(const std::string& game_id, bool ok, const std::str
         + ",\"gameId\":\"" + escape_json(game_id) + "\",\"view\":" + view_json + "}";
 }
 
+void push_undo_state(const std::string& game_id, const steppe::game::GameState& state) {
+    std::vector<steppe::game::GameState>& stack = undo_stacks[game_id];
+    stack.push_back(state);
+    if (stack.size() > max_undo_depth) {
+        stack.erase(stack.begin());
+    }
+}
+
 std::string error_response(const std::string& message) {
     return "{\"ok\":false,\"error\":\"" + escape_json(message) + "\"}";
 }
@@ -262,6 +273,7 @@ std::string handle_command(const std::string& body) {
             std::max(1, std::min(3, int_field(command, "factions", 2)))
         );
         games[game_id] = state;
+        undo_stacks[game_id].clear();
         return ok_response(game_id, game_state_json(state));
     }
 
@@ -271,25 +283,42 @@ std::string handle_command(const std::string& body) {
     }
 
     steppe::game::GameState& state = found->second;
+    if (type == "undo") {
+        std::vector<steppe::game::GameState>& stack = undo_stacks[game_id];
+        if (stack.empty()) {
+            return command_response(game_id, false, game_patch_json(state, false));
+        }
+        state = stack.back();
+        stack.pop_back();
+        return command_response(game_id, true, game_patch_json(state, true));
+    }
     if (type == "select_unit") {
         const bool ok = steppe::game::select_unit(state, int_field(command, "unitId", 0));
         return command_response(game_id, ok, game_patch_json(state, ok));
     }
     if (type == "move_unit") {
         const std::string to = object_field(command, "to");
+        const steppe::game::GameState before = state;
         const bool ok = steppe::game::move_unit(
             state,
             int_field(command, "unitId", 0),
             {int_field(to, "q", 0), int_field(to, "r", 0)}
         );
+        if (ok) {
+            push_undo_state(game_id, before);
+        }
         return command_response(game_id, ok, game_patch_json(state, ok));
     }
     if (type == "attack_unit") {
+        const steppe::game::GameState before = state;
         const bool ok = steppe::game::attack_unit(
             state,
             int_field(command, "attackerId", 0),
             int_field(command, "defenderId", 0)
         );
+        if (ok) {
+            push_undo_state(game_id, before);
+        }
         return command_response(game_id, ok, game_patch_json(state, ok));
     }
     if (type == "combat_preview") {
@@ -310,12 +339,16 @@ std::string handle_command(const std::string& body) {
     }
     if (type == "detach_herd") {
         const std::string to = object_field(command, "to");
+        const steppe::game::GameState before = state;
         const bool ok = steppe::game::detach_herd(
             state,
             int_field(command, "unitId", 0),
             std::max(0, int_field(command, "horses", 0)),
             {int_field(to, "q", 0), int_field(to, "r", 0)}
         );
+        if (ok) {
+            push_undo_state(game_id, before);
+        }
         return command_response(game_id, ok, game_patch_json(state, ok));
     }
     if (type == "create_horse_archers_options") {
@@ -327,15 +360,21 @@ std::string handle_command(const std::string& body) {
     }
     if (type == "create_horse_archers") {
         const std::string to = object_field(command, "to");
+        const steppe::game::GameState before = state;
         const bool ok = steppe::game::create_horse_archers(
             state,
             int_field(command, "unitId", 0),
             {int_field(to, "q", 0), int_field(to, "r", 0)}
         );
+        if (ok) {
+            push_undo_state(game_id, before);
+        }
         return command_response(game_id, ok, game_patch_json(state, ok));
     }
     if (type == "end_turn") {
+        const steppe::game::GameState before = state;
         steppe::game::end_turn(state);
+        push_undo_state(game_id, before);
         return command_response(game_id, true, game_patch_json(state, true));
     }
 
