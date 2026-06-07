@@ -364,6 +364,25 @@ test("combat uses unit stats terrain defense and retaliation", async ({ isMobile
   expect(hillAttacker.hp).toBe(9);
   expect(hillDefender.hp).toBe(9);
 
+  const terrainDefenseCases = [
+    ["grassland", 100, 3],
+    ["desert", 90, 3],
+    ["hill", 125, 4],
+    ["forest", 125, 4],
+    ["marsh", 115, 4],
+    ["mountain", 150, 5],
+    ["urban", 150, 5],
+  ];
+  for (const [terrain, defensePercent, effectiveDefense] of terrainDefenseCases) {
+    const terrainPreview = runEngineJson(
+      ["game-combat-preview", "--attacker", "1", "--defender", "2"],
+      combatGameState(terrain)
+    );
+    expect(terrainPreview.defender.terrain).toBe(terrain);
+    expect(terrainPreview.defender.terrainDefensePercent).toBe(defensePercent);
+    expect(terrainPreview.defender.effectiveDefense).toBe(effectiveDefense);
+  }
+
   const infantryState = combatGameState("grassland");
   infantryState.units[0].kind = "infantry";
   infantryState.units[1].stance = "defensive";

@@ -1080,13 +1080,13 @@ int terrain_defense_percent(Terrain terrain) {
         case Terrain::Forest:
             return 125;
         case Terrain::Mountain:
-            return 150;
         case Terrain::Urban:
-            return 115;
+            return 150;
         case Terrain::Marsh:
+            return 115;
+        case Terrain::Desert:
             return 90;
         case Terrain::Grassland:
-        case Terrain::Desert:
         case Terrain::None:
         case Terrain::Lake:
             return 100;
