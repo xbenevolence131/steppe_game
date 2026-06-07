@@ -317,6 +317,45 @@ FactionState faction_for_owner(OwnerId owner) {
     return {neutral_owner, "neutral", "Neutral", "#777777", 0, 0, false, false};
 }
 
+OwnerId owner_from_faction_key(const std::string& key, OwnerId fallback = neutral_owner) {
+    if (key == "mongol") {
+        return mongol_owner;
+    }
+    if (key == "chinese") {
+        return chinese_owner;
+    }
+    if (key == "persian") {
+        return persian_owner;
+    }
+    if (key == "neutral") {
+        return neutral_owner;
+    }
+    return fallback;
+}
+
+const char* ai_directive_kind_to_string(AiDirectiveKind kind) {
+    switch (kind) {
+        case AiDirectiveKind::DefendHex: return "defend_hex";
+        case AiDirectiveKind::HuntHorde: return "hunt_horde";
+        case AiDirectiveKind::CaptureHex: return "capture_hex";
+        case AiDirectiveKind::Hunt: return "hunt";
+    }
+    return "hunt";
+}
+
+AiDirectiveKind ai_directive_kind_from_string(const std::string& value) {
+    if (value == "defend_hex") {
+        return AiDirectiveKind::DefendHex;
+    }
+    if (value == "hunt_horde") {
+        return AiDirectiveKind::HuntHorde;
+    }
+    if (value == "capture_hex") {
+        return AiDirectiveKind::CaptureHex;
+    }
+    return AiDirectiveKind::Hunt;
+}
+
 struct UnitTypeTable {
     std::vector<UnitKind> order;
     std::map<UnitKind, UnitDefaults> defaults;
@@ -702,6 +741,20 @@ std::vector<std::string> string_array_field(const Json& json, const char* key) {
     for (const Json& item : *found) {
         if (item.is_string()) {
             values.push_back(item.get<std::string>());
+        }
+    }
+    return values;
+}
+
+std::vector<int> int_array_field(const Json& json, const char* key) {
+    std::vector<int> values;
+    const auto found = json.find(key);
+    if (found == json.end() || !found->is_array()) {
+        return values;
+    }
+    for (const Json& item : *found) {
+        if (item.is_number_integer()) {
+            values.push_back(item.get<int>());
         }
     }
     return values;
@@ -1957,14 +2010,23 @@ std::vector<int> ai_unit_turn_order(const GameState& state, OwnerId owner) {
     return ids;
 }
 
-const Unit* nearest_enemy_unit(const GameState& state, const Unit& unit) {
+const Unit* nearest_enemy_unit_from_coord(
+    const GameState& state,
+    OwnerId owner,
+    Coord origin,
+    OwnerId target_owner = neutral_owner,
+    bool horde_only = false
+) {
     const Unit* nearest = nullptr;
     int nearest_distance = std::numeric_limits<int>::max();
     for (const Unit& candidate : state.units) {
-        if (candidate.owner == unit.owner || candidate.hp <= 0) {
+        if (candidate.owner == owner
+            || candidate.hp <= 0
+            || (target_owner != neutral_owner && candidate.owner != target_owner)
+            || (horde_only && candidate.kind != UnitKind::Horde)) {
             continue;
         }
-        const int distance = hex_distance(unit.coord, candidate.coord);
+        const int distance = hex_distance(origin, candidate.coord);
         if (distance < nearest_distance
             || (distance == nearest_distance && nearest != nullptr && candidate.id < nearest->id)
             || (distance == nearest_distance && nearest == nullptr)) {
@@ -1975,7 +2037,19 @@ const Unit* nearest_enemy_unit(const GameState& state, const Unit& unit) {
     return nearest;
 }
 
-bool ai_attack_best_adjacent_enemy(GameState& state, int attacker_id) {
+const Unit* nearest_enemy_unit(const GameState& state, const Unit& unit) {
+    return nearest_enemy_unit_from_coord(state, unit.owner, unit.coord);
+}
+
+bool ai_attack_allowed_by_directive(const Unit& defender, const AiDirective& directive) {
+    if (directive.kind == AiDirectiveKind::HuntHorde) {
+        return defender.kind == UnitKind::Horde
+            && (directive.target_owner == neutral_owner || defender.owner == directive.target_owner);
+    }
+    return true;
+}
+
+bool ai_attack_best_adjacent_enemy(GameState& state, int attacker_id, const AiDirective& directive) {
     const std::vector<AttackableUnit> attacks = attackable_units(state, attacker_id);
     if (attacks.empty()) {
         return false;
@@ -1991,6 +2065,9 @@ bool ai_attack_best_adjacent_enemy(GameState& state, int attacker_id) {
         if (defender == nullptr) {
             continue;
         }
+        if (!ai_attack_allowed_by_directive(*defender, directive)) {
+            continue;
+        }
         const int score = defender->hp * 100
             + effective_defense_score(state, *defender) * 10
             + hex_distance(attacker->coord, defender->coord);
@@ -1998,6 +2075,9 @@ bool ai_attack_best_adjacent_enemy(GameState& state, int attacker_id) {
             best_score = score;
             best_defender_id = defender->id;
         }
+    }
+    if (best_score == std::numeric_limits<int>::max()) {
+        return false;
     }
     return attack_unit(state, attacker_id, best_defender_id);
 }
@@ -2033,24 +2113,91 @@ bool ai_move_toward_target(GameState& state, int unit_id, Coord target) {
     return move_unit(state, unit_id, best->coord);
 }
 
-void execute_ai_turn(GameState& state, OwnerId owner) {
-    const std::vector<int> unit_ids = ai_unit_turn_order(state, owner);
-    for (const int unit_id : unit_ids) {
-        if (ai_attack_best_adjacent_enemy(state, unit_id)) {
-            continue;
-        }
-        const Unit* unit = find_unit(state, unit_id);
-        if (unit == nullptr) {
-            continue;
-        }
-        const Unit* target = nearest_enemy_unit(state, *unit);
-        if (target == nullptr) {
-            continue;
-        }
-        if (ai_move_toward_target(state, unit_id, target->coord)) {
-            ai_attack_best_adjacent_enemy(state, unit_id);
+AiDirective default_hunt_directive() {
+    AiDirective directive;
+    directive.kind = AiDirectiveKind::Hunt;
+    return directive;
+}
+
+const Unit* ai_target_for_directive(const GameState& state, const Unit& unit, const AiDirective& directive) {
+    switch (directive.kind) {
+        case AiDirectiveKind::HuntHorde:
+            return nearest_enemy_unit_from_coord(state, unit.owner, unit.coord, directive.target_owner, true);
+        case AiDirectiveKind::DefendHex:
+            return nearest_enemy_unit_from_coord(state, unit.owner, directive.target);
+        case AiDirectiveKind::CaptureHex:
+            return nearest_enemy_unit_from_coord(state, unit.owner, directive.target);
+        case AiDirectiveKind::Hunt:
+            return nearest_enemy_unit(state, unit);
+    }
+    return nearest_enemy_unit(state, unit);
+}
+
+void execute_ai_unit_directive(GameState& state, int unit_id, const AiDirective& directive) {
+    if (ai_attack_best_adjacent_enemy(state, unit_id, directive)) {
+        return;
+    }
+    const Unit* unit = find_unit(state, unit_id);
+    if (unit == nullptr) {
+        return;
+    }
+
+    if (directive.kind == AiDirectiveKind::DefendHex
+        && hex_distance(unit->coord, directive.target) > 1) {
+        ai_move_toward_target(state, unit_id, directive.target);
+        ai_attack_best_adjacent_enemy(state, unit_id, directive);
+        return;
+    }
+
+    const Unit* target = ai_target_for_directive(state, *unit, directive);
+    if (directive.kind == AiDirectiveKind::DefendHex) {
+        if (target == nullptr || hex_distance(target->coord, directive.target) > 2) {
+            return;
         }
     }
+    if (target == nullptr) {
+        if (directive.kind == AiDirectiveKind::CaptureHex) {
+            ai_move_toward_target(state, unit_id, directive.target);
+            ai_attack_best_adjacent_enemy(state, unit_id, directive);
+        }
+        return;
+    }
+    if (ai_move_toward_target(state, unit_id, target->coord)) {
+        ai_attack_best_adjacent_enemy(state, unit_id, directive);
+    }
+}
+
+void execute_ai_units(GameState& state, const std::vector<int>& unit_ids, const AiDirective& directive) {
+    for (const int unit_id : unit_ids) {
+        const Unit* unit = find_unit(state, unit_id);
+        if (unit == nullptr || !can_attack(unit->kind) || unit->hp <= 0) {
+            continue;
+        }
+        execute_ai_unit_directive(state, unit_id, directive);
+    }
+}
+
+void execute_ai_turn(GameState& state, OwnerId owner) {
+    std::vector<int> assigned_unit_ids;
+    for (const AiGroup& group : state.ai_groups) {
+        if (group.owner != owner) {
+            continue;
+        }
+        std::vector<int> group_units = group.unit_ids;
+        std::sort(group_units.begin(), group_units.end());
+        execute_ai_units(state, group_units, group.directive);
+        assigned_unit_ids.insert(assigned_unit_ids.end(), group_units.begin(), group_units.end());
+    }
+
+    std::sort(assigned_unit_ids.begin(), assigned_unit_ids.end());
+    assigned_unit_ids.erase(std::unique(assigned_unit_ids.begin(), assigned_unit_ids.end()), assigned_unit_ids.end());
+    std::vector<int> unassigned_unit_ids;
+    for (const int unit_id : ai_unit_turn_order(state, owner)) {
+        if (!std::binary_search(assigned_unit_ids.begin(), assigned_unit_ids.end(), unit_id)) {
+            unassigned_unit_ids.push_back(unit_id);
+        }
+    }
+    execute_ai_units(state, unassigned_unit_ids, default_hunt_directive());
     state.selected_unit_id = 0;
     state.legal_moves.clear();
     state.legal_attacks.clear();
@@ -2246,6 +2393,38 @@ void print_wall_gates_array_json(const std::vector<WallGate>& gates, std::ostrea
     out << "]";
 }
 
+void print_ai_groups_json(const std::vector<AiGroup>& groups, std::ostream& out) {
+    out << "[";
+    for (std::size_t i = 0; i < groups.size(); ++i) {
+        if (i > 0) {
+            out << ",";
+        }
+        const AiGroup& group = groups[i];
+        out << "{\"id\":" << group.id
+            << ",\"owner\":" << group.owner
+            << ",\"name\":\"" << escape_json(group.name) << "\""
+            << ",\"unitIds\":[";
+        for (std::size_t unit_index = 0; unit_index < group.unit_ids.size(); ++unit_index) {
+            if (unit_index > 0) {
+                out << ",";
+            }
+            out << group.unit_ids[unit_index];
+        }
+        out << "],\"directive\":{\"type\":\"" << ai_directive_kind_to_string(group.directive.kind) << "\"";
+        if (group.directive.kind == AiDirectiveKind::DefendHex || group.directive.kind == AiDirectiveKind::CaptureHex) {
+            out << ",\"target\":";
+            print_coord_json(group.directive.target, out);
+        }
+        if (group.directive.kind == AiDirectiveKind::HuntHorde) {
+            const FactionState faction = faction_for_owner(group.directive.target_owner);
+            out << ",\"faction\":\"" << escape_json(faction.key) << "\""
+                << ",\"owner\":" << group.directive.target_owner;
+        }
+        out << "}}";
+    }
+    out << "]";
+}
+
 void print_game_meta_json(const GameState& state, std::ostream& out) {
     out << "\"game\":{";
     out << "\"round\":" << state.round << ",";
@@ -2280,7 +2459,9 @@ void print_game_meta_json(const GameState& state, std::ostream& out) {
             << ",\"ai\":" << (faction.ai_controlled ? "true" : "false")
             << "}";
     }
-    out << "]}";
+    out << "],\"aiGroups\":";
+    print_ai_groups_json(state.ai_groups, out);
+    out << "}";
 }
 
 void print_game_state_json(const GameState& state, std::ostream& out) {
@@ -2514,6 +2695,33 @@ GameState parse_game_state_json(const std::string& json) {
             faction.ai_controlled = bool_field(faction_json, "ai", false);
             state.factions.push_back(std::move(faction));
         }
+    }
+
+    const Json& ai_group_items = game_json.contains("aiGroups") && game_json["aiGroups"].is_array()
+        ? game_json["aiGroups"]
+        : empty_array;
+    for (const Json& group_json : ai_group_items) {
+        if (!group_json.is_object()) {
+            continue;
+        }
+        AiGroup group;
+        group.id = int_field(group_json, "id", 0);
+        group.owner = int_field(group_json, "owner", neutral_owner);
+        group.name = string_field(group_json, "name", "");
+        group.unit_ids = int_array_field(group_json, "unitIds");
+        const Json& directive_json = group_json.contains("directive") && group_json["directive"].is_object()
+            ? group_json["directive"]
+            : empty_object;
+        group.directive.kind = ai_directive_kind_from_string(string_field(directive_json, "type", "hunt"));
+        if (directive_json.contains("target") && directive_json["target"].is_object()) {
+            group.directive.target = coord_from_json(directive_json["target"]);
+        }
+        group.directive.target_owner = int_field(
+            directive_json,
+            "owner",
+            owner_from_faction_key(string_field(directive_json, "faction", ""), neutral_owner)
+        );
+        state.ai_groups.push_back(std::move(group));
     }
 
     const Json& hex_items = root.contains("hexes") && root["hexes"].is_array() ? root["hexes"] : empty_array;

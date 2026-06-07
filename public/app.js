@@ -56,6 +56,8 @@ const edgeFeatureChoices = document.querySelector("#edge-feature-choices");
 const editorUnitTypeSelect = document.querySelector("#editor-unit-type");
 const editorUnitSideSelect = document.querySelector("#editor-unit-side");
 const terrainPalette = document.querySelector("#terrain-palette");
+const addAiGroupButton = document.querySelector("#add-ai-group-button");
+const aiGroupsContainer = document.querySelector("#ai-groups");
 const endTurnButton = document.querySelector("#end-turn-button");
 const controlEndTurnButton = document.querySelector("#control-end-turn-button");
 const statusEndTurnButton = document.querySelector("#status-end-turn-button");
@@ -105,7 +107,9 @@ let selectedTerrain = "lake";
 let scenarioTool = "session";
 let unitTool = "place";
 let editorSelectedUnitId = 0;
-let openScenarioRegions = new Set(["session", "terrain", "units"]);
+let aiPickMode = null;
+let activeAiGroupId = 0;
+let openScenarioRegions = new Set(["session", "terrain", "units", "ai"]);
 let paintStrokeKeys = new Set();
 let paintUndoRecorded = false;
 let terrainUndo = new Map();
@@ -856,7 +860,7 @@ function stopPainting() {
 }
 
 function scenarioEditingActive() {
-  return appMode === "scenario" && (scenarioTool === "terrain" || scenarioTool === "units");
+  return appMode === "scenario" && (scenarioTool === "terrain" || scenarioTool === "units" || scenarioTool === "ai");
 }
 
 function terrainEditingActive() {
@@ -869,6 +873,18 @@ function unitPlaceActive() {
 
 function unitEditActive() {
   return appMode === "scenario" && scenarioTool === "units" && unitTool === "edit";
+}
+
+function aiEditingActive() {
+  return appMode === "scenario" && scenarioTool === "ai";
+}
+
+function aiMemberPickActive() {
+  return aiEditingActive() && aiPickMode === "members";
+}
+
+function aiTargetPickActive() {
+  return aiEditingActive() && aiPickMode === "target";
 }
 
 function scenarioName() {
@@ -909,6 +925,175 @@ function syncScenarioParameterControls() {
       ai.checked = Boolean(faction.ai);
       ai.disabled = !Boolean(faction.enabled);
     }
+  }
+}
+
+function optionLabelForFaction(faction) {
+  return faction.name || factions[faction.key]?.name || faction.key || `Owner ${faction.id}`;
+}
+
+function appendFactionOptions(select, selectedOwner) {
+  select.replaceChildren();
+  for (const faction of currentMap && Array.isArray(currentMap.factions) ? currentMap.factions : defaultScenarioFactions()) {
+    if (faction.id === factions.neutral.owner) {
+      continue;
+    }
+    const option = document.createElement("option");
+    option.value = String(faction.id);
+    option.textContent = optionLabelForFaction(faction);
+    select.appendChild(option);
+  }
+  select.value = String(selectedOwner);
+}
+
+function appendDirectiveOptions(select, selectedType) {
+  select.replaceChildren();
+  for (const directive of aiDirectiveTypes) {
+    const option = document.createElement("option");
+    option.value = directive.key;
+    option.textContent = directive.label;
+    select.appendChild(option);
+  }
+  select.value = selectedType;
+}
+
+function mutateAiGroup(groupId, mutator, options = {}) {
+  if (!currentMap) {
+    return;
+  }
+  const groups = aiGroups();
+  const group = groups.find((candidate) => candidate.id === groupId);
+  if (!group) {
+    return;
+  }
+  recordLocalUndo();
+  mutator(group);
+  currentMap.game.aiGroups = normalizeAiGroups(groups);
+  if (options.resync !== false) {
+    syncEditorControls();
+  }
+  if (currentMap) {
+    requestAnimationFrame(drawMap);
+  }
+}
+
+function syncAiEditorControls() {
+  if (!aiGroupsContainer) {
+    return;
+  }
+  aiGroupsContainer.replaceChildren();
+  if (!currentMap) {
+    const empty = document.createElement("p");
+    empty.className = "ai-empty-state";
+    empty.textContent = "No scenario loaded.";
+    aiGroupsContainer.appendChild(empty);
+    return;
+  }
+  const groups = aiGroups();
+  if (groups.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "ai-empty-state";
+    empty.textContent = "No AI groups.";
+    aiGroupsContainer.appendChild(empty);
+    return;
+  }
+
+  for (const group of groups) {
+    const card = document.createElement("article");
+    card.className = "ai-group-card";
+    card.classList.toggle("is-picking", activeAiGroupId === group.id && aiPickMode !== null);
+
+    const groupRow = document.createElement("div");
+    groupRow.className = "ai-group-row";
+
+    const nameLabel = document.createElement("label");
+    nameLabel.className = "ai-field";
+    nameLabel.textContent = "Name";
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.className = "ai-group-name";
+    nameInput.value = group.name;
+    nameInput.addEventListener("change", () => {
+      mutateAiGroup(group.id, (draft) => {
+        draft.name = nameInput.value.trim() || draft.name;
+      });
+    });
+    nameLabel.appendChild(nameInput);
+
+    const ownerLabel = document.createElement("label");
+    ownerLabel.className = "ai-field";
+    ownerLabel.textContent = "Faction";
+    const ownerSelect = document.createElement("select");
+    ownerSelect.className = "ai-group-owner";
+    appendFactionOptions(ownerSelect, group.owner);
+    ownerSelect.addEventListener("change", () => {
+      const nextOwner = Number.parseInt(ownerSelect.value, 10);
+      mutateAiGroup(group.id, (draft) => {
+        draft.owner = nextOwner;
+        draft.unitIds = draft.unitIds.filter((unitId) => {
+          const unit = currentMap.units.find((candidate) => candidate.id === unitId);
+          return unit && unit.owner === nextOwner;
+        });
+      });
+    });
+    ownerLabel.appendChild(ownerSelect);
+
+    const membersButton = document.createElement("button");
+    membersButton.type = "button";
+    membersButton.className = "ai-members-button";
+    membersButton.textContent = "Members";
+    membersButton.addEventListener("click", () => setAiPickMode(group.id, "members"));
+
+    const memberCount = document.createElement("span");
+    memberCount.className = "ai-member-count";
+    memberCount.textContent = `${group.unitIds.length} units`;
+
+    groupRow.append(nameLabel, ownerLabel, membersButton, memberCount);
+
+    const directiveRow = document.createElement("div");
+    directiveRow.className = "ai-directive-row";
+
+    const directiveLabel = document.createElement("label");
+    directiveLabel.className = "ai-field";
+    directiveLabel.textContent = "Directive";
+    const directiveSelect = document.createElement("select");
+    directiveSelect.className = "ai-directive-type";
+    appendDirectiveOptions(directiveSelect, group.directive.type);
+    directiveSelect.addEventListener("change", () => {
+      mutateAiGroup(group.id, (draft) => {
+        draft.directive.type = directiveSelect.value;
+      });
+    });
+    directiveLabel.appendChild(directiveSelect);
+
+    const targetButton = document.createElement("button");
+    targetButton.type = "button";
+    targetButton.className = "ai-target-button";
+    targetButton.textContent = "Target Hex";
+    targetButton.addEventListener("click", () => setAiPickMode(group.id, "target"));
+
+    const targetFactionLabel = document.createElement("label");
+    targetFactionLabel.className = "ai-field";
+    targetFactionLabel.textContent = "Target Faction";
+    const targetFactionSelect = document.createElement("select");
+    targetFactionSelect.className = "ai-target-faction";
+    appendFactionOptions(targetFactionSelect, group.directive.owner);
+    targetFactionSelect.addEventListener("change", () => {
+      const targetOwner = Number.parseInt(targetFactionSelect.value, 10);
+      mutateAiGroup(group.id, (draft) => {
+        draft.directive.owner = targetOwner;
+        draft.directive.faction = factionKeyForOwner(targetOwner);
+      });
+    });
+    targetFactionLabel.appendChild(targetFactionSelect);
+
+    const targetReadout = document.createElement("span");
+    targetReadout.className = "ai-target-readout";
+    targetReadout.textContent = `${group.directive.target.q},${group.directive.target.r}`;
+
+    directiveRow.append(directiveLabel, targetButton, targetFactionLabel, targetReadout);
+    card.append(groupRow, directiveRow);
+    aiGroupsContainer.appendChild(card);
   }
 }
 
@@ -961,11 +1146,15 @@ function syncScenarioToolControls() {
   for (const button of terrainPalette.querySelectorAll(".terrain-button")) {
     button.classList.toggle("is-selected", button.dataset.terrain === selectedTerrain);
   }
+  syncAiEditorControls();
 }
 
 function setScenarioTool(tool) {
-  scenarioTool = ["session", "terrain", "units"].includes(tool) ? tool : "session";
+  scenarioTool = ["session", "terrain", "units", "ai"].includes(tool) ? tool : "session";
   openScenarioRegions.add(scenarioTool);
+  if (scenarioTool !== "ai") {
+    aiPickMode = null;
+  }
   isPainting = false;
   paintStrokeKeys = new Set();
   paintUndoRecorded = false;
@@ -976,7 +1165,7 @@ function setScenarioTool(tool) {
 }
 
 function toggleScenarioRegion(region) {
-  if (!["session", "terrain", "units"].includes(region)) {
+  if (!["session", "terrain", "units", "ai"].includes(region)) {
     return;
   }
   if (openScenarioRegions.has(region)) {
@@ -1001,6 +1190,7 @@ function setUnitTool(tool) {
   unitTool = tool === "edit" ? "edit" : "place";
   scenarioTool = "units";
   openScenarioRegions.add("units");
+  aiPickMode = null;
   isPainting = false;
   paintStrokeKeys = new Set();
   paintUndoRecorded = false;
@@ -1014,6 +1204,53 @@ function setUnitTool(tool) {
   if (currentMap) {
     requestAnimationFrame(drawMap);
   }
+}
+
+function setAiPickMode(groupId, mode) {
+  if (!currentMap) {
+    return;
+  }
+  const group = aiGroups().find((candidate) => candidate.id === groupId);
+  if (!group) {
+    return;
+  }
+  scenarioTool = "ai";
+  openScenarioRegions.add("ai");
+  activeAiGroupId = group.id;
+  aiPickMode = mode === "target" ? "target" : "members";
+  isPainting = false;
+  paintStrokeKeys = new Set();
+  paintUndoRecorded = false;
+  syncEditorControls();
+  requestAnimationFrame(drawMap);
+}
+
+function addAiGroup() {
+  if (!currentMap) {
+    return;
+  }
+  ensureGameMeta();
+  recordLocalUndo();
+  const id = nextAiGroupId();
+  const owner = defaultAiOwner();
+  currentMap.game.aiGroups.push(normalizeAiGroup({
+    id,
+    owner,
+    name: `AI Group ${id}`,
+    unitIds: [],
+    directive: {
+      type: "hunt",
+      target: normalizeAiTarget(null),
+      owner: factions.mongol.owner,
+      faction: "mongol",
+    },
+  }, currentMap.game.aiGroups.length));
+  activeAiGroupId = id;
+  aiPickMode = null;
+  scenarioTool = "ai";
+  openScenarioRegions.add("ai");
+  syncModeControls();
+  drawMap();
 }
 
 function updateScenarioNameFromInput() {
@@ -1098,6 +1335,123 @@ function normalizeScenarioFactions(rawFactions, units = []) {
     }
   }
   return normalized;
+}
+
+const aiDirectiveTypes = [
+  { key: "hunt", label: "Hunt" },
+  { key: "defend_hex", label: "Defend Hex" },
+  { key: "hunt_horde", label: "Hunt Horde" },
+  { key: "capture_hex", label: "Capture Hex" },
+];
+
+function factionKeyForOwner(owner) {
+  const scenarioFaction = currentMap && Array.isArray(currentMap.factions)
+    ? currentMap.factions.find((candidate) => candidate.id === owner)
+    : null;
+  if (scenarioFaction) {
+    return scenarioFaction.key;
+  }
+  const fallback = Object.entries(factions).find(([, faction]) => faction.owner === owner);
+  return fallback ? fallback[0] : "mongol";
+}
+
+function ownerForFactionKey(key) {
+  const scenarioFaction = currentMap && Array.isArray(currentMap.factions)
+    ? currentMap.factions.find((candidate) => candidate.key === key)
+    : null;
+  if (scenarioFaction) {
+    return scenarioFaction.id;
+  }
+  return factions[key]?.owner ?? factions.mongol.owner;
+}
+
+function enabledScenarioFactions() {
+  if (!currentMap || !Array.isArray(currentMap.factions)) {
+    return defaultScenarioFactions().filter((faction) => faction.enabled);
+  }
+  const enabled = currentMap.factions.filter((faction) => faction.enabled);
+  return enabled.length > 0 ? enabled : currentMap.factions.slice(0, 1);
+}
+
+function defaultAiOwner() {
+  const aiFaction = enabledScenarioFactions().find((faction) => faction.ai);
+  if (aiFaction) {
+    return aiFaction.id;
+  }
+  const chinese = enabledScenarioFactions().find((faction) => faction.key === "chinese");
+  return chinese ? chinese.id : enabledScenarioFactions()[0]?.id ?? factions.mongol.owner;
+}
+
+function normalizeAiTarget(target) {
+  const width = currentMap && Number.isInteger(currentMap.width) ? currentMap.width : 1;
+  const height = currentMap && Number.isInteger(currentMap.height) ? currentMap.height : 1;
+  const fallback = { q: Math.floor(width / 2), r: Math.floor(height / 2) };
+  return {
+    q: Number.isInteger(target && target.q) ? target.q : fallback.q,
+    r: Number.isInteger(target && target.r) ? target.r : fallback.r,
+  };
+}
+
+function normalizeAiDirective(directive) {
+  const type = aiDirectiveTypes.some((candidate) => candidate.key === (directive && directive.type))
+    ? directive.type
+    : (aiDirectiveTypes.some((candidate) => candidate.key === (directive && directive.kind)) ? directive.kind : "hunt");
+  const owner = Number.isInteger(directive && directive.owner)
+    ? directive.owner
+    : (Number.isInteger(directive && directive.targetOwner) ? directive.targetOwner : ownerForFactionKey(directive && directive.faction));
+  const faction = typeof (directive && directive.faction) === "string"
+    ? directive.faction
+    : factionKeyForOwner(owner);
+  return {
+    type,
+    target: normalizeAiTarget(directive && directive.target),
+    faction,
+    owner: ownerForFactionKey(faction),
+  };
+}
+
+function normalizeAiGroup(group, index = 0, usedIds = new Set()) {
+  let id = Number.isInteger(group && group.id) ? group.id : index + 1;
+  while (usedIds.has(id)) {
+    id += 1;
+  }
+  usedIds.add(id);
+  const owner = Number.isInteger(group && group.owner) ? group.owner : defaultAiOwner();
+  const unitIds = Array.isArray(group && group.unitIds)
+    ? Array.from(new Set(group.unitIds.filter(Number.isInteger)))
+    : (Array.isArray(group && group.unit_ids) ? Array.from(new Set(group.unit_ids.filter(Number.isInteger))) : []);
+  return {
+    id,
+    owner,
+    name: typeof (group && group.name) === "string" && group.name.trim() ? group.name.trim() : `AI Group ${index + 1}`,
+    unitIds,
+    directive: normalizeAiDirective(group && group.directive),
+  };
+}
+
+function normalizeAiGroups(rawGroups) {
+  const usedIds = new Set();
+  return Array.isArray(rawGroups)
+    ? rawGroups.map((group, index) => normalizeAiGroup(group, index, usedIds))
+    : [];
+}
+
+function aiGroups() {
+  if (!currentMap) {
+    return [];
+  }
+  currentMap.game = currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {};
+  currentMap.game.aiGroups = normalizeAiGroups(currentMap.game.aiGroups);
+  return currentMap.game.aiGroups;
+}
+
+function activeAiGroup() {
+  return aiGroups().find((group) => group.id === activeAiGroupId) || null;
+}
+
+function nextAiGroupId() {
+  const ids = aiGroups().map((group) => group.id);
+  return ids.length > 0 ? Math.max(...ids) + 1 : 1;
 }
 
 function factionForOwner(owner) {
@@ -1211,6 +1565,14 @@ function ensureGameMeta() {
     enabled: faction.enabled,
     ai: faction.ai,
   }));
+  currentMap.game.aiGroups = normalizeAiGroups(currentMap.game.aiGroups);
+  const unitsById = new Map(currentMap.units.map((unit) => [unit.id, unit]));
+  for (const group of currentMap.game.aiGroups) {
+    group.unitIds = group.unitIds.filter((unitId) => {
+      const unit = unitsById.get(unitId);
+      return unit && unit.owner === group.owner;
+    });
+  }
   currentTurn = Number.isInteger(currentMap.game.round) ? currentMap.game.round : 1;
   const maxIndex = Math.max(0, currentMap.game.turnOrder.length - 1);
   activeFactionIndex = Number.isInteger(currentMap.game.activeFactionIndex)
@@ -2062,6 +2424,7 @@ function setAppMode(mode) {
     paintStrokeKeys = new Set();
     paintUndoRecorded = false;
     editorSelectedUnitId = 0;
+    aiPickMode = null;
   }
   syncModeControls();
   if (currentMap) {
@@ -2075,6 +2438,7 @@ async function enterPlayMode() {
   paintStrokeKeys = new Set();
   paintUndoRecorded = false;
   editorSelectedUnitId = 0;
+  aiPickMode = null;
   syncModeControls();
   if (appInitialization) {
     await appInitialization;
@@ -2777,6 +3141,59 @@ function drawEditorUnitMoveHexes() {
   ctx.restore();
 }
 
+function drawAiEditorHighlights() {
+  if (!aiEditingActive()) {
+    return;
+  }
+  const group = activeAiGroup();
+  if (!group) {
+    return;
+  }
+  const memberIds = new Set(group.unitIds);
+  ctx.save();
+  for (const unit of currentMap.units || []) {
+    if (!memberIds.has(unit.id)) {
+      continue;
+    }
+    const center = hexCenter(unit);
+    const points = hexPoints(center.x, center.y, geometry.size * 0.84);
+    ctx.beginPath();
+    points.forEach(([x, y], index) => {
+      if (index === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    });
+    ctx.closePath();
+    ctx.fillStyle = "rgba(31, 79, 82, 0.28)";
+    ctx.fill();
+    ctx.strokeStyle = aiMemberPickActive() ? "#133c3f" : "#1f4f52";
+    ctx.lineWidth = (aiMemberPickActive() ? 2.4 : 1.6) / viewport.scale;
+    ctx.stroke();
+  }
+  const target = group.directive && group.directive.target;
+  if (target && Number.isInteger(target.q) && Number.isInteger(target.r)) {
+    const center = hexCenter(target);
+    const points = hexPoints(center.x, center.y, geometry.size * 0.66);
+    ctx.beginPath();
+    points.forEach(([x, y], index) => {
+      if (index === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    });
+    ctx.closePath();
+    ctx.fillStyle = "rgba(202, 126, 32, 0.28)";
+    ctx.fill();
+    ctx.strokeStyle = aiTargetPickActive() ? "#8c4a0b" : "#a15b16";
+    ctx.lineWidth = (aiTargetPickActive() ? 2.4 : 1.6) / viewport.scale;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawDetachDeploymentHexes() {
   const placement = detachHerdPlacement || createUnitPlacement;
   if (!placement || !Array.isArray(placement.deployableHexes)) {
@@ -3257,6 +3674,7 @@ function drawMap() {
   drawMapMarkers(currentMap.river_destinations, terrainStyles.river.destination, 5);
   drawReachableHexes();
   drawEditorUnitMoveHexes();
+  drawAiEditorHighlights();
   drawDetachDeploymentHexes();
   drawUnitCounters(currentMap.units);
 
@@ -3453,6 +3871,46 @@ function handleUnitEditClick(event) {
     return;
   }
   selectEditorUnit(null);
+}
+
+function handleAiMemberPickClick(event) {
+  const group = activeAiGroup();
+  if (!currentMap || !group) {
+    return;
+  }
+  const unit = findUnitAtPoint(panelToWorld(event));
+  if (!unit || unit.owner !== group.owner) {
+    return;
+  }
+  recordLocalUndo();
+  const unitIds = new Set(group.unitIds);
+  if (unitIds.has(unit.id)) {
+    unitIds.delete(unit.id);
+  } else {
+    unitIds.add(unit.id);
+  }
+  group.unitIds = Array.from(unitIds);
+  editorSelectedUnitId = unit.id;
+  currentMap.game.selectedUnitId = unit.id;
+  ensureGameMeta();
+  syncModeControls();
+  drawMap();
+}
+
+function handleAiTargetPickClick(event) {
+  const group = activeAiGroup();
+  if (!currentMap || !group) {
+    return;
+  }
+  const hex = findNearestHex(panelToWorld(event));
+  if (!hex) {
+    return;
+  }
+  recordLocalUndo();
+  group.directive.target = { q: hex.q, r: hex.r };
+  ensureGameMeta();
+  syncModeControls();
+  drawMap();
 }
 
 function toggleHexTerrain(hex, terrain) {
@@ -4112,6 +4570,9 @@ for (const button of terrainEditModeButtons) {
 for (const button of edgeFeatureButtons) {
   button.addEventListener("click", () => setEditorEdgeFeature(button.dataset.edgeFeature));
 }
+if (addAiGroupButton) {
+  addAiGroupButton.addEventListener("click", addAiGroup);
+}
 if (scenarioNameInput) {
   scenarioNameInput.addEventListener("input", updateScenarioNameFromInput);
 }
@@ -4229,6 +4690,16 @@ mapPanel.addEventListener("pointerdown", async (event) => {
     paintUndoRecorded = false;
     paintAtPointer(event);
     mapPanel.setPointerCapture(event.pointerId);
+    return;
+  }
+  if (aiMemberPickActive() && event.button === 0) {
+    event.preventDefault();
+    handleAiMemberPickClick(event);
+    return;
+  }
+  if (aiTargetPickActive() && event.button === 0) {
+    event.preventDefault();
+    handleAiTargetPickClick(event);
     return;
   }
   if (unitPlaceActive() && event.button === 0) {

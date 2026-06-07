@@ -105,6 +105,27 @@ struct FactionState {
     bool ai_controlled = false;
 };
 
+enum class AiDirectiveKind {
+    Hunt,
+    DefendHex,
+    HuntHorde,
+    CaptureHex,
+};
+
+struct AiDirective {
+    AiDirectiveKind kind = AiDirectiveKind::Hunt;
+    Coord target;
+    OwnerId target_owner = neutral_owner;
+};
+
+struct AiGroup {
+    int id = 0;
+    OwnerId owner = neutral_owner;
+    std::string name;
+    std::vector<int> unit_ids;
+    AiDirective directive;
+};
+
 struct Unit {
     int id = 0;
     OwnerId owner = neutral_owner;
@@ -247,6 +268,7 @@ struct GameState {
     std::vector<Crossing> crossings;
     std::vector<Settlement> settlements;
     std::vector<FactionState> factions;
+    std::vector<AiGroup> ai_groups;
     std::vector<Unit> units;
 };
 

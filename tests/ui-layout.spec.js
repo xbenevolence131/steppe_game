@@ -285,6 +285,40 @@ function horseStealingGameState(attackerKind = "horse_archer") {
   };
 }
 
+function aiDirectiveGameState(directive, units) {
+  const hexes = [];
+  for (let r = 1; r <= 4; r += 1) {
+    for (let q = 1; q <= 8; q += 1) {
+      hexes.push({ q, r, terrain: "grassland", labels: [] });
+    }
+  }
+  return {
+    width: 8,
+    height: 4,
+    seed: 0,
+    hexes,
+    units,
+    game: {
+      round: 1,
+      activeFactionIndex: 0,
+      activeOwner: 0,
+      selectedUnitId: 0,
+      turnOrder: [0, 2],
+      factions: [
+        { id: 0, key: "mongol", name: "Mongol", color: "#2368c4", enabled: true, ai: false, metal: 4, treasure: 0 },
+        { id: 2, key: "chinese", name: "Chinese", color: "#c93632", enabled: true, ai: true, metal: 4, treasure: 0 },
+      ],
+      aiGroups: [{
+        id: 1,
+        owner: 2,
+        name: "Directive Test",
+        unitIds: [3],
+        directive,
+      }],
+    },
+  };
+}
+
 test("movement can pass through friendly units without stacking", async ({ isMobile }) => {
   test.skip(isMobile, "engine rule is covered once on desktop");
 
@@ -640,6 +674,40 @@ test("end turn skips AI controlled factions", async ({ isMobile }) => {
   const advanced = runEngineJson(["game-end-turn"], state);
   expect(advanced.game.activeFactionIndex).toBe(2);
   expect(advanced.game.activeOwner).toBe(3);
+});
+
+test("AI directives choose distinct tactical targets", async ({ isMobile }) => {
+  test.skip(isMobile, "engine AI directive rules are covered once on desktop");
+
+  const screenAndHorde = [
+    { id: 1, owner: 0, faction: "mongol", kind: "horde", q: 2, r: 3, hp: 10, maxHp: 10, remainingScaledMove: 24 },
+    { id: 2, owner: 0, faction: "mongol", kind: "infantry", q: 7, r: 3, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+    { id: 3, owner: 2, faction: "chinese", kind: "chinese_cavalry", q: 8, r: 3, hp: 10, maxHp: 10, remainingScaledMove: 24 },
+  ];
+
+  const hunt = runEngineJson(["game-end-turn"], aiDirectiveGameState(
+    { type: "hunt" },
+    JSON.parse(JSON.stringify(screenAndHorde))
+  ));
+  expect(hunt.units.find((unit) => unit.id === 2).hp).toBeLessThan(10);
+
+  const huntHorde = runEngineJson(["game-end-turn"], aiDirectiveGameState(
+    { type: "hunt_horde", faction: "mongol" },
+    JSON.parse(JSON.stringify(screenAndHorde))
+  ));
+  expect(huntHorde.units.find((unit) => unit.id === 2).hp).toBe(10);
+  expect(huntHorde.units.find((unit) => unit.id === 3).q).toBeLessThan(8);
+  expect(huntHorde.game.aiGroups[0].directive.type).toBe("hunt_horde");
+
+  const defend = runEngineJson(["game-end-turn"], aiDirectiveGameState(
+    { type: "defend_hex", target: { q: 4, r: 2 } },
+    [
+      { id: 1, owner: 0, faction: "mongol", kind: "infantry", q: 1, r: 4, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+      { id: 3, owner: 2, faction: "chinese", kind: "chinese_cavalry", q: 8, r: 4, hp: 10, maxHp: 10, remainingScaledMove: 24 },
+    ]
+  ));
+  expect(defend.units.find((unit) => unit.id === 3).q).toBeLessThan(8);
+  expect(defend.game.aiGroups[0].directive.type).toBe("defend_hex");
 });
 
 test("inactive units can be selected for inspection without legal actions", async ({ isMobile }) => {
@@ -1773,6 +1841,66 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect(page.locator("#faction-status-name")).toHaveText("Chinese");
   await expect.poll(() => page.evaluate(() => currentMap.game.turnOrder)).toEqual([2]);
   await expect.poll(() => page.evaluate(() => currentMap.game.activeOwner)).toBe(2);
+});
+
+test("scenario AI editor configures groups and map pickers", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop pointer geometry is simpler for AI editor assertions");
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Scenario Edit" }).click();
+  await page.getByRole("button", { name: "New Scenario" }).click();
+
+  const hexPoint = async (coord) => page.evaluate(({ q, r }) => {
+    const panel = mapPanel.getBoundingClientRect();
+    const center = hexCenter({ q, r });
+    return {
+      x: panel.left + viewport.offsetX + center.x * viewport.scale,
+      y: panel.top + viewport.offsetY + center.y * viewport.scale,
+    };
+  }, coord);
+
+  await page.getByRole("button", { name: "Units", exact: true }).click();
+  await page.locator("#editor-unit-type").selectOption("horde");
+  await page.locator("#editor-unit-side").selectOption("chinese");
+  let point = await hexPoint({ q: 3, r: 3 });
+  await page.mouse.click(point.x, point.y);
+  await page.locator("#editor-unit-side").selectOption("mongol");
+  point = await hexPoint({ q: 5, r: 4 });
+  await page.mouse.click(point.x, point.y);
+
+  await page.getByRole("button", { name: "AI", exact: true }).click();
+  await expect(page.locator('[data-scenario-region="ai"]')).toHaveClass(/is-active/);
+  await page.getByRole("button", { name: "Add Group" }).click();
+  await expect(page.locator(".ai-group-card")).toHaveCount(1);
+  await expect(page.locator(".ai-group-owner")).toHaveValue("2");
+
+  await page.locator(".ai-members-button").click();
+  point = await hexPoint({ q: 3, r: 3 });
+  await page.mouse.click(point.x, point.y);
+  await expect.poll(() => page.evaluate(() => currentMap.game.aiGroups[0].unitIds)).toEqual([1]);
+  point = await hexPoint({ q: 5, r: 4 });
+  await page.mouse.click(point.x, point.y);
+  await expect.poll(() => page.evaluate(() => currentMap.game.aiGroups[0].unitIds)).toEqual([1]);
+
+  await page.locator(".ai-directive-type").selectOption("hunt_horde");
+  await page.locator(".ai-target-faction").selectOption("0");
+  await page.locator(".ai-target-button").click();
+  point = await hexPoint({ q: 6, r: 4 });
+  await page.mouse.click(point.x, point.y);
+
+  await expect.poll(() => page.evaluate(() => {
+    const snapshot = scenarioSnapshot();
+    return snapshot.game.aiGroups[0];
+  })).toEqual(expect.objectContaining({
+    owner: 2,
+    unitIds: [1],
+    directive: expect.objectContaining({
+      type: "hunt_horde",
+      faction: "mongol",
+      owner: 0,
+      target: { q: 6, r: 4 },
+    }),
+  }));
 });
 
 test("scenario file API round-trips full snapshots with units", async ({ page, isMobile }) => {
