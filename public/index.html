@@ -47,9 +47,32 @@
                 </div>
                 <fieldset class="faction-selector" aria-label="Scenario factions">
                   <legend>Factions</legend>
-                  <label><input class="scenario-faction-checkbox" type="checkbox" value="mongol" checked> Mongol</label>
-                  <label><input class="scenario-faction-checkbox" type="checkbox" value="chinese" checked> Chinese</label>
-                  <label><input class="scenario-faction-checkbox" type="checkbox" value="persian"> Persian</label>
+                  <table class="scenario-faction-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Enabled</th>
+                        <th scope="col">AI Control</th>
+                        <th scope="col">Faction</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr data-faction-key="mongol">
+                        <td><input class="scenario-faction-enabled" type="checkbox" value="mongol" checked aria-label="Enable Mongol"></td>
+                        <td><input class="scenario-faction-ai" type="checkbox" value="mongol" aria-label="AI Control Mongol"></td>
+                        <td>Mongol</td>
+                      </tr>
+                      <tr data-faction-key="chinese">
+                        <td><input class="scenario-faction-enabled" type="checkbox" value="chinese" checked aria-label="Enable Chinese"></td>
+                        <td><input class="scenario-faction-ai" type="checkbox" value="chinese" aria-label="AI Control Chinese"></td>
+                        <td>Chinese</td>
+                      </tr>
+                      <tr data-faction-key="persian">
+                        <td><input class="scenario-faction-enabled" type="checkbox" value="persian" aria-label="Enable Persian"></td>
+                        <td><input class="scenario-faction-ai" type="checkbox" value="persian" aria-label="AI Control Persian"></td>
+                        <td>Persian</td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </fieldset>
               </div>
             </div>

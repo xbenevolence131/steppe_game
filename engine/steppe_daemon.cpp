@@ -1,8 +1,10 @@
 #include "game_state.h"
 #include "steppe_generator.h"
 
+#include <httplib.h>
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
-#include <cctype>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
@@ -13,154 +15,52 @@
 #include <string>
 #include <vector>
 
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#else
-#error "steppe_daemon currently supports Windows Winsock only."
-#endif
-
 namespace {
-
-struct HttpRequest {
-    std::string method;
-    std::string path;
-    std::string body;
-};
-
-class WinsockSession {
-public:
-    WinsockSession() {
-        WSADATA data{};
-        if (WSAStartup(MAKEWORD(2, 2), &data) != 0) {
-            throw std::runtime_error("WSAStartup failed");
-        }
-    }
-
-    ~WinsockSession() {
-        WSACleanup();
-    }
-};
 
 std::map<std::string, steppe::game::GameState> games;
 std::map<std::string, std::vector<steppe::game::GameState>> undo_stacks;
 constexpr std::size_t max_undo_depth = 64;
 
-std::size_t find_matching(const std::string& json, std::size_t open_index, char open, char close) {
-    int depth = 0;
-    bool in_string = false;
-    bool escaped = false;
-    for (std::size_t i = open_index; i < json.size(); ++i) {
-        const char ch = json[i];
-        if (in_string) {
-            if (escaped) {
-                escaped = false;
-            } else if (ch == '\\') {
-                escaped = true;
-            } else if (ch == '"') {
-                in_string = false;
-            }
-            continue;
-        }
-        if (ch == '"') {
-            in_string = true;
-        } else if (ch == open) {
-            ++depth;
-        } else if (ch == close) {
-            --depth;
-            if (depth == 0) {
-                return i;
-            }
-        }
+using Json = nlohmann::json;
+
+int int_field(const Json& json, const char* key, int fallback) {
+    const auto found = json.find(key);
+    if (found == json.end() || !found->is_number_integer()) {
+        return fallback;
     }
-    throw std::runtime_error("invalid JSON structure");
+    return found->get<int>();
 }
 
-std::string object_field(const std::string& json, const std::string& key) {
-    const std::string marker = "\"" + key + "\":";
-    const std::size_t start = json.find(marker);
-    if (start == std::string::npos) {
-        return {};
+double number_field(const Json& json, const char* key, double fallback) {
+    const auto found = json.find(key);
+    if (found == json.end() || !found->is_number()) {
+        return fallback;
     }
-    std::size_t value_start = start + marker.size();
-    while (value_start < json.size() && std::isspace(static_cast<unsigned char>(json[value_start]))) {
-        ++value_start;
-    }
-    if (value_start >= json.size()) {
-        return {};
-    }
-    if (json[value_start] == '[') {
-        return json.substr(value_start, find_matching(json, value_start, '[', ']') - value_start + 1);
-    }
-    if (json[value_start] == '{') {
-        return json.substr(value_start, find_matching(json, value_start, '{', '}') - value_start + 1);
-    }
-    if (json[value_start] == '"') {
-        std::size_t end = value_start + 1;
-        bool escaped = false;
-        for (; end < json.size(); ++end) {
-            if (escaped) {
-                escaped = false;
-            } else if (json[end] == '\\') {
-                escaped = true;
-            } else if (json[end] == '"') {
-                break;
-            }
-        }
-        return json.substr(value_start, end - value_start + 1);
-    }
-    std::size_t end = value_start;
-    while (end < json.size() && json[end] != ',' && json[end] != '}' && json[end] != ']') {
-        ++end;
-    }
-    return json.substr(value_start, end - value_start);
+    return found->get<double>();
 }
 
-std::string string_field(const std::string& json, const std::string& key, const std::string& fallback = "") {
-    const std::string field = object_field(json, key);
-    if (field.size() < 2 || field.front() != '"' || field.back() != '"') {
+std::uint32_t seed_field(const Json& json, const char* key, std::uint32_t fallback) {
+    const auto found = json.find(key);
+    if (found == json.end() || !found->is_number_unsigned()) {
         return fallback;
     }
-    return field.substr(1, field.size() - 2);
+    return found->get<std::uint32_t>();
 }
 
-int int_field(const std::string& json, const std::string& key, int fallback) {
-    const std::string field = object_field(json, key);
-    if (field.empty()) {
+std::string string_field(const Json& json, const char* key, const std::string& fallback = "") {
+    const auto found = json.find(key);
+    if (found == json.end() || !found->is_string()) {
         return fallback;
     }
-    try {
-        return std::stoi(field);
-    } catch (...) {
-        return fallback;
-    }
+    return found->get<std::string>();
 }
 
-double number_field(const std::string& json, const std::string& key, double fallback) {
-    const std::string field = object_field(json, key);
-    if (field.empty()) {
-        return fallback;
+steppe::Coord coord_field(const Json& json, const char* key) {
+    const auto found = json.find(key);
+    if (found == json.end() || !found->is_object()) {
+        return {0, 0};
     }
-    try {
-        return std::stod(field);
-    } catch (...) {
-        return fallback;
-    }
-}
-
-std::uint32_t seed_field(const std::string& json, const std::string& key, std::uint32_t fallback) {
-    const std::string field = object_field(json, key);
-    if (field.empty()) {
-        return fallback;
-    }
-    try {
-        return static_cast<std::uint32_t>(std::stoul(field));
-    } catch (...) {
-        return fallback;
-    }
+    return {int_field(*found, "q", 0), int_field(*found, "r", 0)};
 }
 
 std::string escape_json(const std::string& text) {
@@ -274,7 +174,7 @@ std::string error_response(const std::string& message) {
     return "{\"ok\":false,\"error\":\"" + escape_json(message) + "\"}";
 }
 
-steppe::GenerateArgs generate_args_from_command(const std::string& command) {
+steppe::GenerateArgs generate_args_from_command(const Json& command) {
     steppe::GenerateArgs args;
     args.width = std::max(1, std::min(120, int_field(command, "width", args.width)));
     args.height = std::max(1, std::min(80, int_field(command, "height", args.height)));
@@ -297,10 +197,24 @@ steppe::GenerateArgs generate_args_from_command(const std::string& command) {
 }
 
 std::string handle_command(const std::string& body) {
-    const std::string game_id = string_field(body, "gameId", "local-dev");
-    const std::string command = object_field(body, "command");
+    Json envelope;
+    try {
+        envelope = Json::parse(body);
+    } catch (const Json::parse_error& error) {
+        return error_response(std::string("invalid JSON command envelope: ") + error.what());
+    }
+    if (!envelope.is_object()) {
+        return error_response("command envelope must be a JSON object");
+    }
+
+    const std::string game_id = string_field(envelope, "gameId", "local-dev");
+    const auto command_it = envelope.find("command");
+    if (command_it == envelope.end() || !command_it->is_object()) {
+        return error_response("command envelope must include command.type");
+    }
+    const Json& command = *command_it;
     const std::string type = string_field(command, "type", "");
-    if (command.empty() || type.empty()) {
+    if (type.empty()) {
         return error_response("command envelope must include command.type");
     }
 
@@ -321,11 +235,11 @@ std::string handle_command(const std::string& body) {
         return ok_response(game_id, game_state_json(state));
     }
     if (type == "load_game") {
-        const std::string state_json = object_field(command, "state");
-        if (state_json.empty()) {
+        const auto state_it = command.find("state");
+        if (state_it == command.end() || !state_it->is_object()) {
             return error_response("load_game requires command.state");
         }
-        steppe::game::GameState state = steppe::game::parse_game_state_json(state_json);
+        steppe::game::GameState state = steppe::game::parse_game_state_json(state_it->dump());
         games[game_id] = state;
         undo_stacks[game_id].clear();
         return ok_response(game_id, game_state_json(state));
@@ -363,12 +277,11 @@ std::string handle_command(const std::string& body) {
         return command_response(game_id, ok, game_patch_json(state, ok));
     }
     if (type == "move_unit") {
-        const std::string to = object_field(command, "to");
         const steppe::game::GameState before = state;
         const bool ok = steppe::game::move_unit(
             state,
             int_field(command, "unitId", 0),
-            {int_field(to, "q", 0), int_field(to, "r", 0)}
+            coord_field(command, "to")
         );
         if (ok) {
             push_undo_state(game_id, before);
@@ -404,13 +317,12 @@ std::string handle_command(const std::string& body) {
         return command_response(game_id, true, detach_herd_options_json(options));
     }
     if (type == "detach_herd") {
-        const std::string to = object_field(command, "to");
         const steppe::game::GameState before = state;
         const bool ok = steppe::game::detach_herd(
             state,
             int_field(command, "unitId", 0),
             std::max(0, int_field(command, "horses", 0)),
-            {int_field(to, "q", 0), int_field(to, "r", 0)}
+            coord_field(command, "to")
         );
         if (ok) {
             push_undo_state(game_id, before);
@@ -425,12 +337,11 @@ std::string handle_command(const std::string& body) {
         return command_response(game_id, true, create_horse_archers_options_json(options));
     }
     if (type == "create_horse_archers") {
-        const std::string to = object_field(command, "to");
         const steppe::game::GameState before = state;
         const bool ok = steppe::game::create_horse_archers(
             state,
             int_field(command, "unitId", 0),
-            {int_field(to, "q", 0), int_field(to, "r", 0)}
+            coord_field(command, "to")
         );
         if (ok) {
             push_undo_state(game_id, before);
@@ -445,12 +356,11 @@ std::string handle_command(const std::string& body) {
         return command_response(game_id, true, create_mongol_lancers_options_json(options));
     }
     if (type == "create_mongol_lancers") {
-        const std::string to = object_field(command, "to");
         const steppe::game::GameState before = state;
         const bool ok = steppe::game::create_mongol_lancers(
             state,
             int_field(command, "unitId", 0),
-            {int_field(to, "q", 0), int_field(to, "r", 0)}
+            coord_field(command, "to")
         );
         if (ok) {
             push_undo_state(game_id, before);
@@ -476,138 +386,24 @@ int parse_port(int argc, char** argv) {
     return 4001;
 }
 
-void send_all(SOCKET socket, const std::string& text) {
-    const char* data = text.data();
-    int remaining = static_cast<int>(text.size());
-    while (remaining > 0) {
-        const int sent = send(socket, data, remaining, 0);
-        if (sent <= 0) {
-            return;
-        }
-        data += sent;
-        remaining -= sent;
-    }
-}
-
-std::string http_response(int status, const std::string& body) {
-    const char* reason = status == 200 ? "OK" : status == 404 ? "Not Found" : status == 405 ? "Method Not Allowed" : "Bad Request";
-    std::ostringstream out;
-    out << "HTTP/1.1 " << status << " " << reason << "\r\n"
-        << "Content-Type: application/json; charset=utf-8\r\n"
-        << "Content-Length: " << body.size() << "\r\n"
-        << "Connection: close\r\n"
-        << "\r\n"
-        << body;
-    return out.str();
-}
-
-HttpRequest read_http_request(SOCKET socket) {
-    std::string raw;
-    char buffer[4096];
-    std::size_t header_end = std::string::npos;
-    while (header_end == std::string::npos) {
-        const int received = recv(socket, buffer, sizeof(buffer), 0);
-        if (received <= 0) {
-            throw std::runtime_error("client disconnected");
-        }
-        raw.append(buffer, buffer + received);
-        header_end = raw.find("\r\n\r\n");
-        if (raw.size() > 9 * 1024 * 1024) {
-            throw std::runtime_error("request too large");
-        }
-    }
-
-    const std::string header = raw.substr(0, header_end);
-    const std::size_t request_line_end = header.find("\r\n");
-    const std::string request_line = request_line_end == std::string::npos ? header : header.substr(0, request_line_end);
-    std::istringstream request_line_stream(request_line);
-    HttpRequest request;
-    request_line_stream >> request.method >> request.path;
-
-    std::size_t content_length = 0;
-    std::istringstream header_stream(header);
-    std::string line;
-    while (std::getline(header_stream, line)) {
-        if (!line.empty() && line.back() == '\r') {
-            line.pop_back();
-        }
-        const std::string lower_prefix = "content-length:";
-        if (line.size() >= lower_prefix.size()) {
-            std::string prefix = line.substr(0, lower_prefix.size());
-            std::transform(prefix.begin(), prefix.end(), prefix.begin(), [](unsigned char ch) {
-                return static_cast<char>(std::tolower(ch));
-            });
-            if (prefix == lower_prefix) {
-                content_length = static_cast<std::size_t>(std::stoul(line.substr(lower_prefix.size())));
-            }
-        }
-    }
-
-    request.body = raw.substr(header_end + 4);
-    while (request.body.size() < content_length) {
-        const int received = recv(socket, buffer, sizeof(buffer), 0);
-        if (received <= 0) {
-            throw std::runtime_error("client disconnected");
-        }
-        request.body.append(buffer, buffer + received);
-    }
-    if (request.body.size() > content_length) {
-        request.body.resize(content_length);
-    }
-    return request;
-}
-
-void serve_client(SOCKET client) {
-    try {
-        const HttpRequest request = read_http_request(client);
-        if (request.method == "GET" && request.path == "/health") {
-            send_all(client, http_response(200, "{\"ok\":true}"));
-        } else if (request.method == "POST" && request.path == "/command") {
-            send_all(client, http_response(200, handle_command(request.body)));
-        } else if (request.method != "GET" && request.method != "POST") {
-            send_all(client, http_response(405, error_response("method not allowed")));
-        } else {
-            send_all(client, http_response(404, error_response("not found")));
-        }
-    } catch (const std::exception& ex) {
-        send_all(client, http_response(400, error_response(ex.what())));
-    }
-    closesocket(client);
-}
-
 } // namespace
 
 int main(int argc, char** argv) {
     try {
         steppe::game::load_unit_types();
-        const WinsockSession winsock;
         const int port = parse_port(argc, argv);
-        SOCKET server = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        if (server == INVALID_SOCKET) {
-            throw std::runtime_error("socket creation failed");
-        }
-
-        sockaddr_in address{};
-        address.sin_family = AF_INET;
-        address.sin_port = htons(static_cast<u_short>(port));
-        inet_pton(AF_INET, "127.0.0.1", &address.sin_addr);
-
-        if (bind(server, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR) {
-            closesocket(server);
-            throw std::runtime_error("bind failed on 127.0.0.1:" + std::to_string(port));
-        }
-        if (listen(server, SOMAXCONN) == SOCKET_ERROR) {
-            closesocket(server);
-            throw std::runtime_error("listen failed");
-        }
+        httplib::Server server;
+        server.set_payload_max_length(9 * 1024 * 1024);
+        server.Get("/health", [](const httplib::Request&, httplib::Response& response) {
+            response.set_content("{\"ok\":true}", "application/json; charset=utf-8");
+        });
+        server.Post("/command", [](const httplib::Request& request, httplib::Response& response) {
+            response.set_content(handle_command(request.body), "application/json; charset=utf-8");
+        });
 
         std::cout << "steppe_daemon listening at http://127.0.0.1:" << port << "\n";
-        while (true) {
-            SOCKET client = accept(server, nullptr, nullptr);
-            if (client == INVALID_SOCKET) {
-                continue;
-            }
-            serve_client(client);
+        if (!server.listen("127.0.0.1", port)) {
+            throw std::runtime_error("bind/listen failed on 127.0.0.1:" + std::to_string(port));
         }
     } catch (const std::exception& ex) {
         std::cerr << "steppe_daemon: " << ex.what() << "\n";

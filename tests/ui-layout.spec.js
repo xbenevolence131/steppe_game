@@ -624,6 +624,24 @@ test("readiness recovers only after quiet non-contact turns", async ({ isMobile 
   expect(afterMovedTurnUnit.readiness).toBe(movedUnit.readiness);
 });
 
+test("end turn skips AI controlled factions", async ({ isMobile }) => {
+  test.skip(isMobile, "engine turn rule is covered once on desktop");
+
+  const state = combatGameState("grassland");
+  state.game.turnOrder = [1, 2, 3];
+  state.game.activeFactionIndex = 0;
+  state.game.activeOwner = 1;
+  state.game.factions = [
+    { id: 1, key: "mongol", name: "Mongol", color: "#2368c4", enabled: true, ai: false, metal: 4, treasure: 0 },
+    { id: 2, key: "chinese", name: "Chinese", color: "#c93632", enabled: true, ai: true, metal: 4, treasure: 0 },
+    { id: 3, key: "persian", name: "Persian", color: "#8a4fb0", enabled: true, ai: false, metal: 4, treasure: 0 },
+  ];
+
+  const advanced = runEngineJson(["game-end-turn"], state);
+  expect(advanced.game.activeFactionIndex).toBe(2);
+  expect(advanced.game.activeOwner).toBe(3);
+});
+
 test("inactive units can be selected for inspection without legal actions", async ({ isMobile }) => {
   test.skip(isMobile, "engine selection rule is covered once on desktop");
 
@@ -1581,6 +1599,11 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect(page.locator("#play-controls")).toBeVisible();
   await expect(page.locator("#play-details-bar")).toBeVisible();
   await expect(page.locator("#end-turn-button")).toBeDisabled();
+  await page.getByLabel("AI Control Chinese").check();
+  await expect.poll(() => page.evaluate(() => ({
+    chineseAi: currentMap.game.factions.find((faction) => faction.key === "chinese").ai,
+    turnOrder: currentMap.game.turnOrder,
+  }))).toEqual({ chineseAi: true, turnOrder: [0, 2] });
 
   const hexPoint = async (coord) => page.evaluate(({ q, r }) => {
     const panel = mapPanel.getBoundingClientRect();
@@ -1668,7 +1691,10 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect.poll(() => page.evaluate(() => currentMap.units.length)).toBe(1);
   await expect.poll(() => page.evaluate(() => currentMap.units[0].kind)).toBe("herd");
   await expect.poll(() => page.evaluate(() => currentMap.units[0].move)).toBe(3);
-  await expect.poll(() => page.evaluate(() => currentMap.factions.map((faction) => faction.key))).toEqual(["mongol", "chinese"]);
+  await expect.poll(() => page.evaluate(() => ({
+    keys: currentMap.factions.map((faction) => faction.key),
+    turnOrder: currentMap.game.turnOrder,
+  }))).toEqual({ keys: ["mongol", "chinese", "persian"], turnOrder: [0, 2] });
 
   await page.getByRole("button", { name: "Edit", exact: true }).click();
   await expect(page.locator("#editor-unit-type")).toBeHidden();
@@ -1803,4 +1829,36 @@ test("scenario file API round-trips full snapshots with units", async ({ page, i
       fs.unlinkSync(scenarioPath);
     }
   }
+});
+
+test("AI smoke scenario can enter play and end the human turn", async ({ page, isMobile }) => {
+  test.skip(isMobile, "scenario play transition is covered once on desktop");
+
+  await page.goto("/");
+  await expect(page.locator(".unit-roster-item")).toHaveCount(9);
+  await page.evaluate(async () => {
+    const response = await fetch("/api/scenarios/load?name=ai-town-capture-smoke.json");
+    const payload = await response.json();
+    await loadMapText(JSON.stringify(payload.scenario));
+  });
+  await page.getByRole("button", { name: "Play" }).click();
+  await expect(page.locator("#faction-status-name")).toHaveText("Mongol");
+  await expect(page.locator("#end-turn-button")).toBeEnabled();
+  const redBefore = await page.evaluate(() => currentMap.units
+    .filter((unit) => unit.owner === 2)
+    .map((unit) => ({ id: unit.id, q: unit.q, r: unit.r, hp: unit.hp })));
+
+  await page.locator("#end-turn-button").click();
+  await expect(page.locator("#faction-status-name")).toHaveText("Mongol");
+  await expect.poll(() => page.evaluate(() => ({
+    round: currentMap.game.round,
+    activeFactionIndex: currentMap.game.activeFactionIndex,
+    activeOwner: currentMap.game.activeOwner,
+  }))).toEqual({ round: 2, activeFactionIndex: 0, activeOwner: 0 });
+  await expect.poll(() => page.evaluate((before) => currentMap.units
+    .filter((unit) => unit.owner === 2)
+    .some((unit) => {
+      const prior = before.find((candidate) => candidate.id === unit.id);
+      return prior && (prior.q !== unit.q || prior.r !== unit.r || prior.hp !== unit.hp);
+    }), redBefore)).toBe(true);
 });

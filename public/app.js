@@ -48,7 +48,7 @@ const scenarioToolButtons = Array.from(document.querySelectorAll("[data-scenario
 const scenarioCollapseButtons = Array.from(document.querySelectorAll("[data-scenario-toggle]"));
 const scenarioToolPanels = Array.from(document.querySelectorAll(".scenario-tool-panel"));
 const unitToolButtons = Array.from(document.querySelectorAll(".unit-tool-button"));
-const scenarioFactionCheckboxes = Array.from(document.querySelectorAll(".scenario-faction-checkbox"));
+const scenarioFactionRows = Array.from(document.querySelectorAll(".scenario-faction-table tbody tr"));
 const terrainEditModeButtons = Array.from(document.querySelectorAll(".terrain-edit-mode-button"));
 const edgeFeatureButtons = Array.from(document.querySelectorAll(".edge-feature-button"));
 const editorEdgeFeatureSelect = document.querySelector("#editor-edge-feature");
@@ -233,6 +233,8 @@ const factions = {
     owner: 0,
     metal: 4,
     treasure: 0,
+    enabled: true,
+    ai: false,
   },
   chinese: {
     name: "Chinese",
@@ -240,6 +242,8 @@ const factions = {
     owner: 2,
     metal: 4,
     treasure: 0,
+    enabled: true,
+    ai: false,
   },
   persian: {
     name: "Persian",
@@ -247,6 +251,8 @@ const factions = {
     owner: 1,
     metal: 4,
     treasure: 0,
+    enabled: false,
+    ai: false,
   },
   neutral: {
     name: "Neutral",
@@ -254,6 +260,8 @@ const factions = {
     owner: -1,
     metal: 0,
     treasure: 0,
+    enabled: false,
+    ai: false,
   },
 };
 
@@ -869,9 +877,14 @@ function scenarioName() {
 }
 
 function selectedScenarioFactionsFromControls() {
-  const selected = scenarioFactionCheckboxes
-    .filter((checkbox) => checkbox.checked)
-    .map((checkbox) => normalizeScenarioFaction(checkbox.value, checkbox.value));
+  const selected = scenarioFactionRows.map((row) => {
+    const key = row.dataset.factionKey || "mongol";
+    return normalizeScenarioFaction({
+      key,
+      enabled: Boolean(row.querySelector(".scenario-faction-enabled")?.checked),
+      ai: Boolean(row.querySelector(".scenario-faction-ai")?.checked),
+    }, key);
+  });
   return selected.length > 0 ? selected : defaultScenarioFactions();
 }
 
@@ -881,13 +894,21 @@ function syncScenarioParameterControls() {
       ? currentMap.name
       : "Untitled Scenario";
   }
-  const factionKeys = new Set(
-    currentMap && Array.isArray(currentMap.factions)
-      ? normalizeScenarioFactions(currentMap.factions, currentMap.units).map((faction) => faction.key)
-      : defaultScenarioFactions().map((faction) => faction.key)
-  );
-  for (const checkbox of scenarioFactionCheckboxes) {
-    checkbox.checked = factionKeys.has(checkbox.value);
+  const scenarioFactions = currentMap && Array.isArray(currentMap.factions)
+    ? normalizeScenarioFactions(currentMap.factions, currentMap.units)
+    : defaultScenarioFactions();
+  for (const row of scenarioFactionRows) {
+    const key = row.dataset.factionKey || "mongol";
+    const faction = scenarioFactions.find((candidate) => candidate.key === key) || normalizeScenarioFaction(key, key);
+    const enabled = row.querySelector(".scenario-faction-enabled");
+    const ai = row.querySelector(".scenario-faction-ai");
+    if (enabled) {
+      enabled.checked = Boolean(faction.enabled);
+    }
+    if (ai) {
+      ai.checked = Boolean(faction.ai);
+      ai.disabled = !Boolean(faction.enabled);
+    }
   }
 }
 
@@ -1006,9 +1027,12 @@ function updateScenarioFactionsFromControls() {
   if (!currentMap) {
     return;
   }
-  const selected = scenarioFactionCheckboxes.filter((checkbox) => checkbox.checked);
-  if (selected.length === 0 && scenarioFactionCheckboxes.length > 0) {
-    scenarioFactionCheckboxes[0].checked = true;
+  const enabled = scenarioFactionRows.filter((row) => row.querySelector(".scenario-faction-enabled")?.checked);
+  if (enabled.length === 0 && scenarioFactionRows.length > 0) {
+    const firstEnabled = scenarioFactionRows[0].querySelector(".scenario-faction-enabled");
+    if (firstEnabled) {
+      firstEnabled.checked = true;
+    }
   }
   currentMap.factions = selectedScenarioFactionsFromControls();
   ensureGameMeta();
@@ -1028,11 +1052,17 @@ function normalizeScenarioFaction(faction, fallbackKey = "mongol") {
     color: typeof (faction && faction.color) === "string" ? faction.color : defaults.color,
     metal: Number.isFinite(faction && faction.metal) ? Math.max(0, Math.trunc(faction.metal)) : defaults.metal,
     treasure: Number.isFinite(faction && faction.treasure) ? Math.max(0, Math.trunc(faction.treasure)) : defaults.treasure,
+    enabled: faction && faction.enabled !== undefined ? Boolean(faction.enabled) : Boolean(defaults.enabled),
+    ai: faction && faction.ai !== undefined ? Boolean(faction.ai) : Boolean(defaults.ai),
   };
 }
 
 function defaultScenarioFactions() {
-  return factionTurnOrder.map((key) => normalizeScenarioFaction(key, key));
+  return defaultFactionKeys.map((key) => normalizeScenarioFaction({
+    key,
+    enabled: factionTurnOrder.includes(key),
+    ai: false,
+  }, key));
 }
 
 function normalizeScenarioFactions(rawFactions, units = []) {
@@ -1058,7 +1088,16 @@ function normalizeScenarioFactions(rawFactions, units = []) {
       addFaction(unit.faction || Object.keys(factions).find((key) => factions[key].owner === unit.owner) || "mongol");
     }
   }
-  return normalized.length > 0 ? normalized : defaultScenarioFactions();
+  if (normalized.length === 0) {
+    return defaultScenarioFactions();
+  }
+  for (const key of defaultFactionKeys) {
+    const defaults = normalizeScenarioFaction({ key, enabled: false, ai: false }, key);
+    if (!seenOwners.has(defaults.id)) {
+      normalized.push(defaults);
+    }
+  }
+  return normalized;
 }
 
 function factionForOwner(owner) {
@@ -1146,9 +1185,22 @@ function ensureGameMeta() {
   const priorGameFactions = Array.isArray(currentMap.game.factions) ? currentMap.game.factions : [];
   currentMap.factions = normalizeScenarioFactions(currentMap.factions, currentMap.units).map((faction) => {
     const prior = priorGameFactions.find((candidate) => candidate.id === faction.id);
-    return prior ? normalizeScenarioFaction({ ...faction, ...prior }, faction.key) : faction;
+    return prior
+      ? normalizeScenarioFaction({
+        ...prior,
+        ...faction,
+        metal: Number.isFinite(prior.metal) ? prior.metal : faction.metal,
+        treasure: Number.isFinite(prior.treasure) ? prior.treasure : faction.treasure,
+      }, faction.key)
+      : faction;
   });
-  currentMap.game.turnOrder = currentMap.factions.map((faction) => faction.id);
+  currentMap.game.turnOrder = currentMap.factions
+    .filter((faction) => faction.enabled)
+    .map((faction) => faction.id);
+  if (currentMap.game.turnOrder.length === 0) {
+    currentMap.factions[0].enabled = true;
+    currentMap.game.turnOrder = [currentMap.factions[0].id];
+  }
   currentMap.game.factions = currentMap.factions.map((faction) => ({
     id: faction.id,
     key: faction.key,
@@ -1156,12 +1208,25 @@ function ensureGameMeta() {
     color: faction.color,
     metal: faction.metal,
     treasure: faction.treasure,
+    enabled: faction.enabled,
+    ai: faction.ai,
   }));
   currentTurn = Number.isInteger(currentMap.game.round) ? currentMap.game.round : 1;
   const maxIndex = Math.max(0, currentMap.game.turnOrder.length - 1);
   activeFactionIndex = Number.isInteger(currentMap.game.activeFactionIndex)
     ? Math.max(0, Math.min(currentMap.game.activeFactionIndex, maxIndex))
     : 0;
+  const activeOwner = currentMap.game.turnOrder[activeFactionIndex] ?? null;
+  const activeFactionRecord = currentMap.game.factions.find((faction) => faction.id === activeOwner);
+  if (activeFactionRecord && activeFactionRecord.ai) {
+    const firstHumanIndex = currentMap.game.turnOrder.findIndex((owner) => {
+      const faction = currentMap.game.factions.find((candidate) => candidate.id === owner);
+      return faction && !faction.ai;
+    });
+    if (firstHumanIndex >= 0) {
+      activeFactionIndex = firstHumanIndex;
+    }
+  }
   currentMap.game.round = currentTurn;
   currentMap.game.activeFactionIndex = activeFactionIndex;
   currentMap.game.activeOwner = currentMap.game.turnOrder[activeFactionIndex] ?? null;
@@ -4050,8 +4115,10 @@ for (const button of edgeFeatureButtons) {
 if (scenarioNameInput) {
   scenarioNameInput.addEventListener("input", updateScenarioNameFromInput);
 }
-for (const checkbox of scenarioFactionCheckboxes) {
-  checkbox.addEventListener("change", updateScenarioFactionsFromControls);
+for (const row of scenarioFactionRows) {
+  for (const input of row.querySelectorAll("input")) {
+    input.addEventListener("change", updateScenarioFactionsFromControls);
+  }
 }
 editorEdgeFeatureSelect.addEventListener("change", () => {
   syncEditorControls();

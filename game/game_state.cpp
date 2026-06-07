@@ -1,5 +1,7 @@
 #include "game_state.h"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -304,15 +306,15 @@ std::vector<UnitStance> parse_legal_stances_field(const std::string& value, int 
 
 FactionState faction_for_owner(OwnerId owner) {
     if (owner == mongol_owner) {
-        return {mongol_owner, "mongol", "Mongol", "#2368c4", 4, 0};
+        return {mongol_owner, "mongol", "Mongol", "#2368c4", 4, 0, true, false};
     }
     if (owner == chinese_owner) {
-        return {chinese_owner, "chinese", "Chinese", "#c93632", 4, 0};
+        return {chinese_owner, "chinese", "Chinese", "#c93632", 4, 0, true, false};
     }
     if (owner == persian_owner) {
-        return {persian_owner, "persian", "Persian", "#8a4fb0", 4, 0};
+        return {persian_owner, "persian", "Persian", "#8a4fb0", 4, 0, true, false};
     }
-    return {neutral_owner, "neutral", "Neutral", "#777777", 0, 0};
+    return {neutral_owner, "neutral", "Neutral", "#777777", 0, 0, false, false};
 }
 
 struct UnitTypeTable {
@@ -644,160 +646,76 @@ std::string escape_json(const std::string& text) {
     return escaped;
 }
 
-std::size_t find_matching(const std::string& json, std::size_t open_index, char open, char close) {
-    int depth = 0;
-    bool in_string = false;
-    bool escaped = false;
-    for (std::size_t i = open_index; i < json.size(); ++i) {
-        const char ch = json[i];
-        if (in_string) {
-            if (escaped) {
-                escaped = false;
-            } else if (ch == '\\') {
-                escaped = true;
-            } else if (ch == '"') {
-                in_string = false;
-            }
-            continue;
+using Json = nlohmann::json;
+
+int int_field(const Json& json, const char* key, int fallback) {
+    const auto found = json.find(key);
+    if (found == json.end() || !found->is_number_integer()) {
+        return fallback;
+    }
+    return found->get<int>();
+}
+
+double number_field(const Json& json, const char* key, double fallback) {
+    const auto found = json.find(key);
+    if (found == json.end() || !found->is_number()) {
+        return fallback;
+    }
+    return found->get<double>();
+}
+
+bool bool_field(const Json& json, const char* key, bool fallback) {
+    const auto found = json.find(key);
+    if (found == json.end() || !found->is_boolean()) {
+        return fallback;
+    }
+    return found->get<bool>();
+}
+
+std::uint32_t uint_field(const Json& json, const char* key, std::uint32_t fallback) {
+    const auto found = json.find(key);
+    if (found == json.end() || !found->is_number_integer()) {
+        return fallback;
+    }
+    const int value = found->get<int>();
+    return value < 0 ? fallback : static_cast<std::uint32_t>(value);
+}
+
+std::string string_field(const Json& json, const char* key, const std::string& fallback = "") {
+    const auto found = json.find(key);
+    if (found == json.end() || !found->is_string()) {
+        return fallback;
+    }
+    return found->get<std::string>();
+}
+
+Coord coord_from_json(const Json& json) {
+    return {int_field(json, "q", 0), int_field(json, "r", 0)};
+}
+
+std::vector<std::string> string_array_field(const Json& json, const char* key) {
+    std::vector<std::string> values;
+    const auto found = json.find(key);
+    if (found == json.end() || !found->is_array()) {
+        return values;
+    }
+    for (const Json& item : *found) {
+        if (item.is_string()) {
+            values.push_back(item.get<std::string>());
         }
-        if (ch == '"') {
-            in_string = true;
-        } else if (ch == open) {
-            ++depth;
-        } else if (ch == close) {
-            --depth;
-            if (depth == 0) {
-                return i;
-            }
-        }
     }
-    throw std::runtime_error("invalid JSON structure");
+    return values;
 }
 
-std::string object_field(const std::string& json, const std::string& key) {
-    const std::string marker = "\"" + key + "\":";
-    const std::size_t start = json.find(marker);
-    if (start == std::string::npos) {
-        return {};
-    }
-    std::size_t value_start = start + marker.size();
-    while (value_start < json.size() && std::isspace(static_cast<unsigned char>(json[value_start]))) {
-        ++value_start;
-    }
-    if (value_start >= json.size()) {
-        return {};
-    }
-    if (json[value_start] == '[') {
-        return json.substr(value_start, find_matching(json, value_start, '[', ']') - value_start + 1);
-    }
-    if (json[value_start] == '{') {
-        return json.substr(value_start, find_matching(json, value_start, '{', '}') - value_start + 1);
-    }
-    if (json[value_start] == '"') {
-        std::size_t end = value_start + 1;
-        bool escaped = false;
-        for (; end < json.size(); ++end) {
-            if (escaped) {
-                escaped = false;
-            } else if (json[end] == '\\') {
-                escaped = true;
-            } else if (json[end] == '"') {
-                break;
-            }
-        }
-        return json.substr(value_start, end - value_start + 1);
-    }
-    std::size_t end = value_start;
-    while (end < json.size() && json[end] != ',' && json[end] != '}' && json[end] != ']') {
-        ++end;
-    }
-    return json.substr(value_start, end - value_start);
-}
-
-int int_field(const std::string& json, const std::string& key, int fallback) {
-    const std::string field = object_field(json, key);
-    if (field.empty()) {
-        return fallback;
-    }
-    try {
-        return std::stoi(field);
-    } catch (...) {
-        return fallback;
-    }
-}
-
-double number_field(const std::string& json, const std::string& key, double fallback) {
-    const std::string field = object_field(json, key);
-    if (field.empty()) {
-        return fallback;
-    }
-    try {
-        return std::stod(field);
-    } catch (...) {
-        return fallback;
-    }
-}
-
-bool bool_field(const std::string& json, const std::string& key, bool fallback) {
-    const std::string field = object_field(json, key);
-    if (field == "true") {
-        return true;
-    }
-    if (field == "false") {
-        return false;
-    }
-    return fallback;
-}
-
-std::uint32_t uint_field(const std::string& json, const std::string& key, std::uint32_t fallback) {
-    const std::string field = object_field(json, key);
-    if (field.empty()) {
-        return fallback;
-    }
-    try {
-        return static_cast<std::uint32_t>(std::stoul(field));
-    } catch (...) {
-        return fallback;
-    }
-}
-
-std::string string_field(const std::string& json, const std::string& key, const std::string& fallback = "") {
-    const std::string field = object_field(json, key);
-    if (field.size() < 2 || field.front() != '"' || field.back() != '"') {
-        return fallback;
-    }
-    return field.substr(1, field.size() - 2);
-}
-
-std::vector<std::string> object_array_items(const std::string& array_json) {
-    std::vector<std::string> items;
-    if (array_json.size() < 2 || array_json.front() != '[') {
-        return items;
-    }
-    for (std::size_t i = 1; i + 1 < array_json.size(); ++i) {
-        if (array_json[i] != '{') {
-            continue;
-        }
-        const std::size_t end = find_matching(array_json, i, '{', '}');
-        items.push_back(array_json.substr(i, end - i + 1));
-        i = end;
-    }
-    return items;
-}
-
-std::vector<OwnerId> parse_turn_order(const std::string& array_json) {
+std::vector<OwnerId> parse_turn_order(const Json& array_json) {
     std::vector<OwnerId> owners;
-    std::string number;
-    for (const char ch : array_json) {
-        if (std::isdigit(static_cast<unsigned char>(ch)) || ch == '-') {
-            number.push_back(ch);
-        } else if (!number.empty()) {
-            owners.push_back(std::stoi(number));
-            number.clear();
-        }
+    if (!array_json.is_array()) {
+        return owners;
     }
-    if (!number.empty()) {
-        owners.push_back(std::stoi(number));
+    for (const Json& item : array_json) {
+        if (item.is_number_integer()) {
+            owners.push_back(item.get<OwnerId>());
+        }
     }
     return owners;
 }
@@ -1109,6 +1027,11 @@ const FactionState* find_faction(const GameState& state, OwnerId owner) {
 int faction_metal(const GameState& state, OwnerId owner) {
     const FactionState* faction = find_faction(state, owner);
     return faction == nullptr ? 0 : faction->metal;
+}
+
+bool faction_ai_controlled(const GameState& state, OwnerId owner) {
+    const FactionState* faction = find_faction(state, owner);
+    return faction != nullptr && faction->enabled && faction->ai_controlled;
 }
 
 int terrain_defense_percent(Terrain terrain) {
@@ -2004,18 +1927,7 @@ bool create_unit_from_horde(GameState& state, int unit_id, UnitKind kind, Coord 
     return true;
 }
 
-void end_turn(GameState& state) {
-    state.selected_unit_id = 0;
-    state.legal_moves.clear();
-    state.legal_attacks.clear();
-    if (state.turn_order.empty()) {
-        state.turn_order = {mongol_owner, chinese_owner};
-    }
-    state.active_faction_index = (state.active_faction_index + 1) % static_cast<int>(state.turn_order.size());
-    if (state.active_faction_index == 0) {
-        state.round += 1;
-    }
-    const OwnerId owner = active_faction(state);
+void start_faction_turn(GameState& state, OwnerId owner) {
     for (Unit& unit : state.units) {
         if (unit.owner == owner) {
             const bool currently_in_contact = enemy_unit_adjacent_to(state, unit);
@@ -2031,6 +1943,147 @@ void end_turn(GameState& state) {
             unit.combat_done = false;
             unit.contacted_enemy_this_turn = currently_in_contact;
         }
+    }
+}
+
+std::vector<int> ai_unit_turn_order(const GameState& state, OwnerId owner) {
+    std::vector<int> ids;
+    for (const Unit& unit : state.units) {
+        if (unit.owner == owner && unit.hp > 0 && can_attack(unit.kind)) {
+            ids.push_back(unit.id);
+        }
+    }
+    std::sort(ids.begin(), ids.end());
+    return ids;
+}
+
+const Unit* nearest_enemy_unit(const GameState& state, const Unit& unit) {
+    const Unit* nearest = nullptr;
+    int nearest_distance = std::numeric_limits<int>::max();
+    for (const Unit& candidate : state.units) {
+        if (candidate.owner == unit.owner || candidate.hp <= 0) {
+            continue;
+        }
+        const int distance = hex_distance(unit.coord, candidate.coord);
+        if (distance < nearest_distance
+            || (distance == nearest_distance && nearest != nullptr && candidate.id < nearest->id)
+            || (distance == nearest_distance && nearest == nullptr)) {
+            nearest = &candidate;
+            nearest_distance = distance;
+        }
+    }
+    return nearest;
+}
+
+bool ai_attack_best_adjacent_enemy(GameState& state, int attacker_id) {
+    const std::vector<AttackableUnit> attacks = attackable_units(state, attacker_id);
+    if (attacks.empty()) {
+        return false;
+    }
+    const Unit* attacker = find_unit(state, attacker_id);
+    if (attacker == nullptr) {
+        return false;
+    }
+    int best_defender_id = attacks.front().unit_id;
+    int best_score = std::numeric_limits<int>::max();
+    for (const AttackableUnit& attack : attacks) {
+        const Unit* defender = find_unit(state, attack.unit_id);
+        if (defender == nullptr) {
+            continue;
+        }
+        const int score = defender->hp * 100
+            + effective_defense_score(state, *defender) * 10
+            + hex_distance(attacker->coord, defender->coord);
+        if (score < best_score || (score == best_score && defender->id < best_defender_id)) {
+            best_score = score;
+            best_defender_id = defender->id;
+        }
+    }
+    return attack_unit(state, attacker_id, best_defender_id);
+}
+
+bool ai_move_toward_target(GameState& state, int unit_id, Coord target) {
+    const Unit* unit = find_unit(state, unit_id);
+    if (unit == nullptr || unit->move_done || unit->remaining_scaled_move <= 0) {
+        return false;
+    }
+    const int current_distance = hex_distance(unit->coord, target);
+    const std::vector<ReachableHex> reachable = reachable_hexes(state, unit_id);
+    if (reachable.empty()) {
+        return false;
+    }
+
+    const ReachableHex* best = nullptr;
+    int best_distance = current_distance;
+    for (const ReachableHex& candidate : reachable) {
+        const int distance = hex_distance(candidate.coord, target);
+        if (best == nullptr
+            || distance < best_distance
+            || (distance == best_distance && candidate.scaled_cost < best->scaled_cost)
+            || (distance == best_distance
+                && candidate.scaled_cost == best->scaled_cost
+                && coord_less(candidate.coord, best->coord))) {
+            best = &candidate;
+            best_distance = distance;
+        }
+    }
+    if (best == nullptr || best_distance >= current_distance) {
+        return false;
+    }
+    return move_unit(state, unit_id, best->coord);
+}
+
+void execute_ai_turn(GameState& state, OwnerId owner) {
+    const std::vector<int> unit_ids = ai_unit_turn_order(state, owner);
+    for (const int unit_id : unit_ids) {
+        if (ai_attack_best_adjacent_enemy(state, unit_id)) {
+            continue;
+        }
+        const Unit* unit = find_unit(state, unit_id);
+        if (unit == nullptr) {
+            continue;
+        }
+        const Unit* target = nearest_enemy_unit(state, *unit);
+        if (target == nullptr) {
+            continue;
+        }
+        if (ai_move_toward_target(state, unit_id, target->coord)) {
+            ai_attack_best_adjacent_enemy(state, unit_id);
+        }
+    }
+    state.selected_unit_id = 0;
+    state.legal_moves.clear();
+    state.legal_attacks.clear();
+}
+
+void advance_to_next_faction(GameState& state) {
+    if (state.turn_order.empty()) {
+        state.turn_order = {mongol_owner, chinese_owner};
+    }
+    state.active_faction_index = (state.active_faction_index + 1) % static_cast<int>(state.turn_order.size());
+    if (state.active_faction_index == 0) {
+        state.round += 1;
+    }
+}
+
+void end_turn(GameState& state) {
+    state.selected_unit_id = 0;
+    state.legal_moves.clear();
+    state.legal_attacks.clear();
+    if (state.turn_order.empty()) {
+        state.turn_order = {mongol_owner, chinese_owner};
+    }
+
+    const int faction_count = static_cast<int>(state.turn_order.size());
+    for (int steps = 0; steps < faction_count; ++steps) {
+        advance_to_next_faction(state);
+        const OwnerId owner = active_faction(state);
+        start_faction_turn(state, owner);
+        if (faction_ai_controlled(state, owner)) {
+            execute_ai_turn(state, owner);
+            continue;
+        }
+        break;
     }
 }
 
@@ -2223,6 +2276,8 @@ void print_game_meta_json(const GameState& state, std::ostream& out) {
             << ",\"color\":\"" << escape_json(faction.color) << "\""
             << ",\"metal\":" << faction.metal
             << ",\"treasure\":" << faction.treasure
+            << ",\"enabled\":" << (faction.enabled ? "true" : "false")
+            << ",\"ai\":" << (faction.ai_controlled ? "true" : "false")
             << "}";
     }
     out << "]}";
@@ -2409,16 +2464,29 @@ void print_game_patch_json(const GameState& state, bool ok, std::ostream& out) {
 }
 
 GameState parse_game_state_json(const std::string& json) {
-    GameState state;
-    state.width = int_field(json, "width", 0);
-    state.height = int_field(json, "height", 0);
-    state.seed = uint_field(json, "seed", 0);
+    Json root;
+    try {
+        root = Json::parse(json);
+    } catch (const Json::parse_error& error) {
+        throw std::runtime_error(std::string("invalid game state JSON: ") + error.what());
+    }
+    if (!root.is_object()) {
+        throw std::runtime_error("game state JSON must be an object");
+    }
 
-    const std::string game_json = object_field(json, "game");
-    state.round = int_field(game_json.empty() ? json : game_json, "round", 1);
-    state.active_faction_index = int_field(game_json.empty() ? json : game_json, "activeFactionIndex", 0);
-    state.selected_unit_id = int_field(game_json.empty() ? json : game_json, "selectedUnitId", 0);
-    state.turn_order = parse_turn_order(object_field(game_json.empty() ? json : game_json, "turnOrder"));
+    GameState state;
+    state.width = int_field(root, "width", 0);
+    state.height = int_field(root, "height", 0);
+    state.seed = uint_field(root, "seed", 0);
+
+    const Json empty_object = Json::object();
+    const Json empty_array = Json::array();
+    const Json& game_json = root.contains("game") && root["game"].is_object() ? root["game"] : empty_object;
+    const Json& game_meta = game_json.empty() ? root : game_json;
+    state.round = int_field(game_meta, "round", 1);
+    state.active_faction_index = int_field(game_meta, "activeFactionIndex", 0);
+    state.selected_unit_id = int_field(game_meta, "selectedUnitId", 0);
+    state.turn_order = parse_turn_order(game_meta.contains("turnOrder") ? game_meta["turnOrder"] : empty_array);
     if (state.turn_order.empty()) {
         state.turn_order = {mongol_owner, chinese_owner};
     }
@@ -2427,72 +2495,105 @@ GameState parse_game_state_json(const std::string& json) {
         faction_for_owner(chinese_owner),
         faction_for_owner(persian_owner),
     };
-    const std::vector<std::string> faction_items = object_array_items(object_field(game_json, "factions"));
+    const Json& faction_items = game_json.contains("factions") && game_json["factions"].is_array()
+        ? game_json["factions"]
+        : (root.contains("factions") && root["factions"].is_array() ? root["factions"] : empty_array);
     if (!faction_items.empty()) {
         state.factions.clear();
-        for (const std::string& faction_json : faction_items) {
+        for (const Json& faction_json : faction_items) {
+            if (!faction_json.is_object()) {
+                continue;
+            }
             FactionState faction = faction_for_owner(int_field(faction_json, "id", neutral_owner));
             faction.key = string_field(faction_json, "key", faction.key);
             faction.name = string_field(faction_json, "name", faction.name);
             faction.color = string_field(faction_json, "color", faction.color);
             faction.metal = std::max(0, int_field(faction_json, "metal", 0));
             faction.treasure = std::max(0, int_field(faction_json, "treasure", 0));
+            faction.enabled = bool_field(faction_json, "enabled", true);
+            faction.ai_controlled = bool_field(faction_json, "ai", false);
             state.factions.push_back(std::move(faction));
         }
     }
 
-    for (const std::string& hex_json : object_array_items(object_field(json, "hexes"))) {
+    const Json& hex_items = root.contains("hexes") && root["hexes"].is_array() ? root["hexes"] : empty_array;
+    for (const Json& hex_json : hex_items) {
+        if (!hex_json.is_object()) {
+            continue;
+        }
         GameHex hex;
-        hex.coord = {int_field(hex_json, "q", 0), int_field(hex_json, "r", 0)};
+        hex.coord = coord_from_json(hex_json);
         hex.terrain = terrain_from_string(string_field(hex_json, "terrain", "none"));
         hex.tags = hex.terrain == Terrain::Grassland ? tag_mask(HexTag::BaseSteppe) : 0;
         hex.pasture = initial_pasture_for_terrain(hex.terrain);
-        if (hex.terrain == Terrain::Grassland) {
+        hex.source_labels = string_array_field(hex_json, "labels");
+        if (!hex.source_labels.empty()) {
+            hex.tags = tags_from_labels(hex.source_labels);
+        } else if (hex.terrain == Terrain::Grassland) {
             hex.source_labels = {"base_steppe"};
         }
         state.hexes.push_back(std::move(hex));
     }
 
-    for (const std::string& road_json : object_array_items(object_field(json, "roads"))) {
+    const Json& road_items = root.contains("roads") && root["roads"].is_array() ? root["roads"] : empty_array;
+    for (const Json& road_json : road_items) {
+        if (!road_json.is_object()) {
+            continue;
+        }
         Road road;
         road.id = int_field(road_json, "id", 0);
         road.feature = string_field(road_json, "feature", "");
-        for (const std::string& coord_json : object_array_items(object_field(road_json, "path"))) {
-            road.path.push_back({int_field(coord_json, "q", 0), int_field(coord_json, "r", 0)});
+        const Json& path_items = road_json.contains("path") && road_json["path"].is_array() ? road_json["path"] : empty_array;
+        for (const Json& coord_json : path_items) {
+            if (coord_json.is_object()) {
+                road.path.push_back(coord_from_json(coord_json));
+            }
         }
         state.roads.push_back(std::move(road));
     }
 
-    for (const std::string& wall_json : object_array_items(object_field(json, "walls"))) {
+    const Json& wall_items = root.contains("walls") && root["walls"].is_array() ? root["walls"] : empty_array;
+    for (const Json& wall_json : wall_items) {
+        if (!wall_json.is_object()) {
+            continue;
+        }
         Wall wall;
         wall.id = int_field(wall_json, "id", 0);
         wall.feature = string_field(wall_json, "feature", "");
-        for (const std::string& edge_json : object_array_items(object_field(wall_json, "edge_path"))) {
-            const std::string a_json = object_field(edge_json, "a");
-            const std::string b_json = object_field(edge_json, "b");
+        const Json& edge_items = wall_json.contains("edge_path") && wall_json["edge_path"].is_array() ? wall_json["edge_path"] : empty_array;
+        for (const Json& edge_json : edge_items) {
+            if (!edge_json.is_object()) {
+                continue;
+            }
             wall.edge_path.push_back({
-                {int_field(a_json, "q", 0), int_field(a_json, "r", 0)},
-                {int_field(b_json, "q", 0), int_field(b_json, "r", 0)}
+                edge_json.contains("a") && edge_json["a"].is_object() ? coord_from_json(edge_json["a"]) : Coord{0, 0},
+                edge_json.contains("b") && edge_json["b"].is_object() ? coord_from_json(edge_json["b"]) : Coord{0, 0}
             });
         }
         state.walls.push_back(std::move(wall));
     }
 
-    for (const std::string& gate_json : object_array_items(object_field(json, "wall_gates"))) {
+    const Json& gate_items = root.contains("wall_gates") && root["wall_gates"].is_array() ? root["wall_gates"] : empty_array;
+    for (const Json& gate_json : gate_items) {
+        if (!gate_json.is_object()) {
+            continue;
+        }
         WallGate gate;
         gate.id = int_field(gate_json, "id", 0);
         gate.kind = string_field(gate_json, "kind", "");
-        const std::string edge_json = object_field(gate_json, "edge");
-        const std::string a_json = object_field(edge_json, "a");
-        const std::string b_json = object_field(edge_json, "b");
+        const Json& edge_json = gate_json.contains("edge") && gate_json["edge"].is_object() ? gate_json["edge"] : empty_object;
         gate.edge = {
-            {int_field(a_json, "q", 0), int_field(a_json, "r", 0)},
-            {int_field(b_json, "q", 0), int_field(b_json, "r", 0)}
+            edge_json.contains("a") && edge_json["a"].is_object() ? coord_from_json(edge_json["a"]) : Coord{0, 0},
+            edge_json.contains("b") && edge_json["b"].is_object() ? coord_from_json(edge_json["b"]) : Coord{0, 0}
         };
         state.wall_gates.push_back(gate);
     }
 
-    for (const std::string& unit_json : object_array_items(object_field(json, "units"))) {
+    const Json& unit_items = root.contains("units") && root["units"].is_array() ? root["units"] : empty_array;
+    for (const Json& unit_json : unit_items) {
+        if (!unit_json.is_object()) {
+            continue;
+        }
         Unit unit;
         unit.id = int_field(unit_json, "id", 0);
         unit.owner = int_field(unit_json, "owner", neutral_owner);
@@ -2512,7 +2613,7 @@ GameState parse_game_state_json(const std::string& json) {
             unit.stance = default_stance(unit.kind);
         }
         const UnitDefaults defaults = unit_defaults(unit.kind);
-        unit.coord = {int_field(unit_json, "q", 0), int_field(unit_json, "r", 0)};
+        unit.coord = coord_from_json(unit_json);
         unit.hp = int_field(unit_json, "hp", defaults.hp);
         unit.max_hp = int_field(unit_json, "maxHp", unit.hp);
         unit.attack = std::max(0, int_field(unit_json, "attack", defaults.attack));

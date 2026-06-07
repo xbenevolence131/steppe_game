@@ -1,0 +1,110 @@
+{
+  "schema": "steppe-scenario.v1",
+  "name": "AI Town Capture Smoke",
+  "seed": 0,
+  "width": 8,
+  "height": 6,
+  "hexes": [
+    { "q": 1, "r": 1, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 2, "r": 1, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 3, "r": 1, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 4, "r": 1, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 5, "r": 1, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 6, "r": 1, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 7, "r": 1, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 8, "r": 1, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 1, "r": 2, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 2, "r": 2, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 3, "r": 2, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 4, "r": 2, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 5, "r": 2, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 6, "r": 2, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 7, "r": 2, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 8, "r": 2, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 1, "r": 3, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 2, "r": 3, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 3, "r": 3, "terrain": "urban", "labels": ["urban", "fixed_feature_town"] },
+    { "q": 4, "r": 3, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 5, "r": 3, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 6, "r": 3, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 7, "r": 3, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 8, "r": 3, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 1, "r": 4, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 2, "r": 4, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 3, "r": 4, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 4, "r": 4, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 5, "r": 4, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 6, "r": 4, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 7, "r": 4, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 8, "r": 4, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 1, "r": 5, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 2, "r": 5, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 3, "r": 5, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 4, "r": 5, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 5, "r": 5, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 6, "r": 5, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 7, "r": 5, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 8, "r": 5, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 1, "r": 6, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 2, "r": 6, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 3, "r": 6, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 4, "r": 6, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 5, "r": 6, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 6, "r": 6, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 7, "r": 6, "terrain": "grassland", "labels": ["base_steppe"] },
+    { "q": 8, "r": 6, "terrain": "grassland", "labels": ["base_steppe"] }
+  ],
+  "river_sources": [],
+  "river_destinations": [],
+  "merge_points": [],
+  "river_segments": [],
+  "edges": [],
+  "towns": [
+    { "id": 1, "q": 3, "r": 3, "kind": "generic", "owner": 0, "feature": "blue_town" }
+  ],
+  "roads": [],
+  "walls": [],
+  "wall_gates": [],
+  "crossings": [],
+  "factions": [
+    { "id": 0, "key": "mongol", "name": "Mongol", "color": "#2368c4", "enabled": true, "ai": false, "metal": 4, "treasure": 0 },
+    { "id": 2, "key": "chinese", "name": "Chinese", "color": "#c93632", "enabled": true, "ai": true, "metal": 4, "treasure": 0 },
+    { "id": 1, "key": "persian", "name": "Persian", "color": "#8a4fb0", "enabled": false, "ai": false, "metal": 4, "treasure": 0 }
+  ],
+  "units": [
+    { "id": 1, "owner": 0, "faction": "mongol", "kind": "infantry", "name": "Town Garrison", "q": 3, "r": 3, "hp": 10, "maxHp": 10, "readiness": 100, "remainingScaledMove": 16 },
+    { "id": 2, "owner": 2, "faction": "chinese", "kind": "chinese_cavalry", "name": "Chinese Heavy Cavalry", "q": 7, "r": 2, "hp": 10, "maxHp": 10, "readiness": 100, "remainingScaledMove": 24 },
+    { "id": 3, "owner": 2, "faction": "chinese", "kind": "chinese_cavalry", "name": "Chinese Heavy Cavalry", "q": 7, "r": 4, "hp": 10, "maxHp": 10, "readiness": 100, "remainingScaledMove": 24 },
+    { "id": 4, "owner": 2, "faction": "chinese", "kind": "infantry", "name": "Chinese Infantry", "q": 8, "r": 2, "hp": 10, "maxHp": 10, "readiness": 100, "remainingScaledMove": 16 },
+    { "id": 5, "owner": 2, "faction": "chinese", "kind": "infantry", "name": "Chinese Infantry", "q": 8, "r": 4, "hp": 10, "maxHp": 10, "readiness": 100, "remainingScaledMove": 16 }
+  ],
+  "game": {
+    "round": 1,
+    "activeFactionIndex": 0,
+    "activeOwner": 0,
+    "selectedUnitId": 0,
+    "turnOrder": [0, 2],
+    "factions": [
+      { "id": 0, "key": "mongol", "name": "Mongol", "color": "#2368c4", "enabled": true, "ai": false, "metal": 4, "treasure": 0 },
+      { "id": 2, "key": "chinese", "name": "Chinese", "color": "#c93632", "enabled": true, "ai": true, "metal": 4, "treasure": 0 },
+      { "id": 1, "key": "persian", "name": "Persian", "color": "#8a4fb0", "enabled": false, "ai": false, "metal": 4, "treasure": 0 }
+    ],
+    "aiGroups": [
+      {
+        "id": 1,
+        "owner": 2,
+        "name": "Town Capture Force",
+        "unitIds": [2, 3, 4, 5],
+        "directive": {
+          "type": "capture_hex",
+          "target": { "q": 3, "r": 3 }
+        }
+      }
+    ]
+  },
+  "metadata": {
+    "generator": "hand-authored",
+    "purpose": "tactical-ai-smoke",
+    "snapshot": "full-scenario"
+  }
+}

@@ -101,6 +101,8 @@ struct FactionState {
     std::string color;
     int metal = 0;
     int treasure = 0;
+    bool enabled = true;
+    bool ai_controlled = false;
 };
 
 struct Unit {

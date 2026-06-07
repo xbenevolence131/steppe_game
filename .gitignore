@@ -8,4 +8,5 @@ test-results/
 playwright-report/
 scenarios/*.json
 !scenarios/.gitkeep
+!scenarios/ai-town-capture-smoke.json
 .DS_Store
