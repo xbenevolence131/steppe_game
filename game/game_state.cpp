@@ -586,6 +586,8 @@ constexpr int attack_readiness_cost = 10;
 constexpr int turn_readiness_recovery = 25;
 constexpr int flanked_defense_percent = 75;
 constexpr int feigned_retreat_pursuit_readiness_penalty = 15;
+constexpr int feigned_retreat_defender_hp_damage = 1;
+constexpr int feigned_retreat_defender_readiness_penalty = 10;
 constexpr int blocked_retreat_readiness_penalty = 15;
 
 constexpr int move_scale = 8;
@@ -1205,16 +1207,16 @@ struct CrtOutcome {
 
 CrtOutcome crt_outcome(int index) {
     if (index <= -5) {
-        return {4, 0, "attacker"};
+        return {4, 0, "none"};
     }
     if (index == -4) {
-        return {3, 0, "attacker"};
+        return {3, 0, "none"};
     }
     if (index == -3) {
-        return {3, 0, "attacker"};
+        return {3, 0, "none"};
     }
     if (index == -2) {
-        return {2, 0, "attacker"};
+        return {2, 0, "none"};
     }
     if (index == -1) {
         return {2, 1, "none"};
@@ -1255,9 +1257,6 @@ std::string readiness_impact_text(int readiness_ratio_percent) {
 }
 
 std::string retreat_impact_text(const std::string& retreat_option) {
-    if (retreat_option == "attacker") {
-        return "Attacker retreats";
-    }
     if (retreat_option == "defender") {
         return "Defender retreats";
     }
@@ -1619,11 +1618,20 @@ CombatPreview combat_preview(const GameState& state, int attacker_id, int defend
         preview.defender_retreat_to = retreat_to;
         preview.attacker_pursuit_to = defender->coord;
         preview.pursuit_readiness_penalty = feigned_retreat_pursuit_readiness_penalty;
+        preview.attacker.damage_dealt = feigned_retreat_defender_hp_damage;
         preview.attacker.readiness_damage_taken = feigned_retreat_pursuit_readiness_penalty;
         preview.attacker.result_readiness = std::max(
             0,
             clamped_readiness(*attacker) - feigned_retreat_pursuit_readiness_penalty
         );
+        preview.defender.damage_taken = feigned_retreat_defender_hp_damage;
+        preview.defender.readiness_damage_taken = feigned_retreat_defender_readiness_penalty;
+        preview.defender.result_hp = std::max(0, defender->hp - feigned_retreat_defender_hp_damage);
+        preview.defender.result_readiness = std::max(
+            0,
+            clamped_readiness(*defender) - feigned_retreat_defender_readiness_penalty
+        );
+        preview.defender.destroyed = preview.defender.result_hp <= 0;
         return preview;
     }
     const CrtOutcome outcome = crt_outcome(preview.crt_index);
@@ -1652,17 +1660,7 @@ CombatPreview combat_preview(const GameState& state, int attacker_id, int defend
     preview.attacker.result_readiness = std::max(0, clamped_readiness(*attacker) - attacker_readiness_damage);
     preview.attacker.destroyed = preview.attacker.result_hp <= 0;
 
-    if (preview.retreat_option == "attacker" && !preview.attacker.destroyed) {
-        if (find_ordinary_retreat_hex(state, *attacker, *defender, preview.attacker_retreat_to)) {
-            preview.retreat_impact = "Attacker retreats";
-        } else {
-            preview.retreat_blocked = true;
-            preview.blocked_retreat_readiness_penalty = blocked_retreat_readiness_penalty;
-            preview.retreat_impact = "Attacker retreat blocked";
-            preview.attacker.readiness_damage_taken += blocked_retreat_readiness_penalty;
-            preview.attacker.result_readiness = std::max(0, preview.attacker.result_readiness - blocked_retreat_readiness_penalty);
-        }
-    } else if (preview.retreat_option == "defender" && !preview.defender.destroyed) {
+    if (preview.retreat_option == "defender" && !preview.defender.destroyed) {
         if (find_ordinary_retreat_hex(state, *defender, *attacker, preview.defender_retreat_to)) {
             preview.retreat_impact = "Defender retreats";
         } else {
@@ -1743,6 +1741,8 @@ bool attack_unit(GameState& state, int attacker_id, int defender_id) {
     if (preview.special_resolution == "feigned_retreat") {
         attacker->contacted_enemy_this_turn = true;
         defender->contacted_enemy_this_turn = true;
+        defender->hp = preview.defender.result_hp;
+        defender->readiness = preview.defender.result_readiness;
         defender->coord = preview.defender_retreat_to;
         defender->remaining_scaled_move = 0;
         defender->move_done = true;
@@ -1754,6 +1754,9 @@ bool attack_unit(GameState& state, int attacker_id, int defender_id) {
         attacker->combat_done = true;
         mark_enemy_contact(state, attacker_id);
         mark_enemy_contact(state, defender_id);
+        state.units.erase(std::remove_if(state.units.begin(), state.units.end(), [](const Unit& unit) {
+            return unit.hp <= 0;
+        }), state.units.end());
         state.selected_unit_id = attacker_id;
         refresh_legal_actions(state);
         return true;
@@ -1785,12 +1788,7 @@ bool attack_unit(GameState& state, int attacker_id, int defender_id) {
     attacker->readiness = preview.attacker.result_readiness;
     attacker->contacted_enemy_this_turn = true;
     defender->contacted_enemy_this_turn = true;
-    if (!preview.retreat_blocked && preview.retreat_option == "attacker" && attacker->hp > 0) {
-        attacker->coord = preview.attacker_retreat_to;
-        attacker->remaining_scaled_move = 0;
-        attacker->move_done = true;
-        attacker->moved_this_turn = true;
-    } else if (!preview.retreat_blocked && preview.retreat_option == "defender" && defender->hp > 0) {
+    if (!preview.retreat_blocked && preview.retreat_option == "defender" && defender->hp > 0) {
         defender->coord = preview.defender_retreat_to;
         defender->remaining_scaled_move = 0;
         defender->move_done = true;

@@ -342,8 +342,8 @@ test("default sandbox includes Chinese militia stats", async ({ isMobile }) => {
   const militia = state.units.find((unit) => unit.kind === "chinese_militia");
   expect(militia).toEqual(expect.objectContaining({
     faction: "chinese",
-    attack: 2,
-    defense: 2,
+    attack: 3,
+    defense: 3,
     move: 2,
     projectsZoc: true,
     respectsZoc: true,
@@ -457,8 +457,10 @@ test("horse archers default to feigned retreat when attacked by non horse archer
   expect(preview.pursuitReadinessPenalty).toBe(15);
   expect(preview.attacker.readinessDamageTaken).toBe(15);
   expect(preview.attacker.resultReadiness).toBe(85);
-  expect(preview.attacker.damageDealt).toBe(0);
-  expect(preview.defender.damageTaken).toBe(0);
+  expect(preview.attacker.damageDealt).toBe(1);
+  expect(preview.defender.damageTaken).toBe(1);
+  expect(preview.defender.readinessDamageTaken).toBe(10);
+  expect(preview.defender.resultReadiness).toBe(90);
   expect(preview.attackerPursuitTo).toEqual({ q: 2, r: 2 });
   expect(preview.defenderRetreatTo).toEqual({ q: 2, r: 3 });
 
@@ -467,7 +469,7 @@ test("horse archers default to feigned retreat when attacked by non horse archer
   const defender = resolved.units.find((unit) => unit.id === 2);
   expect(resolved.ok).toBe(true);
   expect(attacker).toEqual(expect.objectContaining({ q: 2, r: 2, hp: 10, readiness: 85, combatDone: true }));
-  expect(defender).toEqual(expect.objectContaining({ q: 2, r: 3, hp: 10, readiness: 100 }));
+  expect(defender).toEqual(expect.objectContaining({ q: 2, r: 3, hp: 9, readiness: 90 }));
 
   const defensivePreview = runEngineJson(
     ["game-combat-preview", "--attacker", "1", "--defender", "2"],
