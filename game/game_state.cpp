@@ -583,6 +583,10 @@ bool uses_mounted_road_cost(UnitKind kind) {
         || kind == UnitKind::MongolLancer;
 }
 
+bool is_cavalry_unit(UnitKind kind) {
+    return uses_mounted_road_cost(kind);
+}
+
 int road_modified_movement_cost(UnitKind kind, int terrain_cost) {
     if (terrain_cost == blocked_movement_cost()) {
         return terrain_cost;
@@ -1534,6 +1538,19 @@ CombatPreview combat_preview(const GameState& state, int attacker_id, int defend
         -6,
         std::min(6, static_cast<int>(std::lround(preview.base_differential * condition_multiplier)))
     );
+    if (is_cavalry_unit(attacker->kind) && defender->kind == UnitKind::Herd) {
+        preview.special_resolution = "horse_stealing";
+        preview.defender_retaliates = false;
+        preview.readiness_impact = "No readiness damage";
+        preview.retreat_impact = "Herd changes control";
+        preview.attacker.damage_taken = 1;
+        preview.attacker.result_hp = std::max(0, attacker->hp - 1);
+        preview.attacker.destroyed = preview.attacker.result_hp <= 0;
+        preview.attacker.result_readiness = clamped_readiness(*attacker);
+        preview.defender.result_hp = defender->hp;
+        preview.defender.result_readiness = clamped_readiness(*defender);
+        return preview;
+    }
     Coord retreat_to;
     if (defender->kind == UnitKind::HorseArcher
         && defender->stance == UnitStance::FeignedRetreat
@@ -1662,6 +1679,26 @@ bool attack_unit(GameState& state, int attacker_id, int defender_id) {
         mark_enemy_contact(state, attacker_id);
         mark_enemy_contact(state, defender_id);
         state.selected_unit_id = attacker_id;
+        refresh_legal_actions(state);
+        return true;
+    }
+
+    if (preview.special_resolution == "horse_stealing") {
+        const OwnerId captured_owner = attacker->owner;
+        attacker->hp = preview.attacker.result_hp;
+        attacker->contacted_enemy_this_turn = true;
+        attacker->remaining_scaled_move = 0;
+        attacker->move_done = true;
+        attacker->combat_done = true;
+        defender->owner = captured_owner;
+        defender->contacted_enemy_this_turn = true;
+        defender->remaining_scaled_move = 0;
+        defender->move_done = true;
+        defender->moved_this_turn = true;
+        state.units.erase(std::remove_if(state.units.begin(), state.units.end(), [](const Unit& unit) {
+            return unit.hp <= 0;
+        }), state.units.end());
+        state.selected_unit_id = find_unit(state, attacker_id) == nullptr ? 0 : attacker_id;
         refresh_legal_actions(state);
         return true;
     }

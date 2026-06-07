@@ -1470,6 +1470,8 @@ function renderCombatPreview(preview, clientX, clientY) {
   const titleParts = ["Combat Preview"];
   if (preview.specialResolution === "feigned_retreat") {
     titleParts.push("Feigned Retreat");
+  } else if (preview.specialResolution === "horse_stealing") {
+    titleParts.push("Horse Stealing");
   }
   if (preview.defenderFlanked) {
     titleParts.push("Flanked");
@@ -1486,7 +1488,10 @@ function renderCombatPreview(preview, clientX, clientY) {
   appendCombatRow(summary, "HP/RDY factor", `${preview.conditionRatioPercent}%`);
   appendCombatRow(summary, "CRT", String(preview.crtIndex));
   appendCombatRow(summary, "Retreat", preview.retreatOption === "none" ? "-" : preview.retreatOption);
-  appendCombatRow(summary, "Resolution", preview.specialResolution === "feigned_retreat" ? "Feigned retreat" : "Normal");
+  const resolutionLabel = preview.specialResolution === "feigned_retreat"
+    ? "Feigned retreat"
+    : (preview.specialResolution === "horse_stealing" ? "Horse stealing" : "Normal");
+  appendCombatRow(summary, "Resolution", resolutionLabel);
   const impacts = document.createElement("div");
   impacts.className = "combat-preview-impact";
   appendCombatRow(impacts, "Readiness impact", preview.readinessImpact || "-");

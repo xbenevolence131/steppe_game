@@ -247,6 +247,31 @@ function feignedRetreatGameState(defenderStance = "feigned_retreat", attackerKin
   };
 }
 
+function horseStealingGameState(attackerKind = "horse_archer") {
+  const hexes = [];
+  for (let r = 1; r <= 2; r += 1) {
+    for (let q = 1; q <= 3; q += 1) {
+      hexes.push({ q, r, terrain: "grassland", labels: [] });
+    }
+  }
+  return {
+    width: 3,
+    height: 2,
+    seed: 0,
+    hexes,
+    units: [
+      { id: 1, owner: 0, faction: "mongol", kind: attackerKind, q: 1, r: 1, hp: 10, maxHp: 10, remainingScaledMove: 32 },
+      { id: 2, owner: 2, faction: "chinese", kind: "herd", q: 2, r: 1, hp: 1, maxHp: 1, horses: 6, remainingScaledMove: 24 },
+    ],
+    game: {
+      round: 1,
+      activeFactionIndex: 0,
+      selectedUnitId: 1,
+      turnOrder: [0, 2],
+    },
+  };
+}
+
 test("movement can pass through friendly units without stacking", async ({ isMobile }) => {
   test.skip(isMobile, "engine rule is covered once on desktop");
 
@@ -390,6 +415,44 @@ test("horse archers default to feigned retreat when attacked by non horse archer
     feignedRetreatGameState("feigned_retreat", "horse_archer")
   );
   expect(horseArcherAttackerPreview.specialResolution).toBe("normal");
+});
+
+test("cavalry attacks steal enemy herds", async ({ isMobile }) => {
+  test.skip(isMobile, "engine combat rule is covered once on desktop");
+
+  const preview = runEngineJson(["game-combat-preview", "--attacker", "1", "--defender", "2"], horseStealingGameState());
+  expect(preview.valid).toBe(true);
+  expect(preview.specialResolution).toBe("horse_stealing");
+  expect(preview.defenderRetaliates).toBe(false);
+  expect(preview.attacker.damageTaken).toBe(1);
+  expect(preview.attacker.resultHp).toBe(9);
+  expect(preview.defender.damageTaken).toBe(0);
+  expect(preview.defender.resultHp).toBe(1);
+
+  const resolved = runEngineJson(["game-attack", "--attacker", "1", "--defender", "2"], horseStealingGameState());
+  const attacker = resolved.units.find((unit) => unit.id === 1);
+  const herd = resolved.units.find((unit) => unit.id === 2);
+  expect(resolved.ok).toBe(true);
+  expect(attacker).toEqual(expect.objectContaining({
+    owner: 0,
+    hp: 9,
+    combatDone: true,
+    moveDone: true,
+  }));
+  expect(herd).toEqual(expect.objectContaining({
+    owner: 0,
+    faction: "mongol",
+    kind: "herd",
+    horses: 6,
+    hp: 1,
+    moveDone: true,
+  }));
+
+  const infantryPreview = runEngineJson(
+    ["game-combat-preview", "--attacker", "1", "--defender", "2"],
+    horseStealingGameState("infantry")
+  );
+  expect(infantryPreview.specialResolution).toBe("normal");
 });
 
 test("combat flanking requires separated support", async ({ isMobile }) => {
