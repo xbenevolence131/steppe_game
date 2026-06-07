@@ -975,13 +975,13 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
       if (unit.faction === "mongol") {
         unit.population = 11;
         unit.horses = 5;
-        unit.metal = 2;
       } else if (unit.faction === "chinese") {
         unit.population = 7;
         unit.horses = 3;
-        unit.metal = 4;
       }
     }
+    currentMap.game.factions.find((faction) => faction.key === "mongol").metal = 2;
+    currentMap.game.factions.find((faction) => faction.key === "chinese").metal = 4;
     syncPlayControls();
   });
   await expect(page.locator("#faction-status-bar")).toBeVisible();
@@ -989,6 +989,8 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   await expect(page.locator("#faction-population-total")).toHaveText("11");
   await expect(page.locator("#faction-horses-total")).toHaveText("5");
   await expect(page.locator("#faction-metal-total")).toHaveText("2");
+  await expect(page.locator("#faction-treasure-total")).toHaveText("0");
+  await expect(page.locator("#sidebar-faction-metal")).toHaveText("2");
 
   const rosterItems = page.locator(".unit-roster-item");
   await expect(rosterItems.first()).toContainText("Mongol Horse Archers");
@@ -1047,6 +1049,7 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   await expect(page.locator("#faction-population-total")).toHaveText("4");
   await expect(page.locator("#faction-horses-total")).toHaveText("12");
   await expect(page.locator("#faction-metal-total")).toHaveText("4");
+  await expect(page.locator("#sidebar-faction-metal")).toHaveText("4");
 
   const layout = await page.evaluate(() => {
     const sidebar = document.querySelector("#play-controls").getBoundingClientRect();
@@ -1151,7 +1154,6 @@ test("horde inspector shows resource counters", async ({ page, isMobile }) => {
   await expect(page.locator("#unit-type")).toHaveText("Horde");
   await expect(page.locator("#unit-resources")).toBeVisible();
   await expect(page.locator("#unit-population")).toHaveText("4");
-  await expect(page.locator("#unit-metal")).toHaveText("4");
   await expect(page.locator("#unit-horses")).toHaveText("12");
 });
 
@@ -1250,8 +1252,8 @@ test("create horse archers spends horde resources and deploys adjacent unit", as
     ));
     return {
       population: horde.population,
-      metal: horde.metal,
       horses: horde.horses,
+      metal: currentMap.game.factions.find((faction) => faction.key === "mongol").metal,
       moveDone: horde.moveDone,
       remainingScaledMove: horde.remainingScaledMove,
       createdKind: created ? created.kind : "",
@@ -1319,8 +1321,8 @@ test("create mongol lancers spends horde resources and deploys adjacent unit", a
     ));
     return {
       population: horde.population,
-      metal: horde.metal,
       horses: horde.horses,
+      metal: currentMap.game.factions.find((faction) => faction.key === "mongol").metal,
       moveDone: horde.moveDone,
       createdKind: created ? created.kind : "",
       createdAttack: created ? created.attack : 0,
@@ -1619,7 +1621,6 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect.poll(() => page.evaluate(() => currentMap.units[0].projectsZoc)).toBe(true);
   await expect.poll(() => page.evaluate(() => currentMap.units[0].respectsZoc)).toBe(true);
   await expect.poll(() => page.evaluate(() => currentMap.units[0].population)).toBe(4);
-  await expect.poll(() => page.evaluate(() => currentMap.units[0].metal)).toBe(4);
   await expect.poll(() => page.evaluate(() => currentMap.units[0].horses)).toBe(12);
   point = await hexPoint({ q: 3, r: 3 });
   await page.mouse.click(point.x, point.y);
@@ -1659,7 +1660,6 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect.poll(() => page.evaluate(() => currentMap.units[0].readiness)).toBe(42);
   await expect(page.locator("#unit-resources")).toBeVisible();
   await expect(page.locator("#unit-population-row")).toBeHidden();
-  await expect(page.locator("#unit-metal-row")).toBeHidden();
   await expect(page.locator("#unit-horses-row")).toBeVisible();
   await expect(page.locator("#unit-horses")).toBeHidden();
   await expect(page.locator("#unit-horses-input")).toBeVisible();
@@ -1669,22 +1669,17 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await page.locator("#unit-type-input").selectOption("horde");
   await expect.poll(() => page.evaluate(() => currentMap.units[0].kind)).toBe("horde");
   await expect(page.locator("#unit-population-row")).toBeVisible();
-  await expect(page.locator("#unit-metal-row")).toBeVisible();
   await expect(page.locator("#unit-horses-row")).toBeVisible();
   await expect(page.locator("#unit-population-input")).toHaveValue("4");
-  await expect(page.locator("#unit-metal-input")).toHaveValue("4");
   await expect(page.locator("#unit-horses-input")).toHaveValue("12");
   await page.locator("#unit-population-input").fill("6");
   await page.locator("#unit-population-input").dispatchEvent("change");
-  await page.locator("#unit-metal-input").fill("2");
-  await page.locator("#unit-metal-input").dispatchEvent("change");
   await page.locator("#unit-horses-input").fill("15");
   await page.locator("#unit-horses-input").dispatchEvent("change");
   await expect.poll(() => page.evaluate(() => ({
     population: currentMap.units[0].population,
-    metal: currentMap.units[0].metal,
     horses: currentMap.units[0].horses,
-  }))).toEqual({ population: 6, metal: 2, horses: 15 });
+  }))).toEqual({ population: 6, horses: 15 });
   await page.locator("#unit-type-input").selectOption("chinese_militia");
   await expect.poll(() => page.evaluate(() => currentMap.units[0].kind)).toBe("chinese_militia");
   await expect(page.locator("#unit-type-input")).toHaveValue("chinese_militia");

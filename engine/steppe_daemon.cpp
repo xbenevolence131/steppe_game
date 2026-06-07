@@ -238,7 +238,6 @@ std::string unit_defaults_json() {
             << ",\"projectsZoc\":" << (defaults.projects_zoc ? "true" : "false")
             << ",\"respectsZoc\":" << (defaults.respects_zoc ? "true" : "false")
             << ",\"population\":" << defaults.population
-            << ",\"metal\":" << defaults.metal
             << ",\"horses\":" << defaults.horses
             << "}";
     }

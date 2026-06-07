@@ -94,11 +94,13 @@ struct Settlement {
     std::vector<std::string> source_labels;
 };
 
-struct Clan {
+struct FactionState {
     OwnerId id = neutral_owner;
     std::string key;
     std::string name;
     std::string color;
+    int metal = 0;
+    int treasure = 0;
 };
 
 struct Unit {
@@ -117,7 +119,6 @@ struct Unit {
     int scaled_move = 32;
     int remaining_scaled_move = 32;
     int population = 0;
-    int metal = 0;
     int horses = 0;
     bool move_done = false;
     bool moved_this_turn = false;
@@ -140,7 +141,6 @@ struct UnitDefaults {
     bool projects_zoc = false;
     bool respects_zoc = false;
     int population = 0;
-    int metal = 0;
     int horses = 0;
 };
 
@@ -241,7 +241,7 @@ struct GameState {
     std::vector<WallGate> wall_gates;
     std::vector<Crossing> crossings;
     std::vector<Settlement> settlements;
-    std::vector<Clan> clans;
+    std::vector<FactionState> factions;
     std::vector<Unit> units;
 };
 

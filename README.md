@@ -11,7 +11,8 @@ Each Generate click sends a seed and parameters to the C++ engine. Terrain, hydr
 - Coherent steppe-first terrain generation with peripheral hills, forests, mountains, desert, marshes, and lake/river valleys.
 - Edge-based rivers, roads, walls, bridges, fords, and Great Wall gates.
 - Persian and Chinese town regions with cleaner local road meshes and a Silk Road route biased toward useful central anchors.
-- Single strategic map state with units, owners, turn state, selectable units, reachable movement, ZOC flags, integer-scaled movement costs, horde resource counters, horde-to-herd detachment, and horde creation of steppe units such as horse-archers and lancers.
+- Single strategic map state with factions, faction-level metal/treasure, units, owners, turn state, selectable units, reachable movement, ZOC flags, integer-scaled movement costs, horde population/horse counters, horde-to-herd detachment, and horde creation of steppe units such as horse-archers and lancers.
+- Combat preview and resolution use engine-authored unit stats, readiness, HP scaling, flanking, and terrain defense modifiers.
 - The current `mongol` side is the first steppe-nomad sandbox faction. Other steppe-nomad factions, for example the Naimans, are expected to use the same steppe unit kinds and horde mechanics rather than separate duplicate unit types.
 - Browser scenario editor with `Terrain`, `Edges`, and `Units` modes. Terrain paints hexes, Edges toggles roads/rivers, and Units toggles deployed units by side and type.
 - Play UI with an active-faction resource status bar above the shared map, a left unit roster/sidebar, and a bottom unit inspector on desktop.
@@ -29,19 +30,18 @@ Each Generate click sends a seed and parameters to the C++ engine. Terrain, hydr
 ## Build
 
 ```powershell
-cmake -S . -B build -G Ninja
-cmake --build build
+npm run build
 ```
 
-If MSVC is installed but not active in the shell, run the commands from a Visual Studio developer PowerShell.
+The build wrapper refreshes the C++ engine through the local Visual Studio environment.
 
 ## Run
 
 ```powershell
-npm start
+npm run launch
 ```
 
-Then open `http://localhost:3000`.
+Then open `http://localhost:3000`. The launch wrapper stops stale local daemon/proxy instances, rebuilds the engine, starts the proxy, and runs a generation smoke test.
 
 ## Unit Sprites
 

@@ -282,17 +282,17 @@ std::vector<UnitStance> parse_legal_stances_field(const std::string& value, int 
     return stances;
 }
 
-Clan clan_for_owner(OwnerId owner) {
+FactionState faction_for_owner(OwnerId owner) {
     if (owner == mongol_owner) {
-        return {mongol_owner, "mongol", "Mongol", "#2368c4"};
+        return {mongol_owner, "mongol", "Mongol", "#2368c4", 4, 0};
     }
     if (owner == chinese_owner) {
-        return {chinese_owner, "chinese", "Chinese", "#c93632"};
+        return {chinese_owner, "chinese", "Chinese", "#c93632", 4, 0};
     }
     if (owner == persian_owner) {
-        return {persian_owner, "persian", "Persian", "#8a4fb0"};
+        return {persian_owner, "persian", "Persian", "#8a4fb0", 4, 0};
     }
-    return {neutral_owner, "neutral", "Neutral", "#777777"};
+    return {neutral_owner, "neutral", "Neutral", "#777777", 0, 0};
 }
 
 struct UnitTypeTable {
@@ -336,9 +336,9 @@ std::string unit_type_csv_path() {
 }
 
 UnitDefaults parse_unit_type_row(const std::vector<std::string>& cells, int line_number) {
-    if (cells.size() != 14) {
+    if (cells.size() != 13) {
         throw std::runtime_error("unit_types.csv line " + std::to_string(line_number)
-            + " must have 14 columns");
+            + " must have 13 columns");
     }
     UnitKind kind = UnitKind::HorseArcher;
     if (!try_unit_kind_from_string(cells[0], kind) || cells[0] == "cavalry") {
@@ -363,12 +363,11 @@ UnitDefaults parse_unit_type_row(const std::vector<std::string>& cells, int line
     }
     defaults.legal_stances = parse_legal_stances_field(cells[10], line_number);
     defaults.population = parse_int_field(cells[11], "population", line_number);
-    defaults.metal = parse_int_field(cells[12], "metal", line_number);
-    defaults.horses = parse_int_field(cells[13], "horses", line_number);
+    defaults.horses = parse_int_field(cells[12], "horses", line_number);
 
     if (defaults.hp < 1 || defaults.defense < 1 || defaults.attack < 0
         || defaults.readiness_damage < 0 || defaults.readiness < 1 || defaults.move < 0
-        || defaults.population < 0 || defaults.metal < 0 || defaults.horses < 0) {
+        || defaults.population < 0 || defaults.horses < 0) {
         throw std::runtime_error("invalid negative or zero unit stat in unit_types.csv line "
             + std::to_string(line_number));
     }
@@ -399,7 +398,6 @@ UnitTypeTable parse_unit_type_table(const std::string& path) {
         "default_stance",
         "legal_stances",
         "population",
-        "metal",
         "horses",
     };
 
@@ -903,11 +901,11 @@ GameState game_state_from_generated_map(const GeneratedMap& generated) {
     state.walls = generated.walls;
     state.wall_gates = generated.wall_gates;
     state.crossings = generated.crossings;
-    state.clans = {
-        clan_for_owner(neutral_owner),
-        clan_for_owner(mongol_owner),
-        clan_for_owner(persian_owner),
-        clan_for_owner(chinese_owner),
+    state.factions = {
+        faction_for_owner(neutral_owner),
+        faction_for_owner(mongol_owner),
+        faction_for_owner(persian_owner),
+        faction_for_owner(chinese_owner),
     };
     state.turn_order = {mongol_owner, chinese_owner};
 
@@ -925,10 +923,10 @@ GameState create_default_play_sandbox(int width, int height, int faction_count) 
     state.seed = 0;
     state.round = 1;
     state.active_faction_index = 0;
-    state.clans = {
-        clan_for_owner(mongol_owner),
-        clan_for_owner(chinese_owner),
-        clan_for_owner(persian_owner),
+    state.factions = {
+        faction_for_owner(mongol_owner),
+        faction_for_owner(chinese_owner),
+        faction_for_owner(persian_owner),
     };
 
     const OwnerId default_order[] = {mongol_owner, chinese_owner, persian_owner};
@@ -1024,7 +1022,6 @@ GameState create_default_play_sandbox(int width, int height, int faction_count) 
         unit.remaining_scaled_move = unit.scaled_move;
         const UnitDefaults defaults = unit_defaults(unit.kind);
         unit.population = defaults.population;
-        unit.metal = defaults.metal;
         unit.horses = defaults.horses;
         unit.projects_zoc = default_projects_zoc(kind);
         unit.respects_zoc = default_respects_zoc(kind);
@@ -1072,6 +1069,25 @@ const Unit* find_unit(const GameState& state, int unit_id) {
         return unit.id == unit_id;
     });
     return found == state.units.end() ? nullptr : &*found;
+}
+
+FactionState* find_faction(GameState& state, OwnerId owner) {
+    const auto found = std::find_if(state.factions.begin(), state.factions.end(), [&](const FactionState& faction) {
+        return faction.id == owner;
+    });
+    return found == state.factions.end() ? nullptr : &*found;
+}
+
+const FactionState* find_faction(const GameState& state, OwnerId owner) {
+    const auto found = std::find_if(state.factions.begin(), state.factions.end(), [&](const FactionState& faction) {
+        return faction.id == owner;
+    });
+    return found == state.factions.end() ? nullptr : &*found;
+}
+
+int faction_metal(const GameState& state, OwnerId owner) {
+    const FactionState* faction = find_faction(state, owner);
+    return faction == nullptr ? 0 : faction->metal;
 }
 
 int terrain_defense_percent(Terrain terrain) {
@@ -1832,7 +1848,7 @@ CreateUnitOptions create_unit_options(const GameState& state, int unit_id, UnitK
         || horde->moved_this_turn
         || enemy_unit_adjacent_to(state, *horde)
         || horde->population < options.population_cost
-        || horde->metal < options.metal_cost
+        || faction_metal(state, horde->owner) < options.metal_cost
         || horde->horses < options.horses_cost) {
         return options;
     }
@@ -1856,9 +1872,13 @@ bool create_unit_from_horde(GameState& state, int unit_id, UnitKind kind, Coord 
     if (horde == nullptr) {
         return false;
     }
+    FactionState* faction = find_faction(state, horde->owner);
+    if (faction == nullptr || faction->metal < options.metal_cost) {
+        return false;
+    }
     horde->population -= options.population_cost;
-    horde->metal -= options.metal_cost;
     horde->horses -= options.horses_cost;
+    faction->metal -= options.metal_cost;
     horde->remaining_scaled_move = 0;
     horde->move_done = true;
 
@@ -1943,10 +1963,10 @@ void print_string_array_json(const std::vector<std::string>& values, std::ostrea
 }
 
 void print_unit_json(const Unit& unit, std::ostream& out) {
-    const Clan clan = clan_for_owner(unit.owner);
+    const FactionState faction = faction_for_owner(unit.owner);
     out << "{\"id\":" << unit.id
         << ",\"owner\":" << unit.owner
-        << ",\"faction\":\"" << clan.key << "\""
+        << ",\"faction\":\"" << faction.key << "\""
         << ",\"kind\":\"" << unit_kind_to_string(unit.kind) << "\""
         << ",\"stance\":\"" << unit_stance_to_string(unit.stance) << "\""
         << ",\"q\":" << unit.coord.q
@@ -1966,7 +1986,6 @@ void print_unit_json(const Unit& unit, std::ostream& out) {
         << ",\"remainingMove\":" << to_ref_move(unit.remaining_scaled_move);
     if (unit.kind == UnitKind::Horde) {
         out << ",\"population\":" << unit.population
-            << ",\"metal\":" << unit.metal
             << ",\"horses\":" << unit.horses;
     } else if (unit.kind == UnitKind::Herd) {
         out << ",\"horses\":" << unit.horses;
@@ -2097,16 +2116,19 @@ void print_game_meta_json(const GameState& state, std::ostream& out) {
         }
         out << state.turn_order[i];
     }
-    out << "],\"clans\":[";
-    for (std::size_t i = 0; i < state.clans.size(); ++i) {
+    out << "],\"factions\":[";
+    for (std::size_t i = 0; i < state.factions.size(); ++i) {
         if (i > 0) {
             out << ",";
         }
-        const Clan& clan = state.clans[i];
-        out << "{\"id\":" << clan.id
-            << ",\"key\":\"" << escape_json(clan.key) << "\""
-            << ",\"name\":\"" << escape_json(clan.name) << "\""
-            << ",\"color\":\"" << escape_json(clan.color) << "\"}";
+        const FactionState& faction = state.factions[i];
+        out << "{\"id\":" << faction.id
+            << ",\"key\":\"" << escape_json(faction.key) << "\""
+            << ",\"name\":\"" << escape_json(faction.name) << "\""
+            << ",\"color\":\"" << escape_json(faction.color) << "\""
+            << ",\"metal\":" << faction.metal
+            << ",\"treasure\":" << faction.treasure
+            << "}";
     }
     out << "]}";
 }
@@ -2158,10 +2180,10 @@ void print_attackable_json(const std::vector<AttackableUnit>& attackable, std::o
 }
 
 void print_combatant_preview_json(const CombatantPreview& preview, std::ostream& out) {
-    const Clan clan = clan_for_owner(preview.owner);
+    const FactionState faction = faction_for_owner(preview.owner);
     out << "{\"unitId\":" << preview.unit_id
         << ",\"owner\":" << preview.owner
-        << ",\"faction\":\"" << clan.key << "\""
+        << ",\"faction\":\"" << faction.key << "\""
         << ",\"kind\":\"" << unit_kind_to_string(preview.kind) << "\""
         << ",\"q\":" << preview.coord.q
         << ",\"r\":" << preview.coord.r
@@ -2301,11 +2323,24 @@ GameState parse_game_state_json(const std::string& json) {
     if (state.turn_order.empty()) {
         state.turn_order = {mongol_owner, chinese_owner};
     }
-    state.clans = {
-        clan_for_owner(mongol_owner),
-        clan_for_owner(chinese_owner),
-        clan_for_owner(persian_owner),
+    state.factions = {
+        faction_for_owner(mongol_owner),
+        faction_for_owner(chinese_owner),
+        faction_for_owner(persian_owner),
     };
+    const std::vector<std::string> faction_items = object_array_items(object_field(game_json, "factions"));
+    if (!faction_items.empty()) {
+        state.factions.clear();
+        for (const std::string& faction_json : faction_items) {
+            FactionState faction = faction_for_owner(int_field(faction_json, "id", neutral_owner));
+            faction.key = string_field(faction_json, "key", faction.key);
+            faction.name = string_field(faction_json, "name", faction.name);
+            faction.color = string_field(faction_json, "color", faction.color);
+            faction.metal = std::max(0, int_field(faction_json, "metal", 0));
+            faction.treasure = std::max(0, int_field(faction_json, "treasure", 0));
+            state.factions.push_back(std::move(faction));
+        }
+    }
 
     for (const std::string& hex_json : object_array_items(object_field(json, "hexes"))) {
         GameHex hex;
@@ -2402,7 +2437,6 @@ GameState parse_game_state_json(const std::string& json) {
         }
         unit.remaining_scaled_move = std::max(0, std::min(unit.remaining_scaled_move, unit.scaled_move));
         unit.population = std::max(0, int_field(unit_json, "population", defaults.population));
-        unit.metal = std::max(0, int_field(unit_json, "metal", defaults.metal));
         unit.horses = std::max(0, int_field(unit_json, "horses", defaults.horses));
         unit.move_done = bool_field(unit_json, "moveDone", false);
         unit.moved_this_turn = bool_field(unit_json, "movedThisTurn", false);

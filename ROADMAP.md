@@ -4,12 +4,12 @@ Working backlog for future game systems and design follow-up.
 
 ## Near-Term Gameplay
 
-- Review retreat mechanics.
+- Add grazing mechanics.
 - Implement a real gameplay loop.
 
-## Economy And Movement
+## Deferred Combat
 
-- Add grazing mechanics.
+- Review retreat mechanics.
 
 ## AI
 

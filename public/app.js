@@ -66,11 +66,13 @@ const factionStatusName = document.querySelector("#faction-status-name");
 const factionPopulationTotal = document.querySelector("#faction-population-total");
 const factionHorsesTotal = document.querySelector("#faction-horses-total");
 const factionMetalTotal = document.querySelector("#faction-metal-total");
+const factionTreasureTotal = document.querySelector("#faction-treasure-total");
 const roundCount = document.querySelector("#round-count");
 const turnStatusReadout = document.querySelector("#turn-status-readout");
 const herdCount = document.querySelector("#herd-count");
 const horseArcherCount = document.querySelector("#horse-archer-count");
 const hordeCount = document.querySelector("#horde-count");
+const sidebarFactionMetal = document.querySelector("#sidebar-faction-metal");
 const sidebarSelectionReadout = document.querySelector(".sidebar-selection-readout");
 const unitRoster = document.querySelector("#unit-roster");
 const unitName = document.querySelector("#unit-name");
@@ -90,9 +92,6 @@ const unitResources = document.querySelector("#unit-resources");
 const unitPopulationRow = document.querySelector("#unit-population-row");
 const unitPopulation = document.querySelector("#unit-population");
 const unitPopulationInput = document.querySelector("#unit-population-input");
-const unitMetalRow = document.querySelector("#unit-metal-row");
-const unitMetal = document.querySelector("#unit-metal");
-const unitMetalInput = document.querySelector("#unit-metal-input");
 const unitHorsesRow = document.querySelector("#unit-horses-row");
 const unitHorses = document.querySelector("#unit-horses");
 const unitHorsesInput = document.querySelector("#unit-horses-input");
@@ -232,21 +231,29 @@ const factions = {
     name: "Mongol",
     color: "#2368c4",
     owner: 0,
+    metal: 4,
+    treasure: 0,
   },
   chinese: {
     name: "Chinese",
     color: "#c93632",
     owner: 2,
+    metal: 4,
+    treasure: 0,
   },
   persian: {
     name: "Persian",
     color: "#8a4fb0",
     owner: 1,
+    metal: 4,
+    treasure: 0,
   },
   neutral: {
     name: "Neutral",
     color: "#777777",
     owner: -1,
+    metal: 0,
+    treasure: 0,
   },
 };
 
@@ -285,7 +292,6 @@ const fallbackUnitDefaults = {
   projectsZoc: false,
   respectsZoc: false,
   population: 0,
-  metal: 0,
   horses: 0,
 };
 
@@ -1011,8 +1017,8 @@ function updateScenarioFactionsFromControls() {
 }
 
 function normalizeScenarioFaction(faction, fallbackKey = "mongol") {
-  const key = typeof faction === "string"
-    ? faction
+    const key = typeof faction === "string"
+        ? faction
     : (faction && typeof faction.key === "string" ? faction.key : fallbackKey);
   const defaults = factions[key] || factions[fallbackKey] || factions.mongol;
   return {
@@ -1020,6 +1026,8 @@ function normalizeScenarioFaction(faction, fallbackKey = "mongol") {
     key,
     name: typeof (faction && faction.name) === "string" ? faction.name : defaults.name,
     color: typeof (faction && faction.color) === "string" ? faction.color : defaults.color,
+    metal: Number.isFinite(faction && faction.metal) ? Math.max(0, Math.trunc(faction.metal)) : defaults.metal,
+    treasure: Number.isFinite(faction && faction.treasure) ? Math.max(0, Math.trunc(faction.treasure)) : defaults.treasure,
   };
 }
 
@@ -1064,8 +1072,8 @@ function factionForOwner(owner) {
 }
 
 function activeFactionKey() {
-  const clan = activeFaction();
-  return clan.key || "neutral";
+  const faction = activeFaction();
+  return faction.key || "neutral";
 }
 
 function activeOwner() {
@@ -1081,11 +1089,11 @@ function activeOwner() {
 
 function activeFaction() {
   const owner = activeOwner();
-  const clan = currentMap && currentMap.game && Array.isArray(currentMap.game.clans)
-    ? currentMap.game.clans.find((candidate) => candidate.id === owner)
+  const faction = currentMap && currentMap.game && Array.isArray(currentMap.game.factions)
+    ? currentMap.game.factions.find((candidate) => candidate.id === owner)
     : null;
-  if (clan) {
-    return clan;
+  if (faction) {
+    return faction;
   }
   return factionForOwner(owner);
 }
@@ -1097,7 +1105,13 @@ function countUnits(kind, owner = null) {
 }
 
 function activeFactionResources(owner) {
-  const totals = { population: 0, horses: 0, metal: 0 };
+  const faction = activeFaction();
+  const totals = {
+    population: 0,
+    horses: 0,
+    metal: Number.isInteger(faction.metal) ? faction.metal : 0,
+    treasure: Number.isInteger(faction.treasure) ? faction.treasure : 0,
+  };
   if (!currentMap || !Array.isArray(currentMap.units)) {
     return totals;
   }
@@ -1107,7 +1121,6 @@ function activeFactionResources(owner) {
     }
     totals.population += Number.isInteger(unit.population) ? unit.population : 0;
     totals.horses += Number.isInteger(unit.horses) ? unit.horses : 0;
-    totals.metal += Number.isInteger(unit.metal) ? unit.metal : 0;
   }
   return totals;
 }
@@ -1130,13 +1143,19 @@ function ensureGameMeta() {
     : "Untitled Scenario";
   currentMap.game = currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {};
   currentMap.units = Array.isArray(currentMap.units) ? currentMap.units.map(normalizeUnit) : [];
-  currentMap.factions = normalizeScenarioFactions(currentMap.factions, currentMap.units);
+  const priorGameFactions = Array.isArray(currentMap.game.factions) ? currentMap.game.factions : [];
+  currentMap.factions = normalizeScenarioFactions(currentMap.factions, currentMap.units).map((faction) => {
+    const prior = priorGameFactions.find((candidate) => candidate.id === faction.id);
+    return prior ? normalizeScenarioFaction({ ...faction, ...prior }, faction.key) : faction;
+  });
   currentMap.game.turnOrder = currentMap.factions.map((faction) => faction.id);
-  currentMap.game.clans = currentMap.factions.map((faction) => ({
+  currentMap.game.factions = currentMap.factions.map((faction) => ({
     id: faction.id,
     key: faction.key,
     name: faction.name,
     color: faction.color,
+    metal: faction.metal,
+    treasure: faction.treasure,
   }));
   currentTurn = Number.isInteger(currentMap.game.round) ? currentMap.game.round : 1;
   const maxIndex = Math.max(0, currentMap.game.turnOrder.length - 1);
@@ -1216,7 +1235,6 @@ function normalizeUnitDefault(defaults) {
   normalized.projectsZoc = Boolean(defaults.projectsZoc);
   normalized.respectsZoc = Boolean(defaults.respectsZoc);
   if (Number.isFinite(defaults.population)) normalized.population = Math.max(0, Math.trunc(defaults.population));
-  if (Number.isFinite(defaults.metal)) normalized.metal = Math.max(0, Math.trunc(defaults.metal));
   if (Number.isFinite(defaults.horses)) normalized.horses = Math.max(0, Math.trunc(defaults.horses));
   return normalized;
 }
@@ -1299,7 +1317,6 @@ function normalizeUnit(unit, index) {
     : defaults.readiness;
   normalized.stance = typeof unit.stance === "string" ? unit.stance : defaults.stance;
   if (Number.isFinite(unit.population)) normalized.population = Math.max(0, Math.trunc(unit.population));
-  if (Number.isFinite(unit.metal)) normalized.metal = Math.max(0, Math.trunc(unit.metal));
   if (Number.isFinite(unit.horses)) normalized.horses = Math.max(0, Math.trunc(unit.horses));
   if (Number.isFinite(unit.scaledMove)) normalized.scaledMove = unit.scaledMove;
   if (Number.isFinite(unit.remainingScaledMove)) normalized.remainingScaledMove = unit.remainingScaledMove;
@@ -1630,10 +1647,8 @@ const contextActionDefinitions = [
       && actionAvailability
       && actionAvailability.createHorseArchers
       && Number.isInteger(unit.population)
-      && Number.isInteger(unit.metal)
       && Number.isInteger(unit.horses)
       && unit.population >= 1
-      && unit.metal >= 1
       && unit.horses >= 3
     ),
     enabled: ({ unit, actionAvailability }) => Boolean(
@@ -1641,10 +1656,8 @@ const contextActionDefinitions = [
       && actionAvailability
       && actionAvailability.createHorseArchers
       && Number.isInteger(unit.population)
-      && Number.isInteger(unit.metal)
       && Number.isInteger(unit.horses)
       && unit.population >= 1
-      && unit.metal >= 1
       && unit.horses >= 3
     ),
     run: async (context) => startCreateHorseArchersPlacement(context),
@@ -1658,10 +1671,8 @@ const contextActionDefinitions = [
       && actionAvailability
       && actionAvailability.createMongolLancers
       && Number.isInteger(unit.population)
-      && Number.isInteger(unit.metal)
       && Number.isInteger(unit.horses)
       && unit.population >= 1
-      && unit.metal >= 2
       && unit.horses >= 3
     ),
     enabled: ({ unit, actionAvailability }) => Boolean(
@@ -1670,10 +1681,8 @@ const contextActionDefinitions = [
       && actionAvailability
       && actionAvailability.createMongolLancers
       && Number.isInteger(unit.population)
-      && Number.isInteger(unit.metal)
       && Number.isInteger(unit.horses)
       && unit.population >= 1
-      && unit.metal >= 2
       && unit.horses >= 3
     ),
     run: async (context) => startCreateMongolLancersPlacement(context),
@@ -1710,7 +1719,7 @@ function resourceFieldsForUnit(unit) {
     return [];
   }
   if (unit.kind === "horde") {
-    return ["population", "metal", "horses"];
+    return ["population", "horses"];
   }
   if (unit.kind === "herd") {
     return ["horses"];
@@ -1745,7 +1754,6 @@ function applyUnitTypeDefaults(unit, kind) {
   unit.projectsZoc = Boolean(defaults.projectsZoc);
   unit.respectsZoc = Boolean(defaults.respectsZoc);
   if (Number.isInteger(defaults.population)) unit.population = defaults.population;
-  if (Number.isInteger(defaults.metal)) unit.metal = defaults.metal;
   if (Number.isInteger(defaults.horses)) unit.horses = defaults.horses;
   const stances = defaults.legalStances && defaults.legalStances.length > 0 ? defaults.legalStances : ["default"];
   unit.stance = stances.includes(unit.stance) ? unit.stance : defaults.stance;
@@ -1888,12 +1896,9 @@ function syncUnitInspector() {
     unitStanceInput.replaceChildren();
     unitResources.hidden = true;
     unitPopulationRow.hidden = false;
-    unitMetalRow.hidden = false;
     unitHorsesRow.hidden = false;
     unitPopulation.textContent = "0";
     unitPopulationInput.value = "";
-    unitMetal.textContent = "0";
-    unitMetalInput.value = "";
     unitHorses.textContent = "0";
     unitHorsesInput.value = "";
     return;
@@ -1928,15 +1933,11 @@ function syncUnitInspector() {
   const resourceFields = resourceFieldsForUnit(unit);
   unitResources.hidden = resourceFields.length === 0;
   unitPopulationRow.hidden = !resourceFields.includes("population");
-  unitMetalRow.hidden = !resourceFields.includes("metal");
   unitHorsesRow.hidden = !resourceFields.includes("horses");
   const population = Number.isInteger(unit.population) ? unit.population : 0;
-  const metal = Number.isInteger(unit.metal) ? unit.metal : 0;
   const horses = Number.isInteger(unit.horses) ? unit.horses : 0;
   unitPopulation.textContent = String(population);
   unitPopulationInput.value = String(population);
-  unitMetal.textContent = String(metal);
-  unitMetalInput.value = String(metal);
   unitHorses.textContent = String(horses);
   unitHorsesInput.value = String(horses);
 }
@@ -1958,6 +1959,8 @@ function syncPlayControls() {
   factionPopulationTotal.textContent = String(resources.population);
   factionHorsesTotal.textContent = String(resources.horses);
   factionMetalTotal.textContent = String(resources.metal);
+  factionTreasureTotal.textContent = String(resources.treasure);
+  sidebarFactionMetal.textContent = String(resources.metal);
   syncUnitRoster();
   syncUnitInspector();
 }
@@ -2783,8 +2786,9 @@ function contextForPointer(event) {
     && unit.owner === activeOwner()
     && !unit.moveDone
     && !unit.movedThisTurn
-    && !unitAdjacentToEnemy(unit)
+      && !unitAdjacentToEnemy(unit)
   );
+  const resources = activeFactionResources(activeOwner());
   return {
     point,
     panelX: event.clientX - rect.left,
@@ -2797,20 +2801,18 @@ function contextForPointer(event) {
       createHorseArchers: Boolean(
         hordeCanUseResources
         && Number.isInteger(unit.population)
-        && Number.isInteger(unit.metal)
         && Number.isInteger(unit.horses)
         && unit.population >= 1
-        && unit.metal >= 1
+        && resources.metal >= 1
         && unit.horses >= 3
       ),
       createMongolLancers: Boolean(
         hordeCanUseResources
         && unit.faction === "mongol"
         && Number.isInteger(unit.population)
-        && Number.isInteger(unit.metal)
         && Number.isInteger(unit.horses)
         && unit.population >= 1
-        && unit.metal >= 2
+        && resources.metal >= 2
         && unit.horses >= 3
       ),
     },
@@ -3288,7 +3290,6 @@ function makeEditorUnit(coord) {
     move: defaults.move,
     remainingMove: defaults.move,
     population: Number.isInteger(defaults.population) ? defaults.population : 0,
-    metal: Number.isInteger(defaults.metal) ? defaults.metal : 0,
     horses: Number.isInteger(defaults.horses) ? defaults.horses : 0,
     projectsZoc: Boolean(defaults.projectsZoc),
     respectsZoc: Boolean(defaults.respectsZoc),
@@ -4060,7 +4061,6 @@ unitHpInput.addEventListener("change", updateEditorUnitHp);
 unitReadinessInput.addEventListener("change", updateEditorUnitReadiness);
 unitStanceInput.addEventListener("change", updateEditorUnitStance);
 unitPopulationInput.addEventListener("change", () => updateEditorUnitResource("population", unitPopulationInput));
-unitMetalInput.addEventListener("change", () => updateEditorUnitResource("metal", unitMetalInput));
 unitHorsesInput.addEventListener("change", () => updateEditorUnitResource("horses", unitHorsesInput));
 saveButton.addEventListener("click", saveCurrentMap);
 loadButton.addEventListener("click", chooseMapFile);
