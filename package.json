@@ -4,10 +4,20 @@
   "private": true,
   "description": "Prototype C++ engine and raw Node.js proxy for a steppe terrain generator.",
   "scripts": {
+    "build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1",
+    "lint": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/lint.ps1",
     "launch": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/launch.ps1",
+    "run": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/launch.ps1",
+    "smoke": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke.ps1",
     "start": "node proxy/server.js",
-    "test:e2e": "playwright test",
-    "test:e2e:headed": "playwright test --headed"
+    "status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/status.ps1",
+    "diff": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/diff.ps1",
+    "diff:stat": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/diff.ps1 -Stat",
+    "test": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1",
+    "test:e2e": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1",
+    "test:e2e:headed": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Headed",
+    "test:layout": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -SkipBuild -Grep \"play sidebar lists|scenario editor modes|scenario controls sit\"",
+    "test:movement": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -SkipBuild -Grep \"movement spends readiness|movement uses road costs|readiness recovers\""
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0"

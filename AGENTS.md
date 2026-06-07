@@ -25,18 +25,28 @@ This is an experimental procedural territory-generation app for a hex-based turn
 ## Build And Run
 
 ```powershell
-cmake -S . -B build -G Ninja
-cmake --build build
-npm start
+npm run build
+npm run launch
 ```
 
 Open `http://localhost:3000`.
 
-On Windows, if a clean build fails with missing standard-library includes, run the build from a Visual Studio developer PowerShell or through `VsDevCmd.bat`.
+Agents should use the project-local npm entry points instead of constructing direct Visual Studio, CMake, Node proxy, daemon, Playwright, or JSON smoke-test commands:
+
+- `npm run build`
+- `npm run lint`
+- `npm test`
+- `npm run test:movement`
+- `npm run test:layout`
+- `npm run launch`
+- `npm run status`
+- `npm run diff:stat`
+
+These wrappers encapsulate Visual Studio environment setup, daemon cleanup, port cleanup, Playwright invocation, and smoke-test JSON.
 
 ## Verification
 
-- At minimum, rebuild the C++ engine after changing `engine/`, `game/`, or CMake files.
+- At minimum, run `npm run build` after changing `engine/`, `game/`, `data/unit_types.csv`, or CMake files.
 - Run deterministic generation samples with fixed seeds and confirm the output parses as JSON.
 - When changing gameplay command flow, test through the Node proxy to the long-running daemon using `POST /api/command`; do not validate by adding browser-owned rule logic.
 - When rivers are reintroduced, check that each segment starts and ends at its declared endpoints, that edge paths are continuous, and that collected river edges are deduplicated.
@@ -61,7 +71,7 @@ On Windows, if a clean build fails with missing standard-library includes, run t
 - Non-steppe, non-valley land is filled as wild terrain instead of left empty: hexes near grassland skew toward forest and hills, while farther hexes increasingly become mountains. A coherent `eastern_desert` basin can replace wild terrain and dry out the southern base-steppe fringe east/southeast of the Dzungarian/pinch pass without consuming valleys, lakes, towns, or forest blobs. Roads are overlays and do not protect underlying terrain from becoming desert. Rivers near desert carve a `desert_river_corridor` out of nearby desert hexes, mostly as grassland with infrequent forest; any generated marsh must be directly adjacent to a river edge or lake hex.
 - Generated hexes include a terrain-independent `labels` array for final semantic roles. Each generated hex starts with `base_steppe` or `wild_terrain`. `base_steppe` is removed when a forest blob or desert grows onto that hex. `wild_terrain` is removed when a hex becomes valley, lake, urban, or desert river corridor, but wild forest blobs and desert keep `wild_terrain`. Current labels include `base_steppe`, `wild_terrain`, `valley`, `forest_blob`, `eastern_desert`, `dzungarian_pass_hill`, `desert_river_corridor`, `desert_river_marsh`, `desert_river_forest`, `steppe_hill`, `steppe_forest`, `steppe_marsh`, `lake_baikal`, `caspian_sea`, `chinese_lakes`, `random_lakes`, `urban`, `fixed_feature_town`, `water_adjacent_town`, `persian_town`, `chinese_town`, `china_access_town`, `dzungarian_gate`, and `oasis`.
 - Game code should consume `steppe::game::GameState` from `game_state_from_generated_map` or `generate_game_state`, not raw JSON. Modes should operate on shared `GameState`; switching modes should not regenerate or discard state unless explicitly requested.
-- Movement uses integer scaled costs to avoid fractional pathfinding drift. The scale factor is `8`: `scaled_move` is authoritative, `refMove = scaledMove / 8`, and legacy JSON `move` fields are compatibility aliases. Grassland, desert, and urban cost `8`; hills and forests cost `12`; marsh and mountains cost `16`; road-connected steps cost `6`; lakes and `none` are blocked.
+- Movement uses integer scaled costs to avoid fractional pathfinding drift. The scale factor is `8`: `scaled_move` is authoritative, `refMove = scaledMove / 8`, and legacy JSON `move` fields are compatibility aliases. Grassland and desert cost `8`; hills and forests cost `12`; urban, marsh, and mountains cost `16`; lakes and `none` are blocked. Road-connected steps modify the destination terrain cost by unit class: mounted combat units use `ceil(base / 2) + 1`, while other units use `ceil(base / 2)`.
 - The `mongol` faction is the current playable steppe-nomad sandbox faction, not the only intended steppe-nomad people. Future steppe-nomad factions such as the Naimans should reuse the same steppe unit kinds and horde resource actions as the Mongols unless a specific future rule says otherwise. Do not create duplicate Naiman-specific unit kinds just to represent the same horse-archers, lancers, herds, or hordes under another steppe faction.
 - Current combat-capable unit kinds include horse-archers, Chinese cavalry, Chinese militia, Mongol/steppe lancers, infantry, and horde. The current A/D, readiness damage, movement, ZOC, stance, and resource defaults are defined in `data/unit_types.csv`, not hardcoded in the browser.
 - Each horde carries non-negative integer resource counters: `population`, `metal`, and `horses`. These serialize on units and are shown in the unit inspector only when a horde is selected. Default play sandbox hordes currently start with `population=4`, `metal=4`, and `horses=12`.
