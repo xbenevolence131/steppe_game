@@ -185,6 +185,19 @@ function combatGameState(defenderTerrain = "grassland") {
   };
 }
 
+function blockedRetreatCombatGameState() {
+  const state = combatGameState("grassland");
+  state.units[1].hp = 4;
+  state.units[1].readiness = 40;
+  state.units.push(
+    { id: 3, owner: 2, faction: "chinese", kind: "infantry", q: 1, r: 2, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+    { id: 4, owner: 2, faction: "chinese", kind: "infantry", q: 2, r: 2, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+    { id: 5, owner: 2, faction: "chinese", kind: "infantry", q: 3, r: 1, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+    { id: 6, owner: 2, faction: "chinese", kind: "infantry", q: 3, r: 2, hp: 10, maxHp: 10, remainingScaledMove: 16 }
+  );
+  return state;
+}
+
 function flankingCombatGameState(flankerCoord) {
   const hexes = [];
   for (let r = 1; r <= 3; r += 1) {
@@ -507,6 +520,9 @@ test("combat damage tapers against worn down targets", async ({ isMobile }) => {
   expect(preview.conditionRatioPercent).toBe(625);
   expect(preview.crtIndex).toBe(6);
   expect(preview.retreatOption).toBe("defender");
+  expect(preview.retreatBlocked).toBe(false);
+  expect(preview.defenderRetreatTo).toEqual({ q: 2, r: 2 });
+  expect(preview.retreatImpact).toBe("Defender retreats");
   expect(preview.defender.damageTaken).toBe(2);
   expect(preview.defender.resultHp).toBe(2);
   expect(preview.defender.readinessDamageTaken).toBe(10);
@@ -517,6 +533,26 @@ test("combat damage tapers against worn down targets", async ({ isMobile }) => {
   expect(resolved.ok).toBe(true);
   expect(defender.hp).toBe(2);
   expect(defender.readiness).toBe(30);
+  expect({ q: defender.q, r: defender.r }).toEqual({ q: 2, r: 2 });
+  expect(defender.moveDone).toBe(true);
+  expect(defender.movedThisTurn).toBe(true);
+
+  const blockedPreview = runEngineJson(["game-combat-preview", "--attacker", "1", "--defender", "2"], blockedRetreatCombatGameState());
+  expect(blockedPreview.valid).toBe(true);
+  expect(blockedPreview.crtIndex).toBe(6);
+  expect(blockedPreview.retreatOption).toBe("defender");
+  expect(blockedPreview.retreatBlocked).toBe(true);
+  expect(blockedPreview.blockedRetreatReadinessPenalty).toBe(15);
+  expect(blockedPreview.defender.readinessDamageTaken).toBe(25);
+  expect(blockedPreview.defender.resultReadiness).toBe(15);
+  expect(blockedPreview.retreatImpact).toBe("Defender retreat blocked");
+
+  const blockedResolved = runEngineJson(["game-attack", "--attacker", "1", "--defender", "2"], blockedRetreatCombatGameState());
+  const blockedDefender = blockedResolved.units.find((unit) => unit.id === 2);
+  expect(blockedResolved.ok).toBe(true);
+  expect(blockedDefender.hp).toBe(2);
+  expect(blockedDefender.readiness).toBe(15);
+  expect({ q: blockedDefender.q, r: blockedDefender.r }).toEqual({ q: 2, r: 1 });
 });
 
 test("movement spends readiness in proportion to movement cost", async ({ isMobile }) => {

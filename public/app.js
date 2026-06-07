@@ -1437,7 +1437,10 @@ function retreatStatusForSide(preview, mode) {
     return mode === "defense" ? "Feigned" : "Pursues";
   }
   const retreatSide = mode === "attack" ? "attacker" : "defender";
-  return preview.retreatOption === retreatSide ? "May retreat" : "No";
+  if (preview.retreatOption === retreatSide && preview.retreatBlocked) {
+    return "Blocked";
+  }
+  return preview.retreatOption === retreatSide ? "Retreats" : "No";
 }
 
 function appendCombatSide(parent, title, combatant, mode, preview) {
@@ -1504,7 +1507,10 @@ function renderCombatPreview(preview, clientX, clientY) {
   appendCombatRow(summary, "RDY ratio", `${preview.readinessRatioPercent}%`);
   appendCombatRow(summary, "HP/RDY factor", `${preview.conditionRatioPercent}%`);
   appendCombatRow(summary, "CRT", String(preview.crtIndex));
-  appendCombatRow(summary, "Retreat", preview.retreatOption === "none" ? "-" : preview.retreatOption);
+  appendCombatRow(summary, "Retreat", preview.retreatOption === "none"
+    ? "-"
+    : `${preview.retreatOption}${preview.retreatBlocked ? " blocked" : ""}`
+  );
   const resolutionLabel = preview.specialResolution === "feigned_retreat"
     ? "Feigned retreat"
     : (preview.specialResolution === "horse_stealing" ? "Horse stealing" : "Normal");

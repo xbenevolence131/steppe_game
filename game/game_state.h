@@ -196,6 +196,9 @@ struct CombatPreview {
     std::string readiness_impact = "Even readiness";
     std::string retreat_impact = "No retreat";
     std::string special_resolution = "normal";
+    bool retreat_blocked = false;
+    int blocked_retreat_readiness_penalty = 0;
+    Coord attacker_retreat_to;
     Coord defender_retreat_to;
     Coord attacker_pursuit_to;
     int pursuit_readiness_penalty = 0;

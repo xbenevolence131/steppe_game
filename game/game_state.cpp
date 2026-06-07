@@ -1,12 +1,14 @@
 #include "game_state.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <deque>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <initializer_list>
 #include <limits>
 #include <map>
 #include <sstream>
@@ -91,6 +93,24 @@ bool coord_less(const Coord& first, const Coord& second) {
 
 bool coord_equal(const Coord& first, const Coord& second) {
     return first.q == second.q && first.r == second.r;
+}
+
+int hex_distance(const Coord& first, const Coord& second) {
+    auto to_cube = [](const Coord& coord) {
+        const int col = coord.q - 1;
+        const int row = coord.r - 1;
+        const int x = col;
+        const int z = row - (col - (col & 1)) / 2;
+        const int y = -x - z;
+        return std::array<int, 3>{x, y, z};
+    };
+    const std::array<int, 3> a = to_cube(first);
+    const std::array<int, 3> b = to_cube(second);
+    return std::max({
+        std::abs(a[0] - b[0]),
+        std::abs(a[1] - b[1]),
+        std::abs(a[2] - b[2]),
+    });
 }
 
 Coord neighbor_in_direction(const Coord& coord, int direction) {
@@ -525,6 +545,7 @@ constexpr int attack_readiness_cost = 10;
 constexpr int turn_readiness_recovery = 25;
 constexpr int flanked_defense_percent = 75;
 constexpr int feigned_retreat_pursuit_readiness_penalty = 15;
+constexpr int blocked_retreat_readiness_penalty = 15;
 
 constexpr int move_scale = 8;
 
@@ -1259,10 +1280,10 @@ std::string readiness_impact_text(int readiness_ratio_percent) {
 
 std::string retreat_impact_text(const std::string& retreat_option) {
     if (retreat_option == "attacker") {
-        return "Attacker may retreat";
+        return "Attacker retreats";
     }
     if (retreat_option == "defender") {
-        return "Defender may retreat";
+        return "Defender retreats";
     }
     return "No retreat";
 }
@@ -1365,6 +1386,47 @@ bool defender_flanked_by_separated_unit(const GameState& state, const Unit& atta
 bool can_pursue_into_defender_hex(const GameState& state, const Unit& attacker, const Unit& defender) {
     const GameHex* hex = find_hex(state, defender.coord);
     return hex != nullptr && movement_cost(state, attacker, attacker.coord, *hex) != blocked_movement_cost();
+}
+
+bool find_ordinary_retreat_hex(const GameState& state, const Unit& retreating, const Unit& opposing, Coord& retreat_to) {
+    struct Candidate {
+        Coord coord;
+        int distance = 0;
+    };
+    std::vector<Candidate> preferred;
+    std::vector<Candidate> fallback;
+    const int current_distance = hex_distance(retreating.coord, opposing.coord);
+    for (int direction = 0; direction < 6; ++direction) {
+        const Coord candidate = neighbor_in_direction(retreating.coord, direction);
+        if (!in_bounds(state, candidate) || occupied_by_other_unit(state, candidate, retreating.id)) {
+            continue;
+        }
+        const GameHex* hex = find_hex(state, candidate);
+        if (hex == nullptr || movement_cost(state, retreating, retreating.coord, *hex) == blocked_movement_cost()) {
+            continue;
+        }
+        if (retreating.respects_zoc && enemy_zoc_at(state, candidate, retreating)) {
+            continue;
+        }
+        const int distance = hex_distance(candidate, opposing.coord);
+        if (distance > current_distance) {
+            preferred.push_back({candidate, distance});
+        } else if (distance == current_distance) {
+            fallback.push_back({candidate, distance});
+        }
+    }
+    std::vector<Candidate>& candidates = preferred.empty() ? fallback : preferred;
+    if (candidates.empty()) {
+        return false;
+    }
+    std::sort(candidates.begin(), candidates.end(), [](const Candidate& first, const Candidate& second) {
+        if (first.distance != second.distance) {
+            return first.distance > second.distance;
+        }
+        return coord_less(first.coord, second.coord);
+    });
+    retreat_to = candidates.front().coord;
+    return true;
 }
 
 bool find_feigned_retreat_hex(const GameState& state, const Unit& attacker, const Unit& defender, Coord& retreat_to) {
@@ -1613,6 +1675,28 @@ CombatPreview combat_preview(const GameState& state, int attacker_id, int defend
     preview.attacker.result_hp = std::max(0, attacker->hp - attacker_hp_damage);
     preview.attacker.result_readiness = std::max(0, clamped_readiness(*attacker) - attacker_readiness_damage);
     preview.attacker.destroyed = preview.attacker.result_hp <= 0;
+
+    if (preview.retreat_option == "attacker" && !preview.attacker.destroyed) {
+        if (find_ordinary_retreat_hex(state, *attacker, *defender, preview.attacker_retreat_to)) {
+            preview.retreat_impact = "Attacker retreats";
+        } else {
+            preview.retreat_blocked = true;
+            preview.blocked_retreat_readiness_penalty = blocked_retreat_readiness_penalty;
+            preview.retreat_impact = "Attacker retreat blocked";
+            preview.attacker.readiness_damage_taken += blocked_retreat_readiness_penalty;
+            preview.attacker.result_readiness = std::max(0, preview.attacker.result_readiness - blocked_retreat_readiness_penalty);
+        }
+    } else if (preview.retreat_option == "defender" && !preview.defender.destroyed) {
+        if (find_ordinary_retreat_hex(state, *defender, *attacker, preview.defender_retreat_to)) {
+            preview.retreat_impact = "Defender retreats";
+        } else {
+            preview.retreat_blocked = true;
+            preview.blocked_retreat_readiness_penalty = blocked_retreat_readiness_penalty;
+            preview.retreat_impact = "Defender retreat blocked";
+            preview.defender.readiness_damage_taken += blocked_retreat_readiness_penalty;
+            preview.defender.result_readiness = std::max(0, preview.defender.result_readiness - blocked_retreat_readiness_penalty);
+        }
+    }
     return preview;
 }
 
@@ -1725,6 +1809,17 @@ bool attack_unit(GameState& state, int attacker_id, int defender_id) {
     attacker->readiness = preview.attacker.result_readiness;
     attacker->contacted_enemy_this_turn = true;
     defender->contacted_enemy_this_turn = true;
+    if (!preview.retreat_blocked && preview.retreat_option == "attacker" && attacker->hp > 0) {
+        attacker->coord = preview.attacker_retreat_to;
+        attacker->remaining_scaled_move = 0;
+        attacker->move_done = true;
+        attacker->moved_this_turn = true;
+    } else if (!preview.retreat_blocked && preview.retreat_option == "defender" && defender->hp > 0) {
+        defender->coord = preview.defender_retreat_to;
+        defender->remaining_scaled_move = 0;
+        defender->move_done = true;
+        defender->moved_this_turn = true;
+    }
     attacker = find_unit(state, attacker_id);
     if (attacker != nullptr) {
         attacker->remaining_scaled_move = 0;
@@ -2225,8 +2320,12 @@ void print_combat_preview_json(const CombatPreview& preview, std::ostream& out) 
         << ",\"readinessImpact\":\"" << escape_json(preview.readiness_impact) << "\""
         << ",\"retreatImpact\":\"" << escape_json(preview.retreat_impact) << "\""
         << ",\"specialResolution\":\"" << escape_json(preview.special_resolution) << "\""
+        << ",\"retreatBlocked\":" << (preview.retreat_blocked ? "true" : "false")
+        << ",\"blockedRetreatReadinessPenalty\":" << preview.blocked_retreat_readiness_penalty
         << ",\"pursuitReadinessPenalty\":" << preview.pursuit_readiness_penalty
-        << ",\"defenderRetreatTo\":";
+        << ",\"attackerRetreatTo\":";
+    print_coord_json(preview.attacker_retreat_to, out);
+    out << ",\"defenderRetreatTo\":";
     print_coord_json(preview.defender_retreat_to, out);
     out << ",\"attackerPursuitTo\":";
     print_coord_json(preview.attacker_pursuit_to, out);
