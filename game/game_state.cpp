@@ -579,6 +579,7 @@ constexpr int create_horse_archers_horses_cost = 3;
 constexpr int create_mongol_lancers_population_cost = 1;
 constexpr int create_mongol_lancers_metal_cost = 2;
 constexpr int create_mongol_lancers_horses_cost = 3;
+constexpr int horde_unit_training_turns = 3;
 constexpr int minimum_combat_readiness_percent = 25;
 constexpr int full_move_readiness_cost = 8;
 constexpr int max_move_readiness_cost = 8;
@@ -1913,47 +1914,79 @@ CreateUnitOptions create_unit_options(const GameState& state, int unit_id, UnitK
         || horde->owner != active_faction(state)
         || (kind == UnitKind::MongolLancer && horde->owner != mongol_owner)
         || (kind != UnitKind::HorseArcher && kind != UnitKind::MongolLancer)
+        || horde->production_active
         || horde->move_done
         || horde->moved_this_turn
-        || enemy_unit_adjacent_to(state, *horde)
-        || horde->population < options.population_cost
-        || faction_metal(state, horde->owner) < options.metal_cost
-        || horde->horses < options.horses_cost) {
+        || enemy_unit_adjacent_to(state, *horde)) {
         return options;
     }
 
-    options.deployable_hexes = adjacent_deployable_hexes(state, *horde);
     return options;
 }
 
 bool create_unit_from_horde(GameState& state, int unit_id, UnitKind kind, Coord destination) {
+    (void) destination;
     CreateUnitOptions options = create_unit_options(state, unit_id, kind);
-    const bool valid_destination = std::find_if(
-        options.deployable_hexes.begin(),
-        options.deployable_hexes.end(),
-        [&](const Coord& coord) { return coord_equal(coord, destination); }
-    ) != options.deployable_hexes.end();
-    if (!valid_destination) {
-        return false;
-    }
-
     Unit* horde = find_unit(state, unit_id);
-    if (horde == nullptr) {
+    if (horde == nullptr
+        || horde->kind != UnitKind::Horde
+        || horde->production_active
+        || horde->owner != active_faction(state)
+        || horde->move_done
+        || horde->moved_this_turn
+        || enemy_unit_adjacent_to(state, *horde)
+        || (kind == UnitKind::MongolLancer && horde->owner != mongol_owner)
+        || (kind != UnitKind::HorseArcher && kind != UnitKind::MongolLancer)) {
         return false;
     }
-    FactionState* faction = find_faction(state, horde->owner);
-    if (faction == nullptr || faction->metal < options.metal_cost) {
-        return false;
-    }
-    horde->population -= options.population_cost;
-    horde->horses -= options.horses_cost;
-    faction->metal -= options.metal_cost;
+    horde->production_active = true;
+    horde->production_kind = kind;
+    horde->production_turns_remaining = horde_unit_training_turns;
     horde->remaining_scaled_move = 0;
     horde->move_done = true;
+    state.selected_unit_id = unit_id;
+    refresh_legal_actions(state);
+    return true;
+}
 
+bool complete_horde_production(GameState& state, Unit& horde) {
+    if (!horde.production_active || horde.kind != UnitKind::Horde) {
+        return false;
+    }
+    const UnitKind kind = horde.production_kind;
+    CreateUnitOptions options;
+    options.kind = kind;
+    options.unit_id = horde.id;
+    if (kind == UnitKind::MongolLancer) {
+        options.population_cost = create_mongol_lancers_population_cost;
+        options.metal_cost = create_mongol_lancers_metal_cost;
+        options.horses_cost = create_mongol_lancers_horses_cost;
+    } else {
+        options.population_cost = create_horse_archers_population_cost;
+        options.metal_cost = create_horse_archers_metal_cost;
+        options.horses_cost = create_horse_archers_horses_cost;
+    }
+    options.deployable_hexes = adjacent_deployable_hexes(state, horde);
+    FactionState* faction = find_faction(state, horde.owner);
+    if ((kind == UnitKind::MongolLancer && horde.owner != mongol_owner)
+        || (kind != UnitKind::HorseArcher && kind != UnitKind::MongolLancer)
+        || horde.population < options.population_cost
+        || horde.horses < options.horses_cost
+        || faction == nullptr
+        || faction->metal < options.metal_cost
+        || options.deployable_hexes.empty()) {
+        horde.production_active = false;
+        horde.production_turns_remaining = 0;
+        return false;
+    }
+
+    const Coord destination = options.deployable_hexes.front();
+    horde.population -= options.population_cost;
+    horde.horses -= options.horses_cost;
+    faction->metal -= options.metal_cost;
     Unit created;
     created.id = next_unit_id(state);
-    created.owner = horde->owner;
+    created.owner = horde.owner;
     created.kind = kind;
     created.stance = default_stance(created.kind);
     created.coord = destination;
@@ -1968,19 +2001,27 @@ bool create_unit_from_horde(GameState& state, int unit_id, UnitKind kind, Coord 
     created.remaining_scaled_move = created.scaled_move;
     created.projects_zoc = default_projects_zoc(created.kind);
     created.respects_zoc = default_respects_zoc(created.kind);
-    const int horde_id = horde->id;
+    const int horde_id = horde.id;
     const int created_id = created.id;
+    horde.production_active = false;
+    horde.production_turns_remaining = 0;
     state.units.push_back(created);
     mark_enemy_contact(state, horde_id);
     mark_enemy_contact(state, created_id);
-    state.selected_unit_id = unit_id;
     refresh_legal_actions(state);
     return true;
 }
 
 void start_faction_turn(GameState& state, OwnerId owner) {
+    std::vector<int> ready_horde_ids;
     for (Unit& unit : state.units) {
         if (unit.owner == owner) {
+            if (unit.kind == UnitKind::Horde && unit.production_active) {
+                unit.production_turns_remaining = std::max(0, unit.production_turns_remaining - 1);
+                if (unit.production_turns_remaining == 0) {
+                    ready_horde_ids.push_back(unit.id);
+                }
+            }
             const bool currently_in_contact = enemy_unit_adjacent_to(state, unit);
             if (!unit.moved_this_turn
                 && !unit.combat_done
@@ -1993,6 +2034,12 @@ void start_faction_turn(GameState& state, OwnerId owner) {
             unit.moved_this_turn = false;
             unit.combat_done = false;
             unit.contacted_enemy_this_turn = currently_in_contact;
+        }
+    }
+    for (const int horde_id : ready_horde_ids) {
+        Unit* horde = find_unit(state, horde_id);
+        if (horde != nullptr && horde->owner == owner) {
+            complete_horde_production(state, *horde);
         }
     }
 }
@@ -2279,7 +2326,10 @@ void print_unit_json(const Unit& unit, std::ostream& out) {
         << ",\"remainingMove\":" << to_ref_move(unit.remaining_scaled_move);
     if (unit.kind == UnitKind::Horde) {
         out << ",\"population\":" << unit.population
-            << ",\"horses\":" << unit.horses;
+            << ",\"horses\":" << unit.horses
+            << ",\"productionState\":\"" << (unit.production_active ? "building" : "idle") << "\""
+            << ",\"productionKind\":\"" << unit_kind_to_string(unit.production_kind) << "\""
+            << ",\"productionTurnsRemaining\":" << unit.production_turns_remaining;
     } else if (unit.kind == UnitKind::Herd) {
         out << ",\"horses\":" << unit.horses;
     }
@@ -2844,6 +2894,16 @@ GameState parse_game_state_json(const std::string& json) {
         unit.remaining_scaled_move = std::max(0, std::min(unit.remaining_scaled_move, unit.scaled_move));
         unit.population = std::max(0, int_field(unit_json, "population", defaults.population));
         unit.horses = std::max(0, int_field(unit_json, "horses", defaults.horses));
+        unit.production_active = string_field(unit_json, "productionState", "idle") == "building";
+        unit.production_kind = unit_kind_from_string(string_field(unit_json, "productionKind", unit_kind_to_string(UnitKind::HorseArcher)));
+        if (unit.production_kind != UnitKind::HorseArcher && unit.production_kind != UnitKind::MongolLancer) {
+            unit.production_kind = UnitKind::HorseArcher;
+        }
+        unit.production_turns_remaining = std::max(0, int_field(unit_json, "productionTurnsRemaining", unit.production_active ? horde_unit_training_turns : 0));
+        if (unit.kind != UnitKind::Horde || !unit.production_active) {
+            unit.production_active = false;
+            unit.production_turns_remaining = 0;
+        }
         unit.move_done = bool_field(unit_json, "moveDone", false);
         unit.moved_this_turn = bool_field(unit_json, "movedThisTurn", false);
         unit.combat_done = bool_field(unit_json, "combatDone", false);

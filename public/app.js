@@ -97,6 +97,8 @@ const unitPopulationInput = document.querySelector("#unit-population-input");
 const unitHorsesRow = document.querySelector("#unit-horses-row");
 const unitHorses = document.querySelector("#unit-horses");
 const unitHorsesInput = document.querySelector("#unit-horses-input");
+const unitProductionRow = document.querySelector("#unit-production-row");
+const unitProduction = document.querySelector("#unit-production");
 
 let currentMap = null;
 let appMode = "intro";
@@ -1745,6 +1747,11 @@ function normalizeUnit(unit, index) {
   normalized.stance = typeof unit.stance === "string" ? unit.stance : defaults.stance;
   if (Number.isFinite(unit.population)) normalized.population = Math.max(0, Math.trunc(unit.population));
   if (Number.isFinite(unit.horses)) normalized.horses = Math.max(0, Math.trunc(unit.horses));
+  if (typeof unit.productionState === "string") normalized.productionState = unit.productionState;
+  if (typeof unit.productionKind === "string") normalized.productionKind = unit.productionKind;
+  if (Number.isFinite(unit.productionTurnsRemaining)) {
+    normalized.productionTurnsRemaining = Math.max(0, Math.trunc(unit.productionTurnsRemaining));
+  }
   if (Number.isFinite(unit.scaledMove)) normalized.scaledMove = unit.scaledMove;
   if (Number.isFinite(unit.remainingScaledMove)) normalized.remainingScaledMove = unit.remainingScaledMove;
   if (Number.isFinite(unit.refMove)) {
@@ -2074,51 +2081,35 @@ const contextActionDefinitions = [
   },
   {
     id: "create-horse-archers",
-    label: "Create Horse Archers",
+    label: "Train Horse Archers",
     visible: ({ unit, actionAvailability }) => Boolean(
       unit
       && actionAvailability
       && actionAvailability.createHorseArchers
-      && Number.isInteger(unit.population)
-      && Number.isInteger(unit.horses)
-      && unit.population >= 1
-      && unit.horses >= 3
     ),
     enabled: ({ unit, actionAvailability }) => Boolean(
       unit
       && actionAvailability
       && actionAvailability.createHorseArchers
-      && Number.isInteger(unit.population)
-      && Number.isInteger(unit.horses)
-      && unit.population >= 1
-      && unit.horses >= 3
     ),
-    run: async (context) => startCreateHorseArchersPlacement(context),
+    run: async (context) => startHordeUnitProduction(context, "create_horse_archers"),
   },
   {
     id: "create-mongol-lancers",
-    label: "Create Mongol Lancers",
+    label: "Train Mongol Lancers",
     visible: ({ unit, actionAvailability }) => Boolean(
       unit
       && unit.faction === "mongol"
       && actionAvailability
       && actionAvailability.createMongolLancers
-      && Number.isInteger(unit.population)
-      && Number.isInteger(unit.horses)
-      && unit.population >= 1
-      && unit.horses >= 3
     ),
     enabled: ({ unit, actionAvailability }) => Boolean(
       unit
       && unit.faction === "mongol"
       && actionAvailability
       && actionAvailability.createMongolLancers
-      && Number.isInteger(unit.population)
-      && Number.isInteger(unit.horses)
-      && unit.population >= 1
-      && unit.horses >= 3
     ),
-    run: async (context) => startCreateMongolLancersPlacement(context),
+    run: async (context) => startHordeUnitProduction(context, "create_mongol_lancers"),
   },
 ];
 
@@ -2140,6 +2131,15 @@ function stanceLabel(stance) {
     .split("_")
     .map((part) => part ? `${part[0].toUpperCase()}${part.slice(1)}` : part)
     .join(" ");
+}
+
+function productionLabel(unit) {
+  if (!unit || unit.kind !== "horde" || unit.productionState !== "building") {
+    return "Idle";
+  }
+  const kind = unitKindLabelForKind(unit.productionKind || "horse_archer");
+  const turns = Number.isInteger(unit.productionTurnsRemaining) ? unit.productionTurnsRemaining : 0;
+  return `${kind}: ${turns} turn${turns === 1 ? "" : "s"}`;
 }
 
 function legalStancesForUnit(unit) {
@@ -2334,6 +2334,8 @@ function syncUnitInspector() {
     unitPopulationInput.value = "";
     unitHorses.textContent = "0";
     unitHorsesInput.value = "";
+    unitProductionRow.hidden = true;
+    unitProduction.textContent = "Idle";
     return;
   }
   sidebarSelectionReadout.textContent = unitDisplayName(unit);
@@ -2373,6 +2375,8 @@ function syncUnitInspector() {
   unitPopulationInput.value = String(population);
   unitHorses.textContent = String(horses);
   unitHorsesInput.value = String(horses);
+  unitProductionRow.hidden = unit.kind !== "horde";
+  unitProduction.textContent = productionLabel(unit);
 }
 
 function syncPlayControls() {
@@ -3272,11 +3276,11 @@ function contextForPointer(event) {
     unit
     && unit.kind === "horde"
     && unit.owner === activeOwner()
+    && unit.productionState !== "building"
     && !unit.moveDone
     && !unit.movedThisTurn
       && !unitAdjacentToEnemy(unit)
   );
-  const resources = activeFactionResources(activeOwner());
   return {
     point,
     panelX: event.clientX - rect.left,
@@ -3288,20 +3292,10 @@ function contextForPointer(event) {
       detachHerd: Boolean(hordeCanUseResources && Number.isInteger(unit.horses) && unit.horses > 0),
       createHorseArchers: Boolean(
         hordeCanUseResources
-        && Number.isInteger(unit.population)
-        && Number.isInteger(unit.horses)
-        && unit.population >= 1
-        && resources.metal >= 1
-        && unit.horses >= 3
       ),
       createMongolLancers: Boolean(
         hordeCanUseResources
         && unit.faction === "mongol"
-        && Number.isInteger(unit.population)
-        && Number.isInteger(unit.horses)
-        && unit.population >= 1
-        && resources.metal >= 2
-        && unit.horses >= 3
       ),
     },
   };
@@ -3479,6 +3473,28 @@ async function startCreateMongolLancersPlacement(context) {
     optionsCommandType: "create_mongol_lancers_options",
     createCommandType: "create_mongol_lancers",
   });
+}
+
+async function startHordeUnitProduction(context, commandType) {
+  if (!context.unit || context.unit.kind !== "horde") {
+    return false;
+  }
+  cancelDetachHerdPlacement();
+  cancelCreateUnitPlacement();
+  hideDetachHerdAmount();
+  try {
+    const payload = await postUndoableGameCommand({
+      type: commandType,
+      unitId: context.unit.id,
+    });
+    applyGamePatch(payload);
+    syncModeControls();
+    drawMap();
+    return true;
+  } catch (error) {
+    window.alert(error.message);
+    return false;
+  }
 }
 
 async function startCreateUnitPlacement(context, config) {
