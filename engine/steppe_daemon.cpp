@@ -139,6 +139,22 @@ std::string unit_defaults_json() {
             << ",\"respectsZoc\":" << (defaults.respects_zoc ? "true" : "false")
             << ",\"population\":" << defaults.population
             << ",\"horses\":" << defaults.horses
+            << ",\"allowedFactions\":[";
+        bool wrote_faction = false;
+        const auto write_faction = [&](const char* key, steppe::game::OwnerId owner) {
+            if (!steppe::game::unit_kind_available_to_owner(defaults.kind, owner)) {
+                return;
+            }
+            if (wrote_faction) {
+                out << ",";
+            }
+            out << "\"" << key << "\"";
+            wrote_faction = true;
+        };
+        write_faction("mongol", steppe::game::mongol_owner);
+        write_faction("chinese", steppe::game::chinese_owner);
+        write_faction("persian", steppe::game::persian_owner);
+        out << "]"
             << "}";
     }
     out << "}}";

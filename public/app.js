@@ -281,7 +281,9 @@ const unitDisplayKindNames = {
   chinese_cavalry: "Cavalry",
   chinese_militia: "Militia",
   mongol_lancer: "Lancers",
-  infantry: "Infantry",
+  infantry: "Chinese Infantry",
+  persian_infantry: "Persian Infantry",
+  persian_cavalry: "Persian Cavalry",
   horde: "Horde",
   herd: "Herd",
 };
@@ -291,7 +293,9 @@ const unitKindLabels = {
   chinese_cavalry: "Chinese Cavalry",
   chinese_militia: "Chinese Militia",
   mongol_lancer: "Mongol Lancers",
-  infantry: "Infantry",
+  infantry: "Chinese Infantry",
+  persian_infantry: "Persian Infantry",
+  persian_cavalry: "Persian Cavalry",
   horde: "Horde",
 };
 const fallbackUnitDefaults = {
@@ -317,6 +321,8 @@ const unitSpriteColumns = {
   chinese_cavalry: "chinese_cavalry",
   chinese_militia: "chinese_militia",
   mongol_lancer: "mongol_lancer",
+  persian_infantry: "persian_infantry",
+  persian_cavalry: "persian_cavalry",
 };
 const unitSpriteZoomLevels = [
   { key: "small", pixelSize: 48, visibleHexColumns: null },
@@ -356,6 +362,16 @@ const bitmapUnitSpriteSources = {
     large: "/unit-sprites/horse_archer_128.png",
   },
   mongol_lancer: {
+    small: "/unit-sprites/heavy_cavalry_48.png",
+    medium: "/unit-sprites/heavy_cavalry_96.png",
+    large: "/unit-sprites/heavy_cavalry_128.png",
+  },
+  persian_infantry: {
+    small: "/unit-sprites/infantry_48.png",
+    medium: "/unit-sprites/infantry_96.png",
+    large: "/unit-sprites/infantry_128.png",
+  },
+  persian_cavalry: {
     small: "/unit-sprites/heavy_cavalry_48.png",
     medium: "/unit-sprites/heavy_cavalry_96.png",
     large: "/unit-sprites/heavy_cavalry_128.png",
@@ -1665,6 +1681,9 @@ function normalizeUnitDefault(defaults) {
   normalized.respectsZoc = Boolean(defaults.respectsZoc);
   if (Number.isFinite(defaults.population)) normalized.population = Math.max(0, Math.trunc(defaults.population));
   if (Number.isFinite(defaults.horses)) normalized.horses = Math.max(0, Math.trunc(defaults.horses));
+  normalized.allowedFactions = Array.isArray(defaults.allowedFactions)
+    ? defaults.allowedFactions.filter((key) => typeof key === "string")
+    : [];
   return normalized;
 }
 
@@ -1699,8 +1718,25 @@ function populateUnitTypeSelect(select, kinds, previous = select.value) {
   }
 }
 
+function unitKindAllowedForFaction(kind, factionKey) {
+  const defaults = unitTypeDefaults[kind];
+  if (!defaults || !Array.isArray(defaults.allowedFactions) || defaults.allowedFactions.length === 0) {
+    return true;
+  }
+  return defaults.allowedFactions.includes(factionKey);
+}
+
+function unitKindsForFaction(factionKey) {
+  const kinds = Object.keys(unitTypeDefaults).filter((kind) => unitKindAllowedForFaction(kind, factionKey));
+  return kinds.length > 0 ? kinds : Object.keys(unitTypeDefaults);
+}
+
+function refreshEditorUnitTypeOptions() {
+  populateUnitTypeSelect(editorUnitTypeSelect, unitKindsForFaction(editorUnitSideSelect.value));
+}
+
 function populateEditorUnitTypeOptions(kinds) {
-  populateUnitTypeSelect(editorUnitTypeSelect, kinds);
+  populateUnitTypeSelect(editorUnitTypeSelect, kinds.filter((kind) => unitKindAllowedForFaction(kind, editorUnitSideSelect.value)));
   populateUnitTypeSelect(unitTypeInput, kinds);
 }
 
@@ -2221,7 +2257,12 @@ function updateEditorUnitName() {
 
 function updateEditorUnitType() {
   mutateEditorInspectorUnit((unit) => {
-    applyUnitTypeDefaults(unit, unitTypeInput.value);
+    const kind = unitTypeInput.value;
+    if (!unitKindAllowedForFaction(kind, unit.faction)) {
+      unitTypeInput.value = unit.kind;
+      return;
+    }
+    applyUnitTypeDefaults(unit, kind);
   });
 }
 
@@ -2342,9 +2383,7 @@ function syncUnitInspector() {
   unitName.textContent = unitDisplayName(unit);
   unitNameInput.value = unitDisplayName(unit);
   unitType.textContent = unitKindLabel(unit);
-  if (unitTypeInput.value !== unit.kind) {
-    unitTypeInput.value = unit.kind;
-  }
+  populateUnitTypeSelect(unitTypeInput, unitKindsForFaction(unit.faction), unit.kind);
   unitHp.textContent = Number.isFinite(unit.hp) && Number.isFinite(unit.maxHp) ? String(unit.hp) : "-";
   unitHpInput.value = Number.isFinite(unit.hp) ? String(unit.hp) : "";
   unitAttack.textContent = Number.isFinite(unit.attack) ? String(unit.attack) : "-";
@@ -2875,9 +2914,11 @@ function drawMongolLancerSprite(spriteCtx, size, color) {
 
 const unitSpriteDrawers = {
   infantry: drawInfantrySprite,
+  persian_infantry: drawInfantrySprite,
   horde: drawHordeSprite,
   herd: drawHerdSprite,
   chinese_cavalry: drawChineseCavalrySprite,
+  persian_cavalry: drawChineseCavalrySprite,
   mongol_lancer: drawMongolLancerSprite,
 };
 
@@ -3775,6 +3816,9 @@ function nextUnitId() {
 function makeEditorUnit(coord) {
   const kind = editorUnitTypeSelect.value;
   const factionKey = editorUnitSideSelect.value;
+  if (!unitKindAllowedForFaction(kind, factionKey)) {
+    throw new Error(`${unitKindLabelForKind(kind)} is not available to ${factions[factionKey]?.name || factionKey}.`);
+  }
   const faction = factions[factionKey] || factions.mongol;
   const defaults = editorUnitDefaultsFor(kind);
   return {
@@ -4604,7 +4648,10 @@ editorEdgeFeatureSelect.addEventListener("change", () => {
   }
 });
 editorUnitTypeSelect.addEventListener("change", syncEditorControls);
-editorUnitSideSelect.addEventListener("change", syncEditorControls);
+editorUnitSideSelect.addEventListener("change", () => {
+  refreshEditorUnitTypeOptions();
+  syncEditorControls();
+});
 unitNameInput.addEventListener("change", updateEditorUnitName);
 unitTypeInput.addEventListener("change", updateEditorUnitType);
 unitHpInput.addEventListener("change", updateEditorUnitHp);

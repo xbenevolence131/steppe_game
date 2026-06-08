@@ -167,6 +167,8 @@ const char* unit_kind_to_string(UnitKind kind) {
         case UnitKind::MongolLancer: return "mongol_lancer";
         case UnitKind::ChineseMilitia: return "chinese_militia";
         case UnitKind::Infantry: return "infantry";
+        case UnitKind::PersianInfantry: return "persian_infantry";
+        case UnitKind::PersianCavalry: return "persian_cavalry";
         case UnitKind::Horde: return "horde";
     }
     return "horse_archer";
@@ -195,6 +197,14 @@ bool try_unit_kind_from_string(const std::string& kind, UnitKind& out) {
     }
     if (kind == "infantry") {
         out = UnitKind::Infantry;
+        return true;
+    }
+    if (kind == "persian_infantry") {
+        out = UnitKind::PersianInfantry;
+        return true;
+    }
+    if (kind == "persian_cavalry") {
+        out = UnitKind::PersianCavalry;
         return true;
     }
     if (kind == "horde") {
@@ -369,6 +379,8 @@ std::vector<UnitKind> required_unit_kinds() {
         UnitKind::MongolLancer,
         UnitKind::ChineseMilitia,
         UnitKind::Infantry,
+        UnitKind::PersianInfantry,
+        UnitKind::PersianCavalry,
         UnitKind::Horde,
     };
 }
@@ -643,7 +655,8 @@ bool road_connects(const GameState& state, const Coord& first, const Coord& seco
 bool uses_mounted_road_cost(UnitKind kind) {
     return kind == UnitKind::HorseArcher
         || kind == UnitKind::ChineseCavalry
-        || kind == UnitKind::MongolLancer;
+        || kind == UnitKind::MongolLancer
+        || kind == UnitKind::PersianCavalry;
 }
 
 bool is_cavalry_unit(UnitKind kind) {
@@ -808,6 +821,25 @@ std::vector<UnitKind> unit_kinds() {
 
 UnitDefaults unit_defaults(UnitKind kind) {
     return unit_type_defaults(kind);
+}
+
+bool unit_kind_available_to_owner(UnitKind kind, OwnerId owner) {
+    if (owner == mongol_owner) {
+        return kind == UnitKind::HorseArcher
+            || kind == UnitKind::MongolLancer
+            || kind == UnitKind::Herd
+            || kind == UnitKind::Horde;
+    }
+    if (owner == chinese_owner) {
+        return kind == UnitKind::ChineseMilitia
+            || kind == UnitKind::Infantry
+            || kind == UnitKind::ChineseCavalry;
+    }
+    if (owner == persian_owner) {
+        return kind == UnitKind::PersianInfantry
+            || kind == UnitKind::PersianCavalry;
+    }
+    return false;
 }
 
 SettlementKind settlement_kind_from_town(const Town& town) {
@@ -1025,13 +1057,13 @@ GameState create_default_play_sandbox(int width, int height, int faction_count) 
 
     state.units = {
         make_unit(1, mongol_owner, UnitKind::HorseArcher, {3, 5}),
-        make_unit(2, mongol_owner, UnitKind::Infantry, {3, 7}),
+        make_unit(2, mongol_owner, UnitKind::MongolLancer, {3, 7}),
         make_unit(3, mongol_owner, UnitKind::Horde, {3, 6}),
         make_unit(4, mongol_owner, UnitKind::Herd, {2, 6}),
         make_unit(5, chinese_owner, UnitKind::ChineseCavalry, {6, 5}),
         make_unit(6, chinese_owner, UnitKind::Infantry, {8, 7}),
-        make_unit(7, chinese_owner, UnitKind::Horde, {8, 6}),
-        make_unit(8, chinese_owner, UnitKind::Herd, {9, 6}),
+        make_unit(7, chinese_owner, UnitKind::Infantry, {8, 6}),
+        make_unit(8, chinese_owner, UnitKind::ChineseCavalry, {9, 6}),
         make_unit(9, chinese_owner, UnitKind::ChineseMilitia, {7, 7}),
     };
     return state;
@@ -1914,6 +1946,7 @@ CreateUnitOptions create_unit_options(const GameState& state, int unit_id, UnitK
         || horde->owner != active_faction(state)
         || (kind == UnitKind::MongolLancer && horde->owner != mongol_owner)
         || (kind != UnitKind::HorseArcher && kind != UnitKind::MongolLancer)
+        || !unit_kind_available_to_owner(kind, horde->owner)
         || horde->production_active
         || horde->move_done
         || horde->moved_this_turn
@@ -1936,7 +1969,8 @@ bool create_unit_from_horde(GameState& state, int unit_id, UnitKind kind, Coord 
         || horde->moved_this_turn
         || enemy_unit_adjacent_to(state, *horde)
         || (kind == UnitKind::MongolLancer && horde->owner != mongol_owner)
-        || (kind != UnitKind::HorseArcher && kind != UnitKind::MongolLancer)) {
+        || (kind != UnitKind::HorseArcher && kind != UnitKind::MongolLancer)
+        || !unit_kind_available_to_owner(kind, horde->owner)) {
         return false;
     }
     horde->production_active = true;
@@ -1970,6 +2004,7 @@ bool complete_horde_production(GameState& state, Unit& horde) {
     FactionState* faction = find_faction(state, horde.owner);
     if ((kind == UnitKind::MongolLancer && horde.owner != mongol_owner)
         || (kind != UnitKind::HorseArcher && kind != UnitKind::MongolLancer)
+        || !unit_kind_available_to_owner(kind, horde.owner)
         || horde.population < options.population_cost
         || horde.horses < options.horses_cost
         || faction == nullptr

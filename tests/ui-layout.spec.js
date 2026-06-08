@@ -1199,7 +1199,7 @@ test("unit counters use sprite glyph zoom bands", async ({ page, isMobile }) => 
   await openPlayMode(page);
   await expect.poll(() => page.evaluate(() => unitSpriteSheetReady)).toBe(true);
   await expect(page.evaluate(() => {
-    const kinds = ["infantry", "horde", "herd", "horse_archer", "chinese_cavalry", "chinese_militia", "mongol_lancer"];
+    const kinds = ["infantry", "persian_infantry", "horde", "herd", "horse_archer", "chinese_cavalry", "persian_cavalry", "chinese_militia", "mongol_lancer"];
     const medium = unitSpriteZoomLevels.find((level) => level.key === "medium");
     return {
       levels: unitSpriteZoomLevels.map((level) => level.key),

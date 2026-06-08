@@ -61,6 +61,8 @@ enum class UnitKind {
     MongolLancer,
     ChineseMilitia,
     Infantry,
+    PersianInfantry,
+    PersianCavalry,
     Horde,
 };
 
@@ -292,6 +294,7 @@ const char* unit_stance_key(UnitStance stance);
 UnitStance unit_stance_from_key(const std::string& stance);
 std::vector<UnitKind> unit_kinds();
 UnitDefaults unit_defaults(UnitKind kind);
+bool unit_kind_available_to_owner(UnitKind kind, OwnerId owner);
 
 OwnerId active_faction(const GameState& state);
 std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id);
