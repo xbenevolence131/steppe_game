@@ -67,9 +67,9 @@
   "wall_gates": [],
   "crossings": [],
   "factions": [
-    { "id": 0, "key": "mongol", "name": "Mongol", "color": "#2368c4", "enabled": true, "ai": false, "metal": 4, "treasure": 0 },
+    { "id": 0, "key": "mongol", "name": "Mongol", "color": "#d6a21a", "enabled": true, "ai": false, "metal": 4, "treasure": 0 },
     { "id": 2, "key": "chinese", "name": "Chinese", "color": "#c93632", "enabled": true, "ai": true, "metal": 4, "treasure": 0 },
-    { "id": 1, "key": "persian", "name": "Persian", "color": "#8a4fb0", "enabled": false, "ai": false, "metal": 4, "treasure": 0 }
+    { "id": 1, "key": "persian", "name": "Persian", "color": "#1f4fa3", "enabled": false, "ai": false, "metal": 4, "treasure": 0 }
   ],
   "units": [
     { "id": 1, "owner": 0, "faction": "mongol", "kind": "infantry", "name": "Town Garrison", "q": 3, "r": 3, "hp": 10, "maxHp": 10, "readiness": 100, "remainingScaledMove": 16 },
@@ -85,9 +85,9 @@
     "selectedUnitId": 0,
     "turnOrder": [0, 2],
     "factions": [
-      { "id": 0, "key": "mongol", "name": "Mongol", "color": "#2368c4", "enabled": true, "ai": false, "metal": 4, "treasure": 0 },
+      { "id": 0, "key": "mongol", "name": "Mongol", "color": "#d6a21a", "enabled": true, "ai": false, "metal": 4, "treasure": 0 },
       { "id": 2, "key": "chinese", "name": "Chinese", "color": "#c93632", "enabled": true, "ai": true, "metal": 4, "treasure": 0 },
-      { "id": 1, "key": "persian", "name": "Persian", "color": "#8a4fb0", "enabled": false, "ai": false, "metal": 4, "treasure": 0 }
+      { "id": 1, "key": "persian", "name": "Persian", "color": "#1f4fa3", "enabled": false, "ai": false, "metal": 4, "treasure": 0 }
     ],
     "aiGroups": [
       {

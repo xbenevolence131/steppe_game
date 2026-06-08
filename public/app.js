@@ -235,7 +235,7 @@ const terrainStyles = {
 const factions = {
   mongol: {
     name: "Mongol",
-    color: "#2368c4",
+    color: "#d6a21a",
     owner: 0,
     metal: 4,
     treasure: 0,
@@ -253,7 +253,7 @@ const factions = {
   },
   persian: {
     name: "Persian",
-    color: "#8a4fb0",
+    color: "#1f4fa3",
     owner: 1,
     metal: 4,
     treasure: 0,

@@ -305,7 +305,7 @@ function aiDirectiveGameState(directive, units) {
       selectedUnitId: 0,
       turnOrder: [0, 2],
       factions: [
-        { id: 0, key: "mongol", name: "Mongol", color: "#2368c4", enabled: true, ai: false, metal: 4, treasure: 0 },
+        { id: 0, key: "mongol", name: "Mongol", color: "#d6a21a", enabled: true, ai: false, metal: 4, treasure: 0 },
         { id: 2, key: "chinese", name: "Chinese", color: "#c93632", enabled: true, ai: true, metal: 4, treasure: 0 },
       ],
       aiGroups: [{
@@ -668,9 +668,9 @@ test("end turn skips AI controlled factions", async ({ isMobile }) => {
   state.game.activeFactionIndex = 0;
   state.game.activeOwner = 1;
   state.game.factions = [
-    { id: 1, key: "mongol", name: "Mongol", color: "#2368c4", enabled: true, ai: false, metal: 4, treasure: 0 },
+    { id: 1, key: "mongol", name: "Mongol", color: "#d6a21a", enabled: true, ai: false, metal: 4, treasure: 0 },
     { id: 2, key: "chinese", name: "Chinese", color: "#c93632", enabled: true, ai: true, metal: 4, treasure: 0 },
-    { id: 3, key: "persian", name: "Persian", color: "#8a4fb0", enabled: true, ai: false, metal: 4, treasure: 0 },
+    { id: 3, key: "persian", name: "Persian", color: "#1f4fa3", enabled: true, ai: false, metal: 4, treasure: 0 },
   ];
 
   const advanced = runEngineJson(["game-end-turn"], state);
@@ -1207,7 +1207,7 @@ test("unit counters use sprite glyph zoom bands", async ({ page, isMobile }) => 
       initialScale: viewport.scale,
       counterAreaRatio: (unitCounterMetrics().width * unitCounterMetrics().height)
         / ((3 * Math.sqrt(3) / 2) * geometry.size * geometry.size),
-      sprites: kinds.every((kind) => Boolean(tintedUnitSprite(kind, "#2368c4", medium))),
+      sprites: kinds.every((kind) => Boolean(tintedUnitSprite(kind, "#d6a21a", medium))),
     };
   })).resolves.toEqual(expect.objectContaining({
     levels: ["small", "medium", "large"],

@@ -316,13 +316,13 @@ std::vector<UnitStance> parse_legal_stances_field(const std::string& value, int 
 
 FactionState faction_for_owner(OwnerId owner) {
     if (owner == mongol_owner) {
-        return {mongol_owner, "mongol", "Mongol", "#2368c4", 4, 0, true, false};
+        return {mongol_owner, "mongol", "Mongol", "#d6a21a", 4, 0, true, false};
     }
     if (owner == chinese_owner) {
         return {chinese_owner, "chinese", "Chinese", "#c93632", 4, 0, true, false};
     }
     if (owner == persian_owner) {
-        return {persian_owner, "persian", "Persian", "#8a4fb0", 4, 0, true, false};
+        return {persian_owner, "persian", "Persian", "#1f4fa3", 4, 0, true, false};
     }
     return {neutral_owner, "neutral", "Neutral", "#777777", 0, 0, false, false};
 }
@@ -598,6 +598,7 @@ constexpr int max_move_readiness_cost = 8;
 constexpr int attack_readiness_cost = 10;
 constexpr int turn_readiness_recovery = 25;
 constexpr int flanked_defense_percent = 75;
+constexpr int defender_retreat_condition_threshold = 50;
 constexpr int feigned_retreat_pursuit_readiness_penalty = 15;
 constexpr int feigned_retreat_defender_hp_damage = 1;
 constexpr int feigned_retreat_defender_readiness_penalty = 10;
@@ -1147,6 +1148,13 @@ int terrain_defense_percent_at(const GameState& state, const Coord& coord) {
     return terrain_defense_percent(hex == nullptr ? Terrain::None : hex->terrain);
 }
 
+int unit_terrain_defense_percent_at(const GameState& state, const Unit& unit) {
+    if (is_cavalry_unit(unit.kind)) {
+        return 100;
+    }
+    return terrain_defense_percent_at(state, unit.coord);
+}
+
 int hp_scaled_strength(int strength, const Unit& unit) {
     if (strength <= 0 || unit.hp <= 0 || unit.max_hp <= 0) {
         return 0;
@@ -1169,6 +1177,17 @@ int clamped_readiness(const Unit& unit) {
 int readiness_percent(const Unit& unit) {
     const int max_readiness = std::max(1, unit.max_readiness);
     return std::max(0, std::min(100, (clamped_readiness(unit) * 100 + max_readiness / 2) / max_readiness));
+}
+
+int percent_of(int value, int maximum) {
+    if (maximum <= 0) {
+        return 0;
+    }
+    return std::max(0, std::min(100, (std::max(0, value) * 100 + maximum / 2) / maximum));
+}
+
+int combined_condition_percent(int hp, int max_hp, int readiness, int max_readiness) {
+    return (percent_of(hp, max_hp) * percent_of(readiness, max_readiness) + 50) / 100;
 }
 
 int combat_readiness_percent(const Unit& unit) {
@@ -1206,7 +1225,7 @@ int effective_defense_score(const GameState& state, const Unit& defender, int fl
     }
     const int terrain_adjusted = std::max(
         1,
-        (defense_strength * terrain_defense_percent_at(state, defender.coord) + 99) / 100
+        (defense_strength * unit_terrain_defense_percent_at(state, defender) + 99) / 100
     );
     return std::max(1, (terrain_adjusted * std::max(0, flanking_defense_percent) + 50) / 100);
 }
@@ -1261,15 +1280,15 @@ CrtOutcome crt_outcome(int index) {
         return {1, 2, "none"};
     }
     if (index == 2) {
-        return {0, 2, "defender"};
+        return {0, 2, "none"};
     }
     if (index == 3) {
-        return {0, 3, "defender"};
+        return {0, 3, "none"};
     }
     if (index == 4) {
-        return {0, 3, "defender"};
+        return {0, 3, "none"};
     }
-    return {0, 4, "defender"};
+    return {0, 4, "none"};
 }
 
 int scaled_damage_for_remaining(int base_damage, int current, int maximum) {
@@ -1394,6 +1413,15 @@ bool defender_flanked_by_separated_unit(const GameState& state, const Unit& atta
 bool can_pursue_into_defender_hex(const GameState& state, const Unit& attacker, const Unit& defender) {
     const GameHex* hex = find_hex(state, defender.coord);
     return hex != nullptr && movement_cost(state, attacker, attacker.coord, *hex) != blocked_movement_cost();
+}
+
+bool open_terrain_for_feigned_retreat(Terrain terrain) {
+    return terrain == Terrain::Grassland || terrain == Terrain::Desert;
+}
+
+bool defender_on_feigned_retreat_terrain(const GameState& state, const Unit& defender) {
+    const GameHex* hex = find_hex(state, defender.coord);
+    return hex != nullptr && open_terrain_for_feigned_retreat(hex->terrain);
 }
 
 bool find_ordinary_retreat_hex(const GameState& state, const Unit& retreating, const Unit& opposing, Coord& retreat_to) {
@@ -1578,7 +1606,7 @@ CombatantPreview combatant_preview(const GameState& state, const Unit& unit, int
     preview.readiness = clamped_readiness(unit);
     preview.max_readiness = std::max(1, unit.max_readiness);
     preview.readiness_percent = readiness_percent(unit);
-    preview.terrain_defense_percent = terrain_defense_percent_at(state, unit.coord);
+    preview.terrain_defense_percent = unit_terrain_defense_percent_at(state, unit);
     preview.flanking_defense_percent = flanking_defense_percent;
     preview.effective_attack = effective_attack_score(unit);
     preview.effective_defense = effective_defense_score(state, unit, flanking_defense_percent);
@@ -1641,6 +1669,7 @@ CombatPreview combat_preview(const GameState& state, int attacker_id, int defend
     if (defender->kind == UnitKind::HorseArcher
         && defender->stance == UnitStance::FeignedRetreat
         && attacker->kind != UnitKind::HorseArcher
+        && defender_on_feigned_retreat_terrain(state, *defender)
         && can_pursue_into_defender_hex(state, *attacker, *defender)
         && find_feigned_retreat_hex(state, *attacker, *defender, retreat_to)) {
         preview.special_resolution = "feigned_retreat";
@@ -1668,7 +1697,7 @@ CombatPreview combat_preview(const GameState& state, int attacker_id, int defend
         return preview;
     }
     const CrtOutcome outcome = crt_outcome(preview.crt_index);
-    preview.retreat_option = outcome.retreat_option;
+    preview.retreat_option = "none";
     preview.readiness_impact = readiness_impact_text(preview.readiness_ratio_percent);
     preview.retreat_impact = retreat_impact_text(preview.retreat_option);
 
@@ -1692,6 +1721,18 @@ CombatPreview combat_preview(const GameState& state, int attacker_id, int defend
     preview.attacker.result_hp = std::max(0, attacker->hp - attacker_hp_damage);
     preview.attacker.result_readiness = std::max(0, clamped_readiness(*attacker) - attacker_readiness_damage);
     preview.attacker.destroyed = preview.attacker.result_hp <= 0;
+
+    const int defender_result_condition = combined_condition_percent(
+        preview.defender.result_hp,
+        defender->max_hp,
+        preview.defender.result_readiness,
+        defender->max_readiness);
+    if (!preview.defender.destroyed
+        && defender_hp_damage > 0
+        && defender_result_condition <= defender_retreat_condition_threshold) {
+        preview.retreat_option = "defender";
+        preview.retreat_impact = retreat_impact_text(preview.retreat_option);
+    }
 
     if (preview.retreat_option == "defender" && !preview.defender.destroyed) {
         if (find_ordinary_retreat_hex(state, *defender, *attacker, preview.defender_retreat_to)) {

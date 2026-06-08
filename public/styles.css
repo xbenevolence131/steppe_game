@@ -842,7 +842,7 @@ select[hidden] {
 .combat-preview {
   position: absolute;
   z-index: 19;
-  width: min(420px, calc(100% - 16px));
+  width: min(520px, calc(100% - 16px));
   padding: 8px;
   border: 1px solid var(--line);
   background: #f8f3e8;
@@ -857,7 +857,7 @@ select[hidden] {
 .combat-preview-title {
   margin: 0 0 7px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -916,7 +916,7 @@ select[hidden] {
 .combat-preview-side h3 {
   margin: 0 0 6px;
   color: var(--ink);
-  font-size: 12px;
+  font-size: 16px;
 }
 
 .combat-preview-row {
@@ -926,7 +926,7 @@ select[hidden] {
   align-items: baseline;
   min-height: 18px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 14px;
 }
 
 .combat-preview-row strong {
