@@ -274,6 +274,7 @@
             <button id="zoom-out-button" class="secondary icon-button" type="button" aria-label="Zoom out" title="Zoom out">-</button>
             <button id="zoom-in-button" class="secondary icon-button" type="button" aria-label="Zoom in" title="Zoom in">+</button>
             <button id="fit-button" class="secondary fit-button" type="button" aria-label="Fit map" title="Fit map">Fit</button>
+            <button id="pasture-view-button" class="secondary view-toggle-button" type="button" aria-pressed="false" title="Toggle pasture view">Pasture</button>
           </div>
           <div id="map-panel" class="map-panel" tabindex="0">
             <canvas id="map-canvas"></canvas>
@@ -365,6 +366,32 @@
             </section>
             <section class="hex-inspector play-detail-region" aria-label="Hex inspector">
               <h2>Hex Inspector</h2>
+              <dl class="hex-inspector-list">
+                <div>
+                  <dt>Hex</dt>
+                  <dd id="hex-coordinate">None</dd>
+                </div>
+                <div>
+                  <dt>Terrain</dt>
+                  <dd id="hex-terrain">-</dd>
+                </div>
+                <div>
+                  <dt>Defense</dt>
+                  <dd id="hex-defense">-</dd>
+                </div>
+                <div>
+                  <dt>Move</dt>
+                  <dd id="hex-move-cost">-</dd>
+                </div>
+                <div>
+                  <dt>Road</dt>
+                  <dd id="hex-road-cost">-</dd>
+                </div>
+                <div id="hex-pasture-row">
+                  <dt>Pasture</dt>
+                  <dd id="hex-pasture">-</dd>
+                </div>
+              </dl>
             </section>
             <section class="control-status-region play-detail-region" aria-label="Control status">
               <h2>Control Status</h2>

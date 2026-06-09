@@ -685,6 +685,16 @@ select[hidden] {
   min-width: 48px;
 }
 
+.view-toggle-button {
+  min-width: 72px;
+}
+
+.view-toggle-button.is-active {
+  border-color: #2f8f4e;
+  background: #eaf5ec;
+  color: #163a22;
+}
+
 .map-panel {
   position: relative;
   height: auto;
@@ -1143,6 +1153,40 @@ select[hidden] {
   color: var(--muted);
   font-size: 12px;
   font-weight: 650;
+}
+
+.hex-inspector-list {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+}
+
+.hex-inspector-list div {
+  display: grid;
+  grid-template-columns: 9ch minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
+}
+
+.hex-inspector-list div[hidden] {
+  display: none;
+}
+
+.hex-inspector-list dt {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.hex-inspector-list dd {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .control-status-region {

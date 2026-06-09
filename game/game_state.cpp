@@ -603,6 +603,8 @@ constexpr int feigned_retreat_pursuit_readiness_penalty = 15;
 constexpr int feigned_retreat_defender_hp_damage = 1;
 constexpr int feigned_retreat_defender_readiness_penalty = 10;
 constexpr int blocked_retreat_readiness_penalty = 15;
+constexpr int pasture_capacity_grassland = 100;
+constexpr int pasture_consumption_per_horse = 8;
 
 constexpr int move_scale = 8;
 
@@ -878,10 +880,7 @@ OwnerId owner_from_town(const Town& town) {
 PastureState initial_pasture_for_terrain(Terrain terrain) {
     switch (terrain) {
         case Terrain::Grassland:
-            return {4, 4, 0};
-        case Terrain::Marsh:
-        case Terrain::Forest:
-            return {1, 1, 0};
+            return {pasture_capacity_grassland, pasture_capacity_grassland, 0};
         default:
             return {};
     }
@@ -1079,6 +1078,13 @@ OwnerId active_faction(const GameState& state) {
 }
 
 const GameHex* find_hex(const GameState& state, const Coord& coord) {
+    const auto found = std::find_if(state.hexes.begin(), state.hexes.end(), [&](const GameHex& hex) {
+        return coord_equal(hex.coord, coord);
+    });
+    return found == state.hexes.end() ? nullptr : &*found;
+}
+
+GameHex* find_hex(GameState& state, const Coord& coord) {
     const auto found = std::find_if(state.hexes.begin(), state.hexes.end(), [&](const GameHex& hex) {
         return coord_equal(hex.coord, coord);
     });
@@ -2324,6 +2330,56 @@ void execute_ai_turn(GameState& state, OwnerId owner) {
     state.legal_attacks.clear();
 }
 
+bool grazes_pasture(const Unit& unit) {
+    return (unit.kind == UnitKind::Horde || unit.kind == UnitKind::Herd)
+        && unit.hp > 0
+        && unit.horses > 0;
+}
+
+std::vector<GameHex*> grazing_hexes_for_unit(GameState& state, const Unit& unit) {
+    std::vector<GameHex*> hexes;
+    GameHex* origin = find_hex(state, unit.coord);
+    if (origin != nullptr && origin->pasture.capacity > 0) {
+        hexes.push_back(origin);
+    }
+    for (int direction = 0; direction < 6; ++direction) {
+        const Coord neighbor = neighbor_in_direction(unit.coord, direction);
+        if (!in_bounds(state, neighbor)) {
+            continue;
+        }
+        GameHex* hex = find_hex(state, neighbor);
+        if (hex != nullptr && hex->pasture.capacity > 0) {
+            hexes.push_back(hex);
+        }
+    }
+    std::sort(hexes.begin(), hexes.end(), [](const GameHex* first, const GameHex* second) {
+        return coord_less(first->coord, second->coord);
+    });
+    return hexes;
+}
+
+void apply_grazing_for_faction(GameState& state, OwnerId owner) {
+    for (const Unit& unit : state.units) {
+        if (unit.owner != owner || !grazes_pasture(unit)) {
+            continue;
+        }
+        std::vector<GameHex*> pasture_hexes = grazing_hexes_for_unit(state, unit);
+        if (pasture_hexes.empty()) {
+            continue;
+        }
+        const int demand = unit.horses * pasture_consumption_per_horse;
+        const int base = demand / static_cast<int>(pasture_hexes.size());
+        int remainder = demand % static_cast<int>(pasture_hexes.size());
+        for (GameHex* hex : pasture_hexes) {
+            const int consumption = base + (remainder > 0 ? 1 : 0);
+            if (remainder > 0) {
+                --remainder;
+            }
+            hex->pasture.remaining = std::max(0, hex->pasture.remaining - consumption);
+        }
+    }
+}
+
 void advance_to_next_faction(GameState& state) {
     if (state.turn_order.empty()) {
         state.turn_order = {mongol_owner, chinese_owner};
@@ -2342,6 +2398,7 @@ void end_turn(GameState& state) {
         state.turn_order = {mongol_owner, chinese_owner};
     }
 
+    apply_grazing_for_faction(state, active_faction(state));
     const int faction_count = static_cast<int>(state.turn_order.size());
     for (int steps = 0; steps < faction_count; ++steps) {
         advance_to_next_faction(state);
@@ -2349,6 +2406,7 @@ void end_turn(GameState& state) {
         start_faction_turn(state, owner);
         if (faction_ai_controlled(state, owner)) {
             execute_ai_turn(state, owner);
+            apply_grazing_for_faction(state, owner);
             continue;
         }
         break;
@@ -2376,6 +2434,13 @@ void print_string_array_json(const std::vector<std::string>& values, std::ostrea
         out << "\"" << escape_json(values[i]) << "\"";
     }
     out << "]";
+}
+
+void print_pasture_json(const PastureState& pasture, std::ostream& out) {
+    out << "{\"capacity\":" << pasture.capacity
+        << ",\"remaining\":" << pasture.remaining
+        << ",\"recoveryTurn\":" << pasture.recovery_turn
+        << "}";
 }
 
 void print_unit_json(const Unit& unit, std::ostream& out) {
@@ -2605,6 +2670,8 @@ void print_game_state_json(const GameState& state, std::ostream& out) {
             << ",\"terrain\":\"" << terrain_to_string(hex.terrain) << "\""
             << ",\"labels\":";
         print_string_array_json(hex.source_labels, out);
+        out << ",\"pasture\":";
+        print_pasture_json(hex.pasture, out);
         out << "}";
     }
     out << "],\"towns\":[],\"river_sources\":[],\"river_destinations\":[],\"merge_points\":[],";
@@ -2751,6 +2818,8 @@ void print_game_patch_json(const GameState& state, bool ok, std::ostream& out) {
             << ",\"terrain\":\"" << terrain_to_string(hex.terrain) << "\""
             << ",\"labels\":";
         print_string_array_json(hex.source_labels, out);
+        out << ",\"pasture\":";
+        print_pasture_json(hex.pasture, out);
         out << "}";
     }
     out << "],\"towns\":[],\"river_sources\":[],\"river_destinations\":[],\"merge_points\":[],";
@@ -2858,6 +2927,15 @@ GameState parse_game_state_json(const std::string& json) {
         hex.terrain = terrain_from_string(string_field(hex_json, "terrain", "none"));
         hex.tags = hex.terrain == Terrain::Grassland ? tag_mask(HexTag::BaseSteppe) : 0;
         hex.pasture = initial_pasture_for_terrain(hex.terrain);
+        if (hex_json.contains("pasture") && hex_json["pasture"].is_object()) {
+            const Json& pasture_json = hex_json["pasture"];
+            hex.pasture.capacity = std::max(0, std::min(100, int_field(pasture_json, "capacity", hex.pasture.capacity)));
+            hex.pasture.remaining = std::max(
+                0,
+                std::min(hex.pasture.capacity, int_field(pasture_json, "remaining", hex.pasture.remaining))
+            );
+            hex.pasture.recovery_turn = std::max(0, int_field(pasture_json, "recoveryTurn", hex.pasture.recovery_turn));
+        }
         hex.source_labels = string_array_field(hex_json, "labels");
         if (!hex.source_labels.empty()) {
             hex.tags = tags_from_labels(hex.source_labels);

@@ -42,6 +42,7 @@ const undoButton = document.querySelector("#undo-button");
 const zoomInButton = document.querySelector("#zoom-in-button");
 const zoomOutButton = document.querySelector("#zoom-out-button");
 const fitButton = document.querySelector("#fit-button");
+const pastureViewButton = document.querySelector("#pasture-view-button");
 const scenarioNameInput = document.querySelector("#scenario-name");
 const scenarioRegions = Array.from(document.querySelectorAll(".scenario-region"));
 const scenarioToolButtons = Array.from(document.querySelectorAll("[data-scenario-activate]"));
@@ -99,6 +100,13 @@ const unitHorses = document.querySelector("#unit-horses");
 const unitHorsesInput = document.querySelector("#unit-horses-input");
 const unitProductionRow = document.querySelector("#unit-production-row");
 const unitProduction = document.querySelector("#unit-production");
+const hexCoordinate = document.querySelector("#hex-coordinate");
+const hexTerrain = document.querySelector("#hex-terrain");
+const hexDefense = document.querySelector("#hex-defense");
+const hexMoveCost = document.querySelector("#hex-move-cost");
+const hexRoadCost = document.querySelector("#hex-road-cost");
+const hexPastureRow = document.querySelector("#hex-pasture-row");
+const hexPasture = document.querySelector("#hex-pasture");
 
 let currentMap = null;
 let appMode = "intro";
@@ -129,6 +137,8 @@ let createUnitPlacement = null;
 let scenarioFileMode = "load";
 let selectedScenarioFile = "";
 let appInitialization = null;
+let pastureViewEnabled = false;
+let selectedHexCoord = null;
 
 const viewport = {
   scale: 1,
@@ -150,6 +160,7 @@ const geometry = {
 };
 
 const maxUndoDepth = 64;
+const moveScale = 8;
 const scenarioDirectoryDbName = "steppe-scenario-files";
 const scenarioDirectoryStoreName = "handles";
 const scenarioDirectoryHandleKey = "scenario-directory";
@@ -437,6 +448,104 @@ function clampNumberInput(input, min, max, fallback) {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function titleCaseToken(value) {
+  return String(value || "")
+    .split("_")
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function defaultPastureForTerrain(terrain) {
+  const capacity = terrain === "grassland" ? 100 : 0;
+  return { capacity, remaining: capacity, recoveryTurn: 0 };
+}
+
+function normalizePasture(rawPasture, terrain) {
+  const fallback = defaultPastureForTerrain(terrain);
+  if (!rawPasture || typeof rawPasture !== "object") {
+    return fallback;
+  }
+  const capacity = Number.isFinite(rawPasture.capacity)
+    ? Math.trunc(clamp(rawPasture.capacity, 0, 100))
+    : fallback.capacity;
+  const remaining = Number.isFinite(rawPasture.remaining)
+    ? Math.trunc(clamp(rawPasture.remaining, 0, capacity))
+    : Math.min(fallback.remaining, capacity);
+  const recoveryTurn = Number.isFinite(rawPasture.recoveryTurn)
+    ? Math.max(0, Math.trunc(rawPasture.recoveryTurn))
+    : 0;
+  return { capacity, remaining, recoveryTurn };
+}
+
+function terrainDefensePercent(terrain) {
+  switch (terrain) {
+    case "hill":
+    case "forest":
+      return 125;
+    case "mountain":
+    case "urban":
+      return 150;
+    case "marsh":
+      return 115;
+    case "desert":
+      return 90;
+    case "grassland":
+    case "none":
+    case "lake":
+    default:
+      return 100;
+  }
+}
+
+function terrainMovementCostScaled(terrain) {
+  switch (terrain) {
+    case "grassland":
+    case "desert":
+      return 8;
+    case "hill":
+    case "forest":
+      return 12;
+    case "urban":
+    case "marsh":
+    case "mountain":
+      return 16;
+    case "none":
+    case "lake":
+    default:
+      return Infinity;
+  }
+}
+
+function roadModifiedMovementCostScaled(terrainCost, mounted) {
+  if (!Number.isFinite(terrainCost)) {
+    return Infinity;
+  }
+  const footRoadCost = Math.floor((terrainCost + 1) / 2);
+  return mounted ? footRoadCost + 1 : footRoadCost;
+}
+
+function formatMoveCost(scaledCost) {
+  if (!Number.isFinite(scaledCost)) {
+    return "Blocked";
+  }
+  const refCost = scaledCost / moveScale;
+  return Number.isInteger(refCost) ? String(refCost) : refCost.toFixed(2).replace(/0$/, "");
+}
+
+function normalizeMapHex(hex) {
+  const terrain = typeof hex.terrain === "string" ? hex.terrain : "grassland";
+  return {
+    q: Number(hex.q),
+    r: Number(hex.r),
+    terrain,
+    labels: Array.isArray(hex.labels)
+      ? hex.labels.filter((label) => typeof label === "string")
+      : editorLabelsForTerrain(terrain),
+    pasture: normalizePasture(hex.pasture, terrain),
+  };
 }
 
 function newSeed() {
@@ -730,6 +839,25 @@ function findNearestHex(point) {
     }
   }
   return best;
+}
+
+function hexAtCoord(coord) {
+  if (!currentMap || !coord || !Array.isArray(currentMap.hexes)) {
+    return null;
+  }
+  return currentMap.hexes.find((hex) => hex.q === coord.q && hex.r === coord.r) || null;
+}
+
+function selectedHex() {
+  return hexAtCoord(selectedHexCoord);
+}
+
+function selectHex(hex, options = {}) {
+  selectedHexCoord = hex ? { q: hex.q, r: hex.r } : null;
+  syncHexInspector();
+  if (options.draw !== false) {
+    drawMap();
+  }
 }
 
 function findNearestEditableEdge(point) {
@@ -1815,6 +1943,10 @@ function applyGamePatch(payload) {
   if (!currentMap || !payload) {
     return;
   }
+  if (Array.isArray(payload.hexes)) {
+    currentMap.hexes = payload.hexes.map(normalizeMapHex)
+      .filter((hex) => Number.isInteger(hex.q) && Number.isInteger(hex.r));
+  }
   if (Array.isArray(payload.units)) {
     currentMap.units = payload.units.map(normalizeUnit);
   }
@@ -2441,6 +2573,42 @@ function syncPlayControls() {
   syncUnitInspector();
 }
 
+function syncPastureViewButton() {
+  pastureViewButton.classList.toggle("is-active", pastureViewEnabled);
+  pastureViewButton.setAttribute("aria-pressed", String(pastureViewEnabled));
+}
+
+function syncHexInspector() {
+  const hex = selectedHex();
+  if (!hex) {
+    if (selectedHexCoord && currentMap) {
+      selectedHexCoord = null;
+    }
+    hexCoordinate.textContent = "None";
+    hexTerrain.textContent = "-";
+    hexDefense.textContent = "-";
+    hexMoveCost.textContent = "-";
+    hexRoadCost.textContent = "-";
+    hexPastureRow.hidden = true;
+    hexPasture.textContent = "-";
+    return;
+  }
+
+  const terrainCost = terrainMovementCostScaled(hex.terrain);
+  const pasture = normalizePasture(hex.pasture, hex.terrain);
+  hexCoordinate.textContent = `${hex.q},${hex.r}`;
+  hexTerrain.textContent = titleCaseToken(hex.terrain);
+  hexDefense.textContent = `${terrainDefensePercent(hex.terrain)}%`;
+  hexMoveCost.textContent = formatMoveCost(terrainCost);
+  hexRoadCost.textContent = Number.isFinite(terrainCost)
+    ? `Foot ${formatMoveCost(roadModifiedMovementCostScaled(terrainCost, false))} / Mounted ${formatMoveCost(roadModifiedMovementCostScaled(terrainCost, true))}`
+    : "Blocked";
+  hexPastureRow.hidden = pasture.capacity <= 0;
+  hexPasture.textContent = pasture.capacity > 0
+    ? `${pasture.remaining}/${pasture.capacity}`
+    : "-";
+}
+
 function syncModeControls() {
   appShell.classList.toggle("is-intro", appMode === "intro");
   appShell.classList.toggle("is-scenario", appMode === "scenario");
@@ -2457,6 +2625,8 @@ function syncModeControls() {
   syncScenarioParameterControls();
   syncPlayControls();
   syncUndoControls();
+  syncPastureViewButton();
+  syncHexInspector();
 }
 
 function setAppMode(mode) {
@@ -2491,6 +2661,10 @@ async function enterPlayMode() {
       const scenarioFactions = normalizeScenarioFactions(currentMap.factions, currentMap.units);
       const payload = await postAppCommand({ type: "load_game", state: scenarioSnapshot() });
       currentMap = payload;
+      currentMap.hexes = Array.isArray(currentMap.hexes)
+        ? currentMap.hexes.map(normalizeMapHex).filter((hex) => Number.isInteger(hex.q) && Number.isInteger(hex.r))
+        : [];
+      currentMap.units = Array.isArray(currentMap.units) ? currentMap.units.map(normalizeUnit) : [];
       currentMap.factions = scenarioFactions;
       terrainUndo = new Map();
       clearUndoHistory();
@@ -2507,7 +2681,29 @@ function enterScenarioMode() {
   setAppMode("scenario");
 }
 
+function pastureStyleForHex(hex) {
+  if (!pastureViewEnabled || hex.terrain !== "grassland") {
+    return null;
+  }
+  const pasture = normalizePasture(hex.pasture, hex.terrain);
+  const ratio = pasture.capacity > 0 ? pasture.remaining / pasture.capacity : 0;
+  if (ratio >= 0.75) {
+    return { fill: "#2f8f4e", stroke: "#15552d", label: "#eef7e8" };
+  }
+  if (ratio >= 0.5) {
+    return { fill: "#d5c83a", stroke: "#7c7219", label: "#25230c" };
+  }
+  if (ratio >= 0.25) {
+    return { fill: "#d9822b", stroke: "#874715", label: "#221105" };
+  }
+  return { fill: "#b83f2f", stroke: "#672118", label: "#fff0ec" };
+}
+
 function styleForHex(hex) {
+  const pastureStyle = pastureStyleForHex(hex);
+  if (pastureStyle) {
+    return pastureStyle;
+  }
   const labels = hex.labels || [];
   if (hex.terrain === "urban" && labels.includes("persian_town")) {
     return terrainStyles.persian_town;
@@ -2555,6 +2751,32 @@ function drawHex(cx, cy, size, label, hex) {
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(label, cx, cy);
+}
+
+function drawSelectedHex() {
+  const hex = selectedHex();
+  if (!hex) {
+    return;
+  }
+  const center = hexCenter(hex);
+  const points = hexPoints(center.x, center.y, geometry.size * 0.98);
+  ctx.save();
+  ctx.beginPath();
+  points.forEach(([x, y], index) => {
+    if (index === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  });
+  ctx.closePath();
+  ctx.strokeStyle = "#f6f0d8";
+  ctx.lineWidth = 5 / viewport.scale;
+  ctx.stroke();
+  ctx.strokeStyle = "#1c1d1b";
+  ctx.lineWidth = 2 / viewport.scale;
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawRiverEdges(edges) {
@@ -3489,6 +3711,7 @@ async function deployDetachedHerdAt(coord) {
   if (!detachHerdPlacement || !detachDeployableAt(coord)) {
     return false;
   }
+  selectedHexCoord = { q: coord.q, r: coord.r };
   const payload = await postUndoableGameCommand({
     type: "detach_herd",
     unitId: detachHerdPlacement.unitId,
@@ -3576,6 +3799,7 @@ async function deployCreatedUnitAt(coord) {
   if (!createUnitPlacement || !createUnitDeployableAt(coord)) {
     return false;
   }
+  selectedHexCoord = { q: coord.q, r: coord.r };
   const payload = await postUndoableGameCommand({
     type: createUnitPlacement.createCommandType,
     unitId: createUnitPlacement.unitId,
@@ -3593,6 +3817,7 @@ async function selectUnit(unit) {
     return false;
   }
   hideCombatPreview();
+  selectedHexCoord = { q: unit.q, r: unit.r };
   const payload = await postAppCommand({
     type: "select_unit",
     unitId: unit.id,
@@ -3626,6 +3851,7 @@ async function moveSelectedUnitTo(coord) {
     return false;
   }
   hideCombatPreview();
+  selectedHexCoord = { q: coord.q, r: coord.r };
   const payload = await postUndoableGameCommand({
     type: "move_unit",
     unitId: unit.id,
@@ -3643,6 +3869,7 @@ async function attackSelectedUnit(defender) {
     return false;
   }
   hideCombatPreview();
+  selectedHexCoord = { q: defender.q, r: defender.r };
   const payload = await postUndoableGameCommand({
     type: "attack_unit",
     attackerId: attacker.id,
@@ -3733,6 +3960,7 @@ function drawMap() {
   drawEditorUnitMoveHexes();
   drawAiEditorHighlights();
   drawDetachDeploymentHexes();
+  drawSelectedHex();
   drawUnitCounters(currentMap.units);
 
   ctx.restore();
@@ -3846,6 +4074,7 @@ function makeEditorUnit(coord) {
 }
 
 function toggleEditorUnit(hex) {
+  selectedHexCoord = { q: hex.q, r: hex.r };
   currentMap.units = Array.isArray(currentMap.units) ? currentMap.units : [];
   const removedUnits = currentMap.units.filter((unit) => unit.q === hex.q && unit.r === hex.r);
   if (removedUnits.length > 0) {
@@ -3901,6 +4130,7 @@ function editorUnitMoveAt(coord) {
 
 function selectEditorUnit(unit) {
   editorSelectedUnitId = unit ? unit.id : 0;
+  selectedHexCoord = unit ? { q: unit.q, r: unit.r } : selectedHexCoord;
   currentMap.game = currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {};
   currentMap.game.selectedUnitId = editorSelectedUnitId;
   syncModeControls();
@@ -3923,12 +4153,16 @@ function handleUnitEditClick(event) {
     recordLocalUndo();
     unit.q = hex.q;
     unit.r = hex.r;
+    selectedHexCoord = { q: hex.q, r: hex.r };
     unit.remainingMove = unit.move;
     currentMap.game.selectedUnitId = unit.id;
     ensureGameMeta();
     syncModeControls();
     drawMap();
     return;
+  }
+  if (hex) {
+    selectedHexCoord = { q: hex.q, r: hex.r };
   }
   selectEditorUnit(null);
 }
@@ -3951,6 +4185,7 @@ function handleAiMemberPickClick(event) {
   }
   group.unitIds = Array.from(unitIds);
   editorSelectedUnitId = unit.id;
+  selectedHexCoord = { q: unit.q, r: unit.r };
   currentMap.game.selectedUnitId = unit.id;
   ensureGameMeta();
   syncModeControls();
@@ -3967,6 +4202,7 @@ function handleAiTargetPickClick(event) {
     return;
   }
   recordLocalUndo();
+  selectedHexCoord = { q: hex.q, r: hex.r };
   group.directive.target = { q: hex.q, r: hex.r };
   ensureGameMeta();
   syncModeControls();
@@ -3979,6 +4215,7 @@ function toggleHexTerrain(hex, terrain) {
     hex.terrain = terrainUndo.get(key) || "grassland";
     terrainUndo.delete(key);
     hex.labels = editorLabelsForTerrain(hex.terrain);
+    hex.pasture = defaultPastureForTerrain(hex.terrain);
     return;
   }
 
@@ -3987,6 +4224,7 @@ function toggleHexTerrain(hex, terrain) {
   }
   hex.terrain = terrain;
   hex.labels = editorLabelsForTerrain(hex.terrain);
+  hex.pasture = defaultPastureForTerrain(hex.terrain);
 }
 
 function editorLabelsForTerrain(terrain) {
@@ -4053,6 +4291,7 @@ function paintAtPointer(event) {
     return;
   }
   paintStrokeKeys.add(key);
+  selectedHexCoord = { q: hex.q, r: hex.r };
   if (!paintUndoRecorded) {
     recordLocalUndo();
     paintUndoRecorded = true;
@@ -4143,9 +4382,13 @@ async function generateMap() {
     }
     currentMap = payload;
     currentMap.name = scenarioName();
+    currentMap.hexes = Array.isArray(currentMap.hexes)
+      ? currentMap.hexes.map(normalizeMapHex).filter((hex) => Number.isInteger(hex.q) && Number.isInteger(hex.r))
+      : [];
     currentMap.factions = selectedScenarioFactionsFromControls();
     currentMap.units = Array.isArray(currentMap.units) ? currentMap.units : [];
     currentMap.game = currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {};
+    selectedHexCoord = null;
     terrainUndo = new Map();
     clearUndoHistory();
     ensureGameMeta();
@@ -4170,7 +4413,7 @@ function createBlankMap(options = {}) {
   const hexes = [];
   for (let r = 1; r <= height; r += 1) {
     for (let q = 1; q <= width; q += 1) {
-      hexes.push({ q, r, terrain: "grassland", labels: ["base_steppe"] });
+      hexes.push(normalizeMapHex({ q, r, terrain: "grassland", labels: ["base_steppe"] }));
     }
   }
 
@@ -4199,6 +4442,7 @@ function createBlankMap(options = {}) {
       hex_label_model: "base-plus-generation-role.v1",
     },
   };
+  selectedHexCoord = null;
   terrainUndo = new Map();
   clearUndoHistory();
   currentMap.game = {};
@@ -4216,7 +4460,11 @@ async function createDefaultPlayScenario() {
       height: 40,
       factions: factionCount,
     });
+    currentMap.hexes = Array.isArray(currentMap.hexes)
+      ? currentMap.hexes.map(normalizeMapHex).filter((hex) => Number.isInteger(hex.q) && Number.isInteger(hex.r))
+      : [];
     currentMap.units = Array.isArray(currentMap.units) ? currentMap.units.map(normalizeUnit) : [];
+    selectedHexCoord = null;
     terrainUndo = new Map();
     clearUndoHistory();
     ensureGameMeta();
@@ -4254,14 +4502,8 @@ function normalizeLoadedMap(map) {
     seed: Number.isInteger(map.seed) ? map.seed : 0,
     width: map.width,
     height: map.height,
-    hexes: map.hexes.map((hex) => ({
-      q: Number(hex.q),
-      r: Number(hex.r),
-      terrain: typeof hex.terrain === "string" ? hex.terrain : "grassland",
-      labels: Array.isArray(hex.labels)
-        ? hex.labels.filter((label) => typeof label === "string")
-        : editorLabelsForTerrain(typeof hex.terrain === "string" ? hex.terrain : "grassland"),
-    })).filter((hex) => Number.isInteger(hex.q) && Number.isInteger(hex.r)),
+    hexes: map.hexes.map(normalizeMapHex)
+      .filter((hex) => Number.isInteger(hex.q) && Number.isInteger(hex.r)),
     river_sources: Array.isArray(map.river_sources) ? map.river_sources : [],
     river_destinations: Array.isArray(map.river_destinations) ? map.river_destinations : [],
     merge_points: Array.isArray(map.merge_points) ? map.merge_points : [],
@@ -4545,6 +4787,7 @@ async function confirmScenarioFileDialog() {
   }
   const payload = await scenarioApi(`/api/scenarios/load?name=${encodeURIComponent(filename)}`);
   currentMap = normalizeLoadedMap(payload.scenario);
+  selectedHexCoord = null;
   terrainUndo = new Map();
   clearUndoHistory();
   ensureGameMeta();
@@ -4558,6 +4801,7 @@ async function confirmScenarioFileDialog() {
 async function loadMapText(text) {
   try {
     currentMap = normalizeLoadedMap(JSON.parse(text));
+    selectedHexCoord = null;
     terrainUndo = new Map();
     clearUndoHistory();
     ensureGameMeta();
@@ -4684,6 +4928,11 @@ detachHerdPopover.addEventListener("click", (event) => event.stopPropagation());
 zoomInButton.addEventListener("click", () => zoomFromCenter(1));
 zoomOutButton.addEventListener("click", () => zoomFromCenter(-1));
 fitButton.addEventListener("click", fitMap);
+pastureViewButton.addEventListener("click", () => {
+  pastureViewEnabled = !pastureViewEnabled;
+  syncPastureViewButton();
+  drawMap();
+});
 
 mapPanel.addEventListener("wheel", (event) => {
   if (!currentMap) {
@@ -4745,6 +4994,11 @@ mapPanel.addEventListener("pointerdown", async (event) => {
       event.preventDefault();
       return;
     }
+    if (hex) {
+      event.preventDefault();
+      selectHex(hex);
+      return;
+    }
   }
   if (terrainEditingActive() && event.button === 0) {
     event.preventDefault();
@@ -4774,6 +5028,14 @@ mapPanel.addEventListener("pointerdown", async (event) => {
     event.preventDefault();
     handleUnitEditClick(event);
     return;
+  }
+  if (appMode === "scenario" && event.button === 0) {
+    const hex = findNearestHex(point);
+    if (hex) {
+      event.preventDefault();
+      selectHex(hex);
+      return;
+    }
   }
   if (event.button !== 0 && event.button !== 1) {
     return;
