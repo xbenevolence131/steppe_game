@@ -80,9 +80,13 @@ std::string game_state_json(const steppe::game::GameState& state) {
     return out.str();
 }
 
-std::string game_patch_json(const steppe::game::GameState& state, bool ok) {
+std::string game_patch_json(
+    const steppe::game::GameState& state,
+    bool ok,
+    const std::vector<steppe::game::AiAnimationStep>* animation = nullptr
+) {
     std::ostringstream out;
-    steppe::game::print_game_patch_json(state, ok, out);
+    steppe::game::print_game_patch_json(state, ok, out, animation);
     return out.str();
 }
 
@@ -400,20 +404,23 @@ std::string handle_command(const std::string& body) {
     }
     if (type == "execute_ai_group") {
         const steppe::game::GameState before = state;
+        std::vector<steppe::game::AiAnimationStep> animation;
         const bool ok = steppe::game::execute_ai_group_turn(
             state,
-            int_field(command, "groupId", 0)
+            int_field(command, "groupId", 0),
+            &animation
         );
         if (ok) {
             push_undo_state(game_id, before);
         }
-        return command_response(game_id, ok, game_patch_json(state, ok));
+        return command_response(game_id, ok, game_patch_json(state, ok, &animation));
     }
     if (type == "end_turn") {
         const steppe::game::GameState before = state;
-        steppe::game::end_turn(state);
+        std::vector<steppe::game::AiAnimationStep> animation;
+        steppe::game::end_turn(state, &animation);
         push_undo_state(game_id, before);
-        return command_response(game_id, true, game_patch_json(state, true));
+        return command_response(game_id, true, game_patch_json(state, true, &animation));
     }
 
     return error_response("unknown command type: " + type);

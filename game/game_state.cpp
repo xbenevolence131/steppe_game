@@ -2198,7 +2198,12 @@ bool ai_attack_allowed_by_directive(const Unit& defender, const AiDirective& dir
     return true;
 }
 
-bool ai_attack_best_adjacent_enemy(GameState& state, int attacker_id, const AiDirective& directive) {
+bool ai_attack_best_adjacent_enemy(
+    GameState& state,
+    int attacker_id,
+    const AiDirective& directive,
+    AiAnimationStep* animation_step = nullptr
+) {
     const std::vector<AttackableUnit> attacks = attackable_units(state, attacker_id);
     if (attacks.empty()) {
         return false;
@@ -2227,6 +2232,12 @@ bool ai_attack_best_adjacent_enemy(GameState& state, int attacker_id, const AiDi
     }
     if (best_score == std::numeric_limits<int>::max()) {
         return false;
+    }
+    if (animation_step != nullptr) {
+        const Unit* defender = find_unit(state, best_defender_id);
+        if (defender != nullptr) {
+            animation_step->attacks.push_back(defender->coord);
+        }
     }
     return attack_unit(state, attacker_id, best_defender_id);
 }
@@ -2391,8 +2402,13 @@ const Unit* ai_target_for_directive(const GameState& state, const Unit& unit, co
     return nearest_enemy_unit(state, unit);
 }
 
-void execute_ai_unit_directive(GameState& state, int unit_id, const AiDirective& directive) {
-    if (ai_attack_best_adjacent_enemy(state, unit_id, directive)) {
+void execute_ai_unit_directive(
+    GameState& state,
+    int unit_id,
+    const AiDirective& directive,
+    AiAnimationStep* animation_step = nullptr
+) {
+    if (ai_attack_best_adjacent_enemy(state, unit_id, directive, animation_step)) {
         return;
     }
     const Unit* unit = find_unit(state, unit_id);
@@ -2403,7 +2419,7 @@ void execute_ai_unit_directive(GameState& state, int unit_id, const AiDirective&
     if (directive.kind == AiDirectiveKind::DefendHex
         && hex_distance(unit->coord, directive.target) > 1) {
         ai_move_toward_target(state, unit_id, directive.target);
-        ai_attack_best_adjacent_enemy(state, unit_id, directive);
+        ai_attack_best_adjacent_enemy(state, unit_id, directive, animation_step);
         return;
     }
 
@@ -2416,26 +2432,43 @@ void execute_ai_unit_directive(GameState& state, int unit_id, const AiDirective&
     if (target == nullptr) {
         if (directive.kind == AiDirectiveKind::CaptureHex) {
             ai_move_toward_target(state, unit_id, directive.target);
-            ai_attack_best_adjacent_enemy(state, unit_id, directive);
+            ai_attack_best_adjacent_enemy(state, unit_id, directive, animation_step);
         }
         return;
     }
     if (ai_move_toward_target(state, unit_id, target->coord)) {
-        ai_attack_best_adjacent_enemy(state, unit_id, directive);
+        ai_attack_best_adjacent_enemy(state, unit_id, directive, animation_step);
     }
 }
 
-void execute_ai_units(GameState& state, const std::vector<int>& unit_ids, const AiDirective& directive) {
+void execute_ai_units(
+    GameState& state,
+    const std::vector<int>& unit_ids,
+    const AiDirective& directive,
+    std::vector<AiAnimationStep>* animation = nullptr
+) {
     for (const int unit_id : unit_ids) {
         const Unit* unit = find_unit(state, unit_id);
         if (unit == nullptr || !can_attack(unit->kind) || unit->hp <= 0) {
             continue;
         }
-        execute_ai_unit_directive(state, unit_id, directive);
+        AiAnimationStep step;
+        step.unit_id = unit_id;
+        step.from = unit->coord;
+        step.to = unit->coord;
+        execute_ai_unit_directive(state, unit_id, directive, animation == nullptr ? nullptr : &step);
+        const Unit* updated = find_unit(state, unit_id);
+        if (updated != nullptr) {
+            step.to = updated->coord;
+        }
+        if (animation != nullptr
+            && (!coord_equal(step.from, step.to) || !step.attacks.empty())) {
+            animation->push_back(std::move(step));
+        }
     }
 }
 
-void execute_ai_turn(GameState& state, OwnerId owner) {
+void execute_ai_turn(GameState& state, OwnerId owner, std::vector<AiAnimationStep>* animation = nullptr) {
     std::vector<int> assigned_unit_ids;
     for (const AiGroup& group : state.ai_groups) {
         if (group.owner != owner) {
@@ -2443,7 +2476,7 @@ void execute_ai_turn(GameState& state, OwnerId owner) {
         }
         std::vector<int> group_units = group.unit_ids;
         std::sort(group_units.begin(), group_units.end());
-        execute_ai_units(state, group_units, group.directive);
+        execute_ai_units(state, group_units, group.directive, animation);
         assigned_unit_ids.insert(assigned_unit_ids.end(), group_units.begin(), group_units.end());
     }
 
@@ -2455,7 +2488,7 @@ void execute_ai_turn(GameState& state, OwnerId owner) {
             unassigned_unit_ids.push_back(unit_id);
         }
     }
-    execute_ai_units(state, unassigned_unit_ids, strategic_directive_for_owner(state, owner));
+    execute_ai_units(state, unassigned_unit_ids, strategic_directive_for_owner(state, owner), animation);
     state.selected_unit_id = 0;
     state.legal_moves.clear();
     state.legal_attacks.clear();
@@ -2470,7 +2503,7 @@ int turn_order_index_for_owner(const GameState& state, OwnerId owner) {
     return -1;
 }
 
-bool execute_ai_group_turn(GameState& state, int group_id) {
+bool execute_ai_group_turn(GameState& state, int group_id, std::vector<AiAnimationStep>* animation) {
     const auto found = std::find_if(state.ai_groups.begin(), state.ai_groups.end(), [&](const AiGroup& group) {
         return group.id == group_id;
     });
@@ -2487,7 +2520,7 @@ bool execute_ai_group_turn(GameState& state, int group_id) {
     state.active_faction_index = owner_turn_index;
     std::vector<int> group_units = found->unit_ids;
     std::sort(group_units.begin(), group_units.end());
-    execute_ai_units(state, group_units, found->directive);
+    execute_ai_units(state, group_units, found->directive, animation);
     state.active_faction_index = previous_turn_index;
     state.selected_unit_id = 0;
     state.legal_moves.clear();
@@ -2578,7 +2611,7 @@ void advance_to_next_faction(GameState& state) {
     }
 }
 
-void end_turn(GameState& state) {
+void end_turn(GameState& state, std::vector<AiAnimationStep>* animation) {
     state.selected_unit_id = 0;
     state.legal_moves.clear();
     state.legal_attacks.clear();
@@ -2593,7 +2626,7 @@ void end_turn(GameState& state) {
         const OwnerId owner = active_faction(state);
         start_faction_turn(state, owner);
         if (faction_ai_controlled(state, owner)) {
-            execute_ai_turn(state, owner);
+            execute_ai_turn(state, owner, animation);
             apply_grazing_for_faction(state, owner);
             continue;
         }
@@ -2990,7 +3023,35 @@ void print_create_mongol_lancers_options_json(const CreateUnitOptions& options, 
     print_create_unit_options_json(options, out);
 }
 
-void print_game_patch_json(const GameState& state, bool ok, std::ostream& out) {
+void print_ai_animation_json(const std::vector<AiAnimationStep>& animation, std::ostream& out) {
+    out << "[";
+    for (std::size_t i = 0; i < animation.size(); ++i) {
+        if (i > 0) {
+            out << ",";
+        }
+        const AiAnimationStep& step = animation[i];
+        out << "{\"unitId\":" << step.unit_id << ",\"from\":";
+        print_coord_json(step.from, out);
+        out << ",\"to\":";
+        print_coord_json(step.to, out);
+        out << ",\"attacks\":[";
+        for (std::size_t attack_index = 0; attack_index < step.attacks.size(); ++attack_index) {
+            if (attack_index > 0) {
+                out << ",";
+            }
+            print_coord_json(step.attacks[attack_index], out);
+        }
+        out << "]}";
+    }
+    out << "]";
+}
+
+void print_game_patch_json(
+    const GameState& state,
+    bool ok,
+    std::ostream& out,
+    const std::vector<AiAnimationStep>* animation
+) {
     out << "{";
     out << "\"ok\":" << (ok ? "true" : "false") << ",";
     out << "\"schema\":\"steppe-game.v1\",";
@@ -3024,6 +3085,10 @@ void print_game_patch_json(const GameState& state, bool ok, std::ostream& out) {
     print_units_json(state.units, out);
     out << ",";
     print_game_meta_json(state, out);
+    if (animation != nullptr) {
+        out << ",\"aiAnimation\":";
+        print_ai_animation_json(*animation, out);
+    }
     out << "}\n";
 }
 

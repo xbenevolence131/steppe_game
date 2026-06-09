@@ -129,6 +129,13 @@ struct AiGroup {
     AiDirective directive;
 };
 
+struct AiAnimationStep {
+    int unit_id = 0;
+    Coord from;
+    Coord to;
+    std::vector<Coord> attacks;
+};
+
 struct Unit {
     int id = 0;
     OwnerId owner = neutral_owner;
@@ -313,8 +320,8 @@ CreateHorseArchersOptions create_horse_archers_options(const GameState& state, i
 bool create_horse_archers(GameState& state, int unit_id, Coord destination);
 CreateUnitOptions create_mongol_lancers_options(const GameState& state, int unit_id);
 bool create_mongol_lancers(GameState& state, int unit_id, Coord destination);
-bool execute_ai_group_turn(GameState& state, int group_id);
-void end_turn(GameState& state);
+bool execute_ai_group_turn(GameState& state, int group_id, std::vector<AiAnimationStep>* animation = nullptr);
+void end_turn(GameState& state, std::vector<AiAnimationStep>* animation = nullptr);
 
 void print_game_state_json(const GameState& state, std::ostream& out);
 void print_reachable_json(const std::vector<ReachableHex>& reachable, std::ostream& out);
@@ -324,7 +331,8 @@ void print_detach_herd_options_json(const DetachHerdOptions& options, std::ostre
 void print_create_unit_options_json(const CreateUnitOptions& options, std::ostream& out);
 void print_create_horse_archers_options_json(const CreateHorseArchersOptions& options, std::ostream& out);
 void print_create_mongol_lancers_options_json(const CreateUnitOptions& options, std::ostream& out);
-void print_game_patch_json(const GameState& state, bool ok, std::ostream& out);
+void print_ai_animation_json(const std::vector<AiAnimationStep>& animation, std::ostream& out);
+void print_game_patch_json(const GameState& state, bool ok, std::ostream& out, const std::vector<AiAnimationStep>* animation = nullptr);
 GameState parse_game_state_json(const std::string& json);
 
 } // namespace steppe::game

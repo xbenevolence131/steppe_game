@@ -145,6 +145,8 @@ let selectedScenarioFile = "";
 let appInitialization = null;
 let pastureViewEnabled = false;
 let selectedHexCoord = null;
+let aiAnimationState = null;
+let aiAnimationInProgress = false;
 
 const viewport = {
   scale: 1,
@@ -2110,6 +2112,42 @@ function applyGamePatch(payload) {
   ensureGameMeta();
 }
 
+function normalizeAnimationCoord(coord) {
+  if (!coord || !Number.isInteger(coord.q) || !Number.isInteger(coord.r)) {
+    return null;
+  }
+  return { q: coord.q, r: coord.r };
+}
+
+function normalizeAiAnimationStep(step) {
+  if (!step || !Number.isInteger(step.unitId)) {
+    return null;
+  }
+  const from = normalizeAnimationCoord(step.from);
+  const to = normalizeAnimationCoord(step.to);
+  if (!from || !to) {
+    return null;
+  }
+  return {
+    unitId: step.unitId,
+    from,
+    to,
+    attacks: Array.isArray(step.attacks)
+      ? step.attacks.map(normalizeAnimationCoord).filter(Boolean)
+      : [],
+  };
+}
+
+function normalizeAiAnimation(rawAnimation) {
+  return Array.isArray(rawAnimation)
+    ? rawAnimation.map(normalizeAiAnimationStep).filter(Boolean)
+    : [];
+}
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
 async function postAppCommand(command, gameId = "local-dev") {
   const response = await fetch("/api/command", {
     method: "POST",
@@ -2729,7 +2767,7 @@ function syncPlayControls() {
   factionTreasureTotal.textContent = String(resources.treasure);
   sidebarFactionMetal.textContent = String(resources.metal);
   if (executeAiGroupButton) {
-    executeAiGroupButton.disabled = appMode !== "play" || strategicAiGroups().length === 0;
+    executeAiGroupButton.disabled = appMode !== "play" || aiAnimationInProgress || strategicAiGroups().length === 0;
   }
   syncUnitRoster();
   syncUnitInspector();
@@ -2781,11 +2819,11 @@ function syncModeControls() {
   playModeButton.classList.toggle("is-active", appMode === "play");
   scenarioModeButton.setAttribute("aria-pressed", String(appMode === "scenario"));
   playModeButton.setAttribute("aria-pressed", String(appMode === "play"));
-  endTurnButton.disabled = appMode !== "play";
-  controlEndTurnButton.disabled = appMode !== "play";
-  statusEndTurnButton.disabled = appMode !== "play";
+  endTurnButton.disabled = appMode !== "play" || aiAnimationInProgress;
+  controlEndTurnButton.disabled = appMode !== "play" || aiAnimationInProgress;
+  statusEndTurnButton.disabled = appMode !== "play" || aiAnimationInProgress;
   if (executeAiGroupButton) {
-    executeAiGroupButton.disabled = appMode !== "play" || strategicAiGroups().length === 0;
+    executeAiGroupButton.disabled = appMode !== "play" || aiAnimationInProgress || strategicAiGroups().length === 0;
   }
   syncEditorControls();
   syncScenarioParameterControls();
@@ -3682,6 +3720,50 @@ function drawStrategicAiHighlights() {
   ctx.restore();
 }
 
+function drawAiTurnAnimationHighlights() {
+  if (!aiAnimationState) {
+    return;
+  }
+  ctx.save();
+  if (aiAnimationState.unitCoord) {
+    const center = hexCenter(aiAnimationState.unitCoord);
+    const points = hexPoints(center.x, center.y, geometry.size * 0.88);
+    ctx.beginPath();
+    points.forEach(([x, y], index) => {
+      if (index === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    });
+    ctx.closePath();
+    ctx.fillStyle = "rgba(244, 228, 138, 0.34)";
+    ctx.fill();
+    ctx.strokeStyle = "#b68f14";
+    ctx.lineWidth = 2.4 / viewport.scale;
+    ctx.stroke();
+  }
+  if (aiAnimationState.attackTarget) {
+    const center = hexCenter(aiAnimationState.attackTarget);
+    const points = hexPoints(center.x, center.y, geometry.size * 0.9);
+    ctx.beginPath();
+    points.forEach(([x, y], index) => {
+      if (index === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    });
+    ctx.closePath();
+    ctx.fillStyle = "rgba(201, 54, 50, 0.36)";
+    ctx.fill();
+    ctx.strokeStyle = "#c93632";
+    ctx.lineWidth = 2.8 / viewport.scale;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawDetachDeploymentHexes() {
   const placement = detachHerdPlacement || createUnitPlacement;
   if (!placement || !Array.isArray(placement.deployableHexes)) {
@@ -4102,15 +4184,81 @@ async function attackSelectedUnit(defender) {
   return true;
 }
 
+async function animateAiPatch(payload) {
+  const steps = normalizeAiAnimation(payload && payload.aiAnimation);
+  if (steps.length === 0 || !currentMap || !Array.isArray(currentMap.units)) {
+    applyGamePatch(payload);
+    syncModeControls();
+    drawMap();
+    return;
+  }
+
+  aiAnimationInProgress = true;
+  syncModeControls();
+  try {
+    for (const step of steps) {
+      const unit = currentMap.units.find((candidate) => candidate.id === step.unitId);
+      aiAnimationState = {
+        unitId: step.unitId,
+        unitCoord: unit ? { q: unit.q, r: unit.r } : step.from,
+        attackTarget: null,
+      };
+      drawMap();
+      await sleep(260);
+
+      if (unit && (unit.q !== step.to.q || unit.r !== step.to.r)) {
+        unit.q = step.to.q;
+        unit.r = step.to.r;
+        aiAnimationState = {
+          unitId: step.unitId,
+          unitCoord: step.to,
+          attackTarget: null,
+        };
+        drawMap();
+        await sleep(320);
+      } else {
+        await sleep(160);
+      }
+
+      for (const target of step.attacks) {
+        aiAnimationState = {
+          unitId: step.unitId,
+          unitCoord: step.to,
+          attackTarget: target,
+        };
+        drawMap();
+        await sleep(320);
+      }
+
+      aiAnimationState = {
+        unitId: step.unitId,
+        unitCoord: step.to,
+        attackTarget: null,
+      };
+      drawMap();
+      await sleep(160);
+    }
+  } finally {
+    aiAnimationState = null;
+    aiAnimationInProgress = false;
+  }
+
+  applyGamePatch(payload);
+  syncModeControls();
+  drawMap();
+}
+
 async function advanceTurn() {
   hideCombatPreview();
   try {
-    applyGamePatch(await postUndoableGameCommand({ type: "end_turn" }));
+    await animateAiPatch(await postUndoableGameCommand({ type: "end_turn" }));
   } catch (error) {
+    aiAnimationState = null;
+    aiAnimationInProgress = false;
     window.alert(error.message);
+    syncModeControls();
+    drawMap();
   }
-  syncModeControls();
-  drawMap();
 }
 
 async function executeNextAiGroupTurn() {
@@ -4124,12 +4272,14 @@ async function executeNextAiGroupTurn() {
   nextStrategicAiGroupIndex = (nextStrategicAiGroupIndex + 1) % groups.length;
   activeStrategicAiGroupId = group.id;
   try {
-    applyGamePatch(await postUndoableGameCommand({ type: "execute_ai_group", groupId: group.id }));
+    await animateAiPatch(await postUndoableGameCommand({ type: "execute_ai_group", groupId: group.id }));
   } catch (error) {
+    aiAnimationState = null;
+    aiAnimationInProgress = false;
     window.alert(error.message);
+    syncModeControls();
+    drawMap();
   }
-  syncModeControls();
-  drawMap();
 }
 
 async function undoLastAction() {
@@ -4200,6 +4350,7 @@ function drawMap() {
   drawEditorUnitMoveHexes();
   drawAiEditorHighlights();
   drawStrategicAiHighlights();
+  drawAiTurnAnimationHighlights();
   drawDetachDeploymentHexes();
   drawSelectedHex();
   drawUnitCounters(currentMap.units);
