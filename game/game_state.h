@@ -100,6 +100,7 @@ struct FactionState {
     OwnerId id = neutral_owner;
     std::string key;
     std::string name;
+    std::string archetype;
     std::string color;
     int metal = 0;
     int treasure = 0;
@@ -296,6 +297,7 @@ UnitStance unit_stance_from_key(const std::string& stance);
 std::vector<UnitKind> unit_kinds();
 UnitDefaults unit_defaults(UnitKind kind);
 bool unit_kind_available_to_owner(UnitKind kind, OwnerId owner);
+bool unit_kind_available_to_archetype(UnitKind kind, const std::string& archetype);
 
 OwnerId active_faction(const GameState& state);
 std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id);
@@ -311,6 +313,7 @@ CreateHorseArchersOptions create_horse_archers_options(const GameState& state, i
 bool create_horse_archers(GameState& state, int unit_id, Coord destination);
 CreateUnitOptions create_mongol_lancers_options(const GameState& state, int unit_id);
 bool create_mongol_lancers(GameState& state, int unit_id, Coord destination);
+bool execute_ai_group_turn(GameState& state, int group_id);
 void end_turn(GameState& state);
 
 void print_game_state_json(const GameState& state, std::ostream& out);

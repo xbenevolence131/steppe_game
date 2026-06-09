@@ -1402,7 +1402,7 @@ test("create horse archers spends horde resources and deploys adjacent unit", as
   });
 });
 
-test("create mongol lancers spends horde resources and deploys adjacent unit", async ({ page, isMobile }) => {
+test("create steppe lancers spends horde resources and deploys adjacent unit", async ({ page, isMobile }) => {
   test.skip(isMobile, "desktop pointer geometry is simpler for deployment assertions");
 
   await openPlayMode(page);
@@ -1419,7 +1419,7 @@ test("create mongol lancers spends horde resources and deploys adjacent unit", a
   });
 
   await page.mouse.click(hordePoint.x, hordePoint.y, { button: "right" });
-  await expect(page.locator("#context-menu [data-action='create-mongol-lancers']")).toHaveText("Create Mongol Lancers");
+  await expect(page.locator("#context-menu [data-action='create-mongol-lancers']")).toHaveText("Train Lancers");
   await page.locator("#context-menu [data-action='create-mongol-lancers']").click();
 
   await expect.poll(() => page.evaluate(() => (

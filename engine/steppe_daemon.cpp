@@ -154,6 +154,21 @@ std::string unit_defaults_json() {
         write_faction("mongol", steppe::game::mongol_owner);
         write_faction("chinese", steppe::game::chinese_owner);
         write_faction("persian", steppe::game::persian_owner);
+        out << "],\"allowedArchetypes\":[";
+        bool wrote_archetype = false;
+        const auto write_archetype = [&](const char* key) {
+            if (!steppe::game::unit_kind_available_to_archetype(defaults.kind, key)) {
+                return;
+            }
+            if (wrote_archetype) {
+                out << ",";
+            }
+            out << "\"" << key << "\"";
+            wrote_archetype = true;
+        };
+        write_archetype("steppe_nomad");
+        write_archetype("chinese");
+        write_archetype("persian");
         out << "]"
             << "}";
     }
@@ -377,6 +392,17 @@ std::string handle_command(const std::string& body) {
             state,
             int_field(command, "unitId", 0),
             coord_field(command, "to")
+        );
+        if (ok) {
+            push_undo_state(game_id, before);
+        }
+        return command_response(game_id, ok, game_patch_json(state, ok));
+    }
+    if (type == "execute_ai_group") {
+        const steppe::game::GameState before = state;
+        const bool ok = steppe::game::execute_ai_group_turn(
+            state,
+            int_field(command, "groupId", 0)
         );
         if (ok) {
             push_undo_state(game_id, before);

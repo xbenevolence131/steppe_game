@@ -316,15 +316,15 @@ std::vector<UnitStance> parse_legal_stances_field(const std::string& value, int 
 
 FactionState faction_for_owner(OwnerId owner) {
     if (owner == mongol_owner) {
-        return {mongol_owner, "mongol", "Mongol", "#d6a21a", 4, 0, true, false};
+        return {mongol_owner, "mongol", "Mongol", "steppe_nomad", "#d6a21a", 4, 0, true, false};
     }
     if (owner == chinese_owner) {
-        return {chinese_owner, "chinese", "Chinese", "#c93632", 4, 0, true, false};
+        return {chinese_owner, "chinese", "Chinese", "chinese", "#c93632", 4, 0, true, false};
     }
     if (owner == persian_owner) {
-        return {persian_owner, "persian", "Persian", "#1f4fa3", 4, 0, true, false};
+        return {persian_owner, "persian", "Persian", "persian", "#1f4fa3", 4, 0, true, false};
     }
-    return {neutral_owner, "neutral", "Neutral", "#777777", 0, 0, false, false};
+    return {neutral_owner, "neutral", "Neutral", "neutral", "#777777", 0, 0, false, false};
 }
 
 OwnerId owner_from_faction_key(const std::string& key, OwnerId fallback = neutral_owner) {
@@ -829,18 +829,22 @@ UnitDefaults unit_defaults(UnitKind kind) {
 }
 
 bool unit_kind_available_to_owner(UnitKind kind, OwnerId owner) {
-    if (owner == mongol_owner) {
+    return unit_kind_available_to_archetype(kind, faction_for_owner(owner).archetype);
+}
+
+bool unit_kind_available_to_archetype(UnitKind kind, const std::string& archetype) {
+    if (archetype == "steppe_nomad") {
         return kind == UnitKind::HorseArcher
             || kind == UnitKind::MongolLancer
             || kind == UnitKind::Herd
             || kind == UnitKind::Horde;
     }
-    if (owner == chinese_owner) {
+    if (archetype == "chinese") {
         return kind == UnitKind::ChineseMilitia
             || kind == UnitKind::Infantry
             || kind == UnitKind::ChineseCavalry;
     }
-    if (owner == persian_owner) {
+    if (archetype == "persian") {
         return kind == UnitKind::PersianInfantry
             || kind == UnitKind::PersianCavalry;
     }
@@ -1129,6 +1133,14 @@ int faction_metal(const GameState& state, OwnerId owner) {
 bool faction_ai_controlled(const GameState& state, OwnerId owner) {
     const FactionState* faction = find_faction(state, owner);
     return faction != nullptr && faction->enabled && faction->ai_controlled;
+}
+
+bool unit_kind_available_to_faction(const GameState& state, UnitKind kind, OwnerId owner) {
+    const FactionState* faction = find_faction(state, owner);
+    if (faction != nullptr) {
+        return unit_kind_available_to_archetype(kind, faction->archetype);
+    }
+    return unit_kind_available_to_owner(kind, owner);
 }
 
 int terrain_defense_percent(Terrain terrain) {
@@ -2004,9 +2016,8 @@ CreateUnitOptions create_unit_options(const GameState& state, int unit_id, UnitK
     if (horde == nullptr
         || horde->kind != UnitKind::Horde
         || horde->owner != active_faction(state)
-        || (kind == UnitKind::MongolLancer && horde->owner != mongol_owner)
         || (kind != UnitKind::HorseArcher && kind != UnitKind::MongolLancer)
-        || !unit_kind_available_to_owner(kind, horde->owner)
+        || !unit_kind_available_to_faction(state, kind, horde->owner)
         || horde->production_active
         || horde->move_done
         || horde->moved_this_turn
@@ -2028,9 +2039,8 @@ bool create_unit_from_horde(GameState& state, int unit_id, UnitKind kind, Coord 
         || horde->move_done
         || horde->moved_this_turn
         || enemy_unit_adjacent_to(state, *horde)
-        || (kind == UnitKind::MongolLancer && horde->owner != mongol_owner)
         || (kind != UnitKind::HorseArcher && kind != UnitKind::MongolLancer)
-        || !unit_kind_available_to_owner(kind, horde->owner)) {
+        || !unit_kind_available_to_faction(state, kind, horde->owner)) {
         return false;
     }
     horde->production_active = true;
@@ -2062,9 +2072,8 @@ bool complete_horde_production(GameState& state, Unit& horde) {
     }
     options.deployable_hexes = adjacent_deployable_hexes(state, horde);
     FactionState* faction = find_faction(state, horde.owner);
-    if ((kind == UnitKind::MongolLancer && horde.owner != mongol_owner)
-        || (kind != UnitKind::HorseArcher && kind != UnitKind::MongolLancer)
-        || !unit_kind_available_to_owner(kind, horde.owner)
+    if ((kind != UnitKind::HorseArcher && kind != UnitKind::MongolLancer)
+        || !unit_kind_available_to_faction(state, kind, horde.owner)
         || horde.population < options.population_cost
         || horde.horses < options.horses_cost
         || faction == nullptr
@@ -2259,6 +2268,115 @@ AiDirective default_hunt_directive() {
     return directive;
 }
 
+const FactionState* faction_for_state_owner(const GameState& state, OwnerId owner) {
+    const FactionState* faction = find_faction(state, owner);
+    return faction == nullptr ? nullptr : faction;
+}
+
+std::string faction_archetype(const GameState& state, OwnerId owner) {
+    const FactionState* faction = faction_for_state_owner(state, owner);
+    return faction == nullptr ? faction_for_owner(owner).archetype : faction->archetype;
+}
+
+bool first_ai_anchor_coord(const GameState& state, OwnerId owner, Coord& anchor) {
+    const std::vector<int> ids = ai_unit_turn_order(state, owner);
+    if (ids.empty()) {
+        return false;
+    }
+    const Unit* unit = find_unit(state, ids.front());
+    if (unit == nullptr) {
+        return false;
+    }
+    anchor = unit->coord;
+    return true;
+}
+
+bool nearest_owned_settlement_threat(const GameState& state, OwnerId owner, Coord origin, Coord& target) {
+    bool found = false;
+    int best_score = std::numeric_limits<int>::max();
+    for (const Settlement& settlement : state.settlements) {
+        if (settlement.owner != owner) {
+            continue;
+        }
+        const Unit* threat = nearest_enemy_unit_from_coord(state, owner, settlement.coord);
+        if (threat == nullptr || hex_distance(threat->coord, settlement.coord) > 3) {
+            continue;
+        }
+        const int score = hex_distance(origin, settlement.coord);
+        if (!found || score < best_score || (score == best_score && coord_less(settlement.coord, target))) {
+            target = settlement.coord;
+            best_score = score;
+            found = true;
+        }
+    }
+    return found;
+}
+
+bool nearest_capturable_hex(const GameState& state, OwnerId owner, Coord origin, Coord& target) {
+    bool found = false;
+    int best_score = std::numeric_limits<int>::max();
+    for (const Settlement& settlement : state.settlements) {
+        if (settlement.owner == owner) {
+            continue;
+        }
+        const int score = hex_distance(origin, settlement.coord);
+        if (!found || score < best_score || (score == best_score && coord_less(settlement.coord, target))) {
+            target = settlement.coord;
+            best_score = score;
+            found = true;
+        }
+    }
+    for (const GameHex& hex : state.hexes) {
+        if (hex.terrain != Terrain::Urban || hex.owner == owner) {
+            continue;
+        }
+        const int score = hex_distance(origin, hex.coord);
+        if (!found || score < best_score || (score == best_score && coord_less(hex.coord, target))) {
+            target = hex.coord;
+            best_score = score;
+            found = true;
+        }
+    }
+    return found;
+}
+
+AiDirective strategic_directive_for_owner(const GameState& state, OwnerId owner) {
+    Coord origin{1, 1};
+    if (!first_ai_anchor_coord(state, owner, origin)) {
+        return default_hunt_directive();
+    }
+
+    const std::string archetype = faction_archetype(state, owner);
+    if (archetype == "steppe_nomad") {
+        const Unit* horde = nearest_enemy_unit_from_coord(state, owner, origin, neutral_owner, true);
+        if (horde != nullptr) {
+            AiDirective directive;
+            directive.kind = AiDirectiveKind::HuntHorde;
+            directive.target_owner = horde->owner;
+            return directive;
+        }
+        return default_hunt_directive();
+    }
+
+    if (archetype == "chinese" || archetype == "persian") {
+        Coord target;
+        if (nearest_owned_settlement_threat(state, owner, origin, target)) {
+            AiDirective directive;
+            directive.kind = AiDirectiveKind::DefendHex;
+            directive.target = target;
+            return directive;
+        }
+        if (nearest_capturable_hex(state, owner, origin, target)) {
+            AiDirective directive;
+            directive.kind = AiDirectiveKind::CaptureHex;
+            directive.target = target;
+            return directive;
+        }
+    }
+
+    return default_hunt_directive();
+}
+
 const Unit* ai_target_for_directive(const GameState& state, const Unit& unit, const AiDirective& directive) {
     switch (directive.kind) {
         case AiDirectiveKind::HuntHorde:
@@ -2337,10 +2455,44 @@ void execute_ai_turn(GameState& state, OwnerId owner) {
             unassigned_unit_ids.push_back(unit_id);
         }
     }
-    execute_ai_units(state, unassigned_unit_ids, default_hunt_directive());
+    execute_ai_units(state, unassigned_unit_ids, strategic_directive_for_owner(state, owner));
     state.selected_unit_id = 0;
     state.legal_moves.clear();
     state.legal_attacks.clear();
+}
+
+int turn_order_index_for_owner(const GameState& state, OwnerId owner) {
+    for (std::size_t index = 0; index < state.turn_order.size(); ++index) {
+        if (state.turn_order[index] == owner) {
+            return static_cast<int>(index);
+        }
+    }
+    return -1;
+}
+
+bool execute_ai_group_turn(GameState& state, int group_id) {
+    const auto found = std::find_if(state.ai_groups.begin(), state.ai_groups.end(), [&](const AiGroup& group) {
+        return group.id == group_id;
+    });
+    if (found == state.ai_groups.end() || found->unit_ids.empty()) {
+        return false;
+    }
+
+    const int owner_turn_index = turn_order_index_for_owner(state, found->owner);
+    if (owner_turn_index < 0) {
+        return false;
+    }
+
+    const int previous_turn_index = state.active_faction_index;
+    state.active_faction_index = owner_turn_index;
+    std::vector<int> group_units = found->unit_ids;
+    std::sort(group_units.begin(), group_units.end());
+    execute_ai_units(state, group_units, found->directive);
+    state.active_faction_index = previous_turn_index;
+    state.selected_unit_id = 0;
+    state.legal_moves.clear();
+    state.legal_attacks.clear();
+    return true;
 }
 
 bool grazes_pasture(const Unit& unit) {

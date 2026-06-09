@@ -181,7 +181,7 @@
                   <option value="horse_archer">Horse Archers</option>
                   <option value="chinese_cavalry">Chinese Cavalry</option>
                   <option value="chinese_militia">Chinese Militia</option>
-                  <option value="mongol_lancer">Mongol Lancers</option>
+                  <option value="mongol_lancer">Lancers</option>
                   <option value="infantry">Chinese Infantry</option>
                   <option value="persian_infantry">Persian Infantry</option>
                   <option value="persian_cavalry">Persian Cavalry</option>
@@ -229,6 +229,17 @@
             <dd id="faction-treasure-total">0</dd>
           </div>
         </dl>
+      </section>
+
+      <section id="strategic-ai-dashboard" class="strategic-ai-dashboard" aria-label="Strategic AI dashboard">
+        <article class="play-ai-region is-active">
+          <div class="play-ai-region-rail">Strategic AI</div>
+          <div class="play-ai-region-body">
+            <div class="play-ai-tool-panel ai-tool-panel">
+              <div id="strategic-ai-groups" class="ai-groups" aria-label="Strategic AI groups"></div>
+            </div>
+          </div>
+        </article>
       </section>
 
       <div class="main-workbench">
@@ -411,6 +422,7 @@
               </dl>
               <div class="control-button-row">
                 <button id="undo-button" class="secondary undo-button" type="button" aria-label="Undo" title="Undo" disabled>Undo</button>
+                <button id="execute-ai-group-button" class="secondary execute-ai-group-button" type="button" title="Execute next AI group">AI Group</button>
                 <button id="status-end-turn-button" class="turn-play-button" type="button" aria-label="End current turn" title="End current turn"></button>
               </div>
               <div id="active-faction-name" hidden>Mongol</div>

@@ -59,9 +59,11 @@ const editorUnitSideSelect = document.querySelector("#editor-unit-side");
 const terrainPalette = document.querySelector("#terrain-palette");
 const addAiGroupButton = document.querySelector("#add-ai-group-button");
 const aiGroupsContainer = document.querySelector("#ai-groups");
+const strategicAiGroupsContainer = document.querySelector("#strategic-ai-groups");
 const endTurnButton = document.querySelector("#end-turn-button");
 const controlEndTurnButton = document.querySelector("#control-end-turn-button");
 const statusEndTurnButton = document.querySelector("#status-end-turn-button");
+const executeAiGroupButton = document.querySelector("#execute-ai-group-button");
 const turnCounter = document.querySelector(".turn-counter");
 const activeFactionName = document.querySelector("#active-faction-name");
 const statusActiveFactionName = document.querySelector("#status-active-faction-name");
@@ -121,6 +123,8 @@ let unitTool = "place";
 let editorSelectedUnitId = 0;
 let aiPickMode = null;
 let activeAiGroupId = 0;
+let activeStrategicAiGroupId = 0;
+let nextStrategicAiGroupIndex = 0;
 let openScenarioRegions = new Set(["session", "terrain", "units", "ai"]);
 let paintStrokeKeys = new Set();
 let paintUndoRecorded = false;
@@ -248,6 +252,7 @@ const terrainStyles = {
 const factions = {
   mongol: {
     name: "Mongol",
+    archetype: "steppe_nomad",
     color: "#d6a21a",
     owner: 0,
     metal: 4,
@@ -257,6 +262,7 @@ const factions = {
   },
   chinese: {
     name: "Chinese",
+    archetype: "chinese",
     color: "#c93632",
     owner: 2,
     metal: 4,
@@ -266,6 +272,7 @@ const factions = {
   },
   persian: {
     name: "Persian",
+    archetype: "persian",
     color: "#1f4fa3",
     owner: 1,
     metal: 4,
@@ -275,6 +282,7 @@ const factions = {
   },
   neutral: {
     name: "Neutral",
+    archetype: "neutral",
     color: "#777777",
     owner: -1,
     metal: 0,
@@ -305,7 +313,7 @@ const unitKindLabels = {
   horse_archer: "Horse Archers",
   chinese_cavalry: "Chinese Cavalry",
   chinese_militia: "Chinese Militia",
-  mongol_lancer: "Mongol Lancers",
+  mongol_lancer: "Lancers",
   infantry: "Chinese Infantry",
   persian_infantry: "Persian Infantry",
   persian_cavalry: "Persian Cavalry",
@@ -1245,6 +1253,133 @@ function syncAiEditorControls() {
   }
 }
 
+function aiDirectiveLabel(type) {
+  return aiDirectiveTypes.find((directive) => directive.key === type)?.label || titleCaseToken(type);
+}
+
+function strategicAiGroups() {
+  return aiGroups().filter((group) => group.unitIds.length > 0);
+}
+
+function activeStrategicAiGroup() {
+  const groups = aiGroups();
+  if (groups.length === 0) {
+    activeStrategicAiGroupId = 0;
+    return null;
+  }
+  let group = groups.find((candidate) => candidate.id === activeStrategicAiGroupId);
+  if (!group) {
+    group = groups[0];
+    activeStrategicAiGroupId = group.id;
+  }
+  return group;
+}
+
+function selectStrategicAiGroup(groupId) {
+  activeStrategicAiGroupId = groupId;
+  syncStrategicAiDashboard();
+  if (currentMap) {
+    requestAnimationFrame(drawMap);
+  }
+}
+
+function syncStrategicAiDashboard() {
+  if (!strategicAiGroupsContainer) {
+    return;
+  }
+  strategicAiGroupsContainer.replaceChildren();
+  if (appMode !== "play" || !currentMap) {
+    return;
+  }
+
+  const groups = aiGroups();
+  if (groups.length === 0) {
+    activeStrategicAiGroupId = 0;
+    const empty = document.createElement("p");
+    empty.className = "ai-empty-state";
+    empty.textContent = "No AI groups.";
+    strategicAiGroupsContainer.appendChild(empty);
+    return;
+  }
+
+  activeStrategicAiGroup();
+  for (const group of groups) {
+    const card = document.createElement("article");
+    card.className = "ai-group-card is-dashboard-row";
+    card.classList.toggle("is-active", activeStrategicAiGroupId === group.id);
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-pressed", String(activeStrategicAiGroupId === group.id));
+    card.addEventListener("click", () => selectStrategicAiGroup(group.id));
+    card.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        selectStrategicAiGroup(group.id);
+      }
+    });
+
+    const groupRow = document.createElement("div");
+    groupRow.className = "ai-group-row";
+
+    const nameField = document.createElement("div");
+    nameField.className = "ai-field";
+    nameField.textContent = "Name";
+    const nameValue = document.createElement("span");
+    nameValue.className = "ai-target-readout";
+    nameValue.textContent = group.name;
+    nameField.appendChild(nameValue);
+
+    const ownerField = document.createElement("div");
+    ownerField.className = "ai-field";
+    ownerField.textContent = "Faction";
+    const ownerValue = document.createElement("span");
+    ownerValue.className = "ai-target-readout";
+    ownerValue.textContent = optionLabelForFaction(factionForOwner(group.owner));
+    ownerField.appendChild(ownerValue);
+
+    const membersLabel = document.createElement("span");
+    membersLabel.className = "ai-member-count";
+    membersLabel.textContent = "Members";
+
+    const memberCount = document.createElement("span");
+    memberCount.className = "ai-member-count";
+    memberCount.textContent = `${group.unitIds.length} units`;
+
+    groupRow.append(nameField, ownerField, membersLabel, memberCount);
+
+    const directiveRow = document.createElement("div");
+    directiveRow.className = "ai-directive-row";
+
+    const directiveField = document.createElement("div");
+    directiveField.className = "ai-field";
+    directiveField.textContent = "Directive";
+    const directiveValue = document.createElement("span");
+    directiveValue.className = "ai-target-readout";
+    directiveValue.textContent = aiDirectiveLabel(group.directive.type);
+    directiveField.appendChild(directiveValue);
+
+    const targetLabel = document.createElement("span");
+    targetLabel.className = "ai-member-count";
+    targetLabel.textContent = "Target Hex";
+
+    const targetFactionField = document.createElement("div");
+    targetFactionField.className = "ai-field";
+    targetFactionField.textContent = "Target Faction";
+    const targetFactionValue = document.createElement("span");
+    targetFactionValue.className = "ai-target-readout";
+    targetFactionValue.textContent = optionLabelForFaction(factionForOwner(group.directive.owner));
+    targetFactionField.appendChild(targetFactionValue);
+
+    const targetReadout = document.createElement("span");
+    targetReadout.className = "ai-target-readout";
+    targetReadout.textContent = `${group.directive.target.q},${group.directive.target.r}`;
+
+    directiveRow.append(directiveField, targetLabel, targetFactionField, targetReadout);
+    card.append(groupRow, directiveRow);
+    strategicAiGroupsContainer.appendChild(card);
+  }
+}
+
 function syncScenarioToolControls() {
   for (const region of scenarioRegions) {
     const key = region.dataset.scenarioRegion;
@@ -1612,6 +1747,11 @@ function factionForOwner(owner) {
   return Object.values(factions).find((faction) => faction.owner === owner) || factions.neutral;
 }
 
+function factionArchetypeForOwner(owner) {
+  const builtIn = Object.values(factions).find((faction) => faction.owner === owner);
+  return builtIn ? builtIn.archetype : factions.neutral.archetype;
+}
+
 function activeFactionKey() {
   const faction = activeFaction();
   return faction.key || "neutral";
@@ -1814,6 +1954,9 @@ function normalizeUnitDefault(defaults) {
   normalized.allowedFactions = Array.isArray(defaults.allowedFactions)
     ? defaults.allowedFactions.filter((key) => typeof key === "string")
     : [];
+  normalized.allowedArchetypes = Array.isArray(defaults.allowedArchetypes)
+    ? defaults.allowedArchetypes.filter((key) => typeof key === "string")
+    : [];
   return normalized;
 }
 
@@ -1850,7 +1993,15 @@ function populateUnitTypeSelect(select, kinds, previous = select.value) {
 
 function unitKindAllowedForFaction(kind, factionKey) {
   const defaults = unitTypeDefaults[kind];
-  if (!defaults || !Array.isArray(defaults.allowedFactions) || defaults.allowedFactions.length === 0) {
+  if (!defaults) {
+    return true;
+  }
+  const fallbackFaction = factions[factionKey];
+  const archetype = fallbackFaction ? fallbackFaction.archetype : "";
+  if (archetype && Array.isArray(defaults.allowedArchetypes) && defaults.allowedArchetypes.length > 0) {
+    return defaults.allowedArchetypes.includes(archetype);
+  }
+  if (!Array.isArray(defaults.allowedFactions) || defaults.allowedFactions.length === 0) {
     return true;
   }
   return defaults.allowedFactions.includes(factionKey);
@@ -2267,16 +2418,16 @@ const contextActionDefinitions = [
   },
   {
     id: "create-mongol-lancers",
-    label: "Train Mongol Lancers",
+    label: "Train Lancers",
     visible: ({ unit, actionAvailability }) => Boolean(
       unit
-      && unit.faction === "mongol"
+      && factionArchetypeForOwner(unit.owner) === "steppe_nomad"
       && actionAvailability
       && actionAvailability.createMongolLancers
     ),
     enabled: ({ unit, actionAvailability }) => Boolean(
       unit
-      && unit.faction === "mongol"
+      && factionArchetypeForOwner(unit.owner) === "steppe_nomad"
       && actionAvailability
       && actionAvailability.createMongolLancers
     ),
@@ -2577,8 +2728,12 @@ function syncPlayControls() {
   factionMetalTotal.textContent = String(resources.metal);
   factionTreasureTotal.textContent = String(resources.treasure);
   sidebarFactionMetal.textContent = String(resources.metal);
+  if (executeAiGroupButton) {
+    executeAiGroupButton.disabled = appMode !== "play" || strategicAiGroups().length === 0;
+  }
   syncUnitRoster();
   syncUnitInspector();
+  syncStrategicAiDashboard();
 }
 
 function syncPastureViewButton() {
@@ -2629,6 +2784,9 @@ function syncModeControls() {
   endTurnButton.disabled = appMode !== "play";
   controlEndTurnButton.disabled = appMode !== "play";
   statusEndTurnButton.disabled = appMode !== "play";
+  if (executeAiGroupButton) {
+    executeAiGroupButton.disabled = appMode !== "play" || strategicAiGroups().length === 0;
+  }
   syncEditorControls();
   syncScenarioParameterControls();
   syncPlayControls();
@@ -3469,6 +3627,61 @@ function drawAiEditorHighlights() {
   ctx.restore();
 }
 
+function drawStrategicAiHighlights() {
+  if (appMode !== "play") {
+    return;
+  }
+  const group = activeStrategicAiGroup();
+  if (!group) {
+    return;
+  }
+
+  const memberIds = new Set(group.unitIds);
+  ctx.save();
+  for (const unit of currentMap.units || []) {
+    if (!memberIds.has(unit.id)) {
+      continue;
+    }
+    const center = hexCenter(unit);
+    const points = hexPoints(center.x, center.y, geometry.size * 0.84);
+    ctx.beginPath();
+    points.forEach(([x, y], index) => {
+      if (index === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    });
+    ctx.closePath();
+    ctx.fillStyle = "rgba(31, 79, 82, 0.28)";
+    ctx.fill();
+    ctx.strokeStyle = "#1f4f52";
+    ctx.lineWidth = 1.8 / viewport.scale;
+    ctx.stroke();
+  }
+
+  const target = group.directive && group.directive.target;
+  if (target && Number.isInteger(target.q) && Number.isInteger(target.r)) {
+    const center = hexCenter(target);
+    const points = hexPoints(center.x, center.y, geometry.size * 0.66);
+    ctx.beginPath();
+    points.forEach(([x, y], index) => {
+      if (index === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    });
+    ctx.closePath();
+    ctx.fillStyle = "rgba(202, 126, 32, 0.3)";
+    ctx.fill();
+    ctx.strokeStyle = "#a15b16";
+    ctx.lineWidth = 2 / viewport.scale;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawDetachDeploymentHexes() {
   const placement = detachHerdPlacement || createUnitPlacement;
   if (!placement || !Array.isArray(placement.deployableHexes)) {
@@ -3900,6 +4113,25 @@ async function advanceTurn() {
   drawMap();
 }
 
+async function executeNextAiGroupTurn() {
+  hideCombatPreview();
+  const groups = strategicAiGroups();
+  if (groups.length === 0) {
+    syncModeControls();
+    return;
+  }
+  const group = groups[nextStrategicAiGroupIndex % groups.length];
+  nextStrategicAiGroupIndex = (nextStrategicAiGroupIndex + 1) % groups.length;
+  activeStrategicAiGroupId = group.id;
+  try {
+    applyGamePatch(await postUndoableGameCommand({ type: "execute_ai_group", groupId: group.id }));
+  } catch (error) {
+    window.alert(error.message);
+  }
+  syncModeControls();
+  drawMap();
+}
+
 async function undoLastAction() {
   hideCombatPreview();
   hideContextMenu();
@@ -3967,6 +4199,7 @@ function drawMap() {
   drawReachableHexes();
   drawEditorUnitMoveHexes();
   drawAiEditorHighlights();
+  drawStrategicAiHighlights();
   drawDetachDeploymentHexes();
   drawSelectedHex();
   drawUnitCounters(currentMap.units);
@@ -4925,6 +5158,9 @@ undoButton.addEventListener("click", () => {
 endTurnButton.addEventListener("click", advanceTurn);
 controlEndTurnButton.addEventListener("click", advanceTurn);
 statusEndTurnButton.addEventListener("click", advanceTurn);
+if (executeAiGroupButton) {
+  executeAiGroupButton.addEventListener("click", executeNextAiGroupTurn);
+}
 detachHerdForm.addEventListener("submit", (event) => {
   event.preventDefault();
   confirmDetachHerdAmount();
