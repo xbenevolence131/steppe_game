@@ -145,6 +145,7 @@ struct Unit {
     int remaining_scaled_move = 32;
     int population = 0;
     int horses = 0;
+    int starvation_turns = 0;
     bool production_active = false;
     UnitKind production_kind = UnitKind::HorseArcher;
     int production_turns_remaining = 0;

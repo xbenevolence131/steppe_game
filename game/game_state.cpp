@@ -605,6 +605,8 @@ constexpr int feigned_retreat_defender_readiness_penalty = 10;
 constexpr int blocked_retreat_readiness_penalty = 15;
 constexpr int pasture_capacity_grassland = 100;
 constexpr int pasture_consumption_per_horse = 8;
+constexpr int starvation_horse_loss_turn_threshold = 3;
+constexpr int starvation_horse_loss_percent = 25;
 
 constexpr int move_scale = 8;
 
@@ -2359,23 +2361,46 @@ std::vector<GameHex*> grazing_hexes_for_unit(GameState& state, const Unit& unit)
 }
 
 void apply_grazing_for_faction(GameState& state, OwnerId owner) {
-    for (const Unit& unit : state.units) {
+    for (Unit& unit : state.units) {
         if (unit.owner != owner || !grazes_pasture(unit)) {
             continue;
         }
         std::vector<GameHex*> pasture_hexes = grazing_hexes_for_unit(state, unit);
-        if (pasture_hexes.empty()) {
+        const int demand = unit.horses * pasture_consumption_per_horse;
+        int consumed = 0;
+        if (!pasture_hexes.empty()) {
+            const int base = demand / static_cast<int>(pasture_hexes.size());
+            int remainder = demand % static_cast<int>(pasture_hexes.size());
+            for (GameHex* hex : pasture_hexes) {
+                const int consumption = base + (remainder > 0 ? 1 : 0);
+                if (remainder > 0) {
+                    --remainder;
+                }
+                const int actual_consumption = std::min(hex->pasture.remaining, consumption);
+                hex->pasture.remaining = std::max(0, hex->pasture.remaining - actual_consumption);
+                consumed += actual_consumption;
+            }
+        }
+
+        const int shortfall = std::max(0, demand - consumed);
+        if (shortfall == 0) {
+            unit.starvation_turns = 0;
             continue;
         }
-        const int demand = unit.horses * pasture_consumption_per_horse;
-        const int base = demand / static_cast<int>(pasture_hexes.size());
-        int remainder = demand % static_cast<int>(pasture_hexes.size());
-        for (GameHex* hex : pasture_hexes) {
-            const int consumption = base + (remainder > 0 ? 1 : 0);
-            if (remainder > 0) {
-                --remainder;
-            }
-            hex->pasture.remaining = std::max(0, hex->pasture.remaining - consumption);
+
+        unit.starvation_turns += 1;
+        if (unit.starvation_turns < starvation_horse_loss_turn_threshold) {
+            continue;
+        }
+        const int numerator = unit.horses * shortfall * starvation_horse_loss_percent;
+        const int denominator = std::max(1, demand * 100);
+        const int horse_loss = std::min(
+            unit.horses,
+            std::max(1, (numerator + denominator - 1) / denominator)
+        );
+        unit.horses = std::max(0, unit.horses - horse_loss);
+        if (unit.horses == 0) {
+            unit.starvation_turns = 0;
         }
     }
 }
@@ -2468,11 +2493,13 @@ void print_unit_json(const Unit& unit, std::ostream& out) {
     if (unit.kind == UnitKind::Horde) {
         out << ",\"population\":" << unit.population
             << ",\"horses\":" << unit.horses
+            << ",\"starvationTurns\":" << unit.starvation_turns
             << ",\"productionState\":\"" << (unit.production_active ? "building" : "idle") << "\""
             << ",\"productionKind\":\"" << unit_kind_to_string(unit.production_kind) << "\""
             << ",\"productionTurnsRemaining\":" << unit.production_turns_remaining;
     } else if (unit.kind == UnitKind::Herd) {
-        out << ",\"horses\":" << unit.horses;
+        out << ",\"horses\":" << unit.horses
+            << ",\"starvationTurns\":" << unit.starvation_turns;
     }
     out << ",\"moveDone\":" << (unit.move_done ? "true" : "false")
         << ",\"movedThisTurn\":" << (unit.moved_this_turn ? "true" : "false")
@@ -3048,6 +3075,7 @@ GameState parse_game_state_json(const std::string& json) {
         unit.remaining_scaled_move = std::max(0, std::min(unit.remaining_scaled_move, unit.scaled_move));
         unit.population = std::max(0, int_field(unit_json, "population", defaults.population));
         unit.horses = std::max(0, int_field(unit_json, "horses", defaults.horses));
+        unit.starvation_turns = std::max(0, int_field(unit_json, "starvationTurns", 0));
         unit.production_active = string_field(unit_json, "productionState", "idle") == "building";
         unit.production_kind = unit_kind_from_string(string_field(unit_json, "productionKind", unit_kind_to_string(UnitKind::HorseArcher)));
         if (unit.production_kind != UnitKind::HorseArcher && unit.production_kind != UnitKind::MongolLancer) {

@@ -98,6 +98,8 @@ const unitPopulationInput = document.querySelector("#unit-population-input");
 const unitHorsesRow = document.querySelector("#unit-horses-row");
 const unitHorses = document.querySelector("#unit-horses");
 const unitHorsesInput = document.querySelector("#unit-horses-input");
+const unitStarvationRow = document.querySelector("#unit-starvation-row");
+const unitStarvation = document.querySelector("#unit-starvation");
 const unitProductionRow = document.querySelector("#unit-production-row");
 const unitProduction = document.querySelector("#unit-production");
 const hexCoordinate = document.querySelector("#hex-coordinate");
@@ -1911,6 +1913,7 @@ function normalizeUnit(unit, index) {
   normalized.stance = typeof unit.stance === "string" ? unit.stance : defaults.stance;
   if (Number.isFinite(unit.population)) normalized.population = Math.max(0, Math.trunc(unit.population));
   if (Number.isFinite(unit.horses)) normalized.horses = Math.max(0, Math.trunc(unit.horses));
+  if (Number.isFinite(unit.starvationTurns)) normalized.starvationTurns = Math.max(0, Math.trunc(unit.starvationTurns));
   if (typeof unit.productionState === "string") normalized.productionState = unit.productionState;
   if (typeof unit.productionKind === "string") normalized.productionKind = unit.productionKind;
   if (Number.isFinite(unit.productionTurnsRemaining)) {
@@ -2320,10 +2323,10 @@ function resourceFieldsForUnit(unit) {
     return [];
   }
   if (unit.kind === "horde") {
-    return ["population", "horses"];
+    return ["population", "horses", "starvation"];
   }
   if (unit.kind === "herd") {
-    return ["horses"];
+    return ["horses", "starvation"];
   }
   return [];
 }
@@ -2503,10 +2506,12 @@ function syncUnitInspector() {
     unitResources.hidden = true;
     unitPopulationRow.hidden = false;
     unitHorsesRow.hidden = false;
+    unitStarvationRow.hidden = true;
     unitPopulation.textContent = "0";
     unitPopulationInput.value = "";
     unitHorses.textContent = "0";
     unitHorsesInput.value = "";
+    unitStarvation.textContent = "0";
     unitProductionRow.hidden = true;
     unitProduction.textContent = "Idle";
     return;
@@ -2540,12 +2545,15 @@ function syncUnitInspector() {
   unitResources.hidden = resourceFields.length === 0;
   unitPopulationRow.hidden = !resourceFields.includes("population");
   unitHorsesRow.hidden = !resourceFields.includes("horses");
+  unitStarvationRow.hidden = !resourceFields.includes("starvation");
   const population = Number.isInteger(unit.population) ? unit.population : 0;
   const horses = Number.isInteger(unit.horses) ? unit.horses : 0;
+  const starvationTurns = Number.isInteger(unit.starvationTurns) ? unit.starvationTurns : 0;
   unitPopulation.textContent = String(population);
   unitPopulationInput.value = String(population);
   unitHorses.textContent = String(horses);
   unitHorsesInput.value = String(horses);
+  unitStarvation.textContent = String(starvationTurns);
   unitProductionRow.hidden = unit.kind !== "horde";
   unitProduction.textContent = productionLabel(unit);
 }
