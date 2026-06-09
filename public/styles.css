@@ -703,6 +703,7 @@ button.is-active {
 }
 
 .map-toolbar {
+  grid-row: 1;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -760,6 +761,7 @@ select[hidden] {
 }
 
 .map-panel {
+  grid-row: 2;
   position: relative;
   height: auto;
   min-height: 0;
@@ -797,6 +799,7 @@ select[hidden] {
 }
 
 .diplomacy-panel {
+  grid-row: 2;
   display: none;
   min-height: 0;
   overflow: auto;
@@ -853,6 +856,16 @@ select[hidden] {
 .diplomacy-table th {
   background: var(--surface);
   color: var(--muted);
+  font-weight: 700;
+}
+
+.diplomacy-table td.is-war {
+  color: #9f2f2b;
+  font-weight: 700;
+}
+
+.diplomacy-table td.is-peace {
+  color: #27613a;
   font-weight: 700;
 }
 
@@ -1109,6 +1122,7 @@ select[hidden] {
 }
 
 .play-details-bar {
+  grid-row: 3;
   display: none;
   grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
   gap: 0;

@@ -857,12 +857,15 @@ bool unit_kind_available_to_archetype(UnitKind kind, const std::string& archetyp
 
 void normalize_diplomacy(GameState& state) {
     std::map<int, int> existing_affinity;
+    std::map<int, std::string> existing_status;
     for (const DiplomaticRelationship& relationship : state.diplomacy) {
         if (relationship.owner == neutral_owner || relationship.target == neutral_owner || relationship.owner == relationship.target) {
             continue;
         }
         existing_affinity[diplomacy_key(relationship.owner, relationship.target)] =
             std::max(0, std::min(100, relationship.affinity));
+        const std::string status = relationship.status == "peace" ? "peace" : "war";
+        existing_status[diplomacy_key(relationship.owner, relationship.target)] = status;
     }
 
     std::vector<OwnerId> owners;
@@ -896,15 +899,40 @@ void normalize_diplomacy(GameState& state) {
                 continue;
             }
             const int key = diplomacy_key(owner, target);
+            const int reverse_key = diplomacy_key(target, owner);
             const auto found = existing_affinity.find(key);
+            const auto status_found = existing_status.find(key);
+            const auto reverse_status_found = existing_status.find(reverse_key);
             DiplomaticRelationship relationship;
             relationship.owner = owner;
             relationship.target = target;
             relationship.affinity = found == existing_affinity.end() ? 50 : found->second;
+            const bool has_explicit_status =
+                status_found != existing_status.end() || reverse_status_found != existing_status.end();
+            relationship.status =
+                has_explicit_status
+                && (status_found == existing_status.end() || status_found->second == "peace")
+                && (reverse_status_found == existing_status.end() || reverse_status_found->second == "peace")
+                    ? "peace"
+                    : "war";
             normalized.push_back(relationship);
         }
     }
     state.diplomacy = std::move(normalized);
+}
+
+bool at_war(const GameState& state, OwnerId first, OwnerId second) {
+    if (first == second || first == neutral_owner || second == neutral_owner) {
+        return false;
+    }
+    const auto found = std::find_if(state.diplomacy.begin(), state.diplomacy.end(), [&](const DiplomaticRelationship& relationship) {
+        return relationship.owner == first && relationship.target == second;
+    });
+    return found == state.diplomacy.end() || found->status == "war";
+}
+
+bool hostile_units(const GameState& state, const Unit& first, const Unit& second) {
+    return first.owner != second.owner && at_war(state, first.owner, second.owner);
 }
 
 SettlementKind settlement_kind_from_town(const Town& town) {
@@ -1443,7 +1471,7 @@ void refresh_legal_actions(GameState& state) {
 bool enemy_zoc_at(const GameState& state, const Coord& coord, const Unit& moving_unit) {
     return std::find_if(state.units.begin(), state.units.end(), [&](const Unit& unit) {
         return unit.id != moving_unit.id
-            && unit.owner != moving_unit.owner
+            && hostile_units(state, moving_unit, unit)
             && unit.projects_zoc
             && adjacent(unit.coord, coord);
     }) != state.units.end();
@@ -1452,7 +1480,7 @@ bool enemy_zoc_at(const GameState& state, const Coord& coord, const Unit& moving
 bool enemy_unit_adjacent_to(const GameState& state, const Unit& source) {
     return std::find_if(state.units.begin(), state.units.end(), [&](const Unit& unit) {
         return unit.id != source.id
-            && unit.owner != source.owner
+            && hostile_units(state, source, unit)
             && adjacent(unit.coord, source.coord);
     }) != state.units.end();
 }
@@ -1466,7 +1494,7 @@ void mark_enemy_contact(GameState& state, int unit_id) {
     }
     bool contacted = false;
     for (Unit& unit : state.units) {
-        if (unit.id == found->id || unit.owner == found->owner || !adjacent(unit.coord, found->coord)) {
+        if (unit.id == found->id || !hostile_units(state, *found, unit) || !adjacent(unit.coord, found->coord)) {
             continue;
         }
         unit.contacted_enemy_this_turn = true;
@@ -1595,10 +1623,11 @@ std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id) {
                 continue;
             }
             const Unit* occupant = unit_at(state, next);
-            if (occupant != nullptr && occupant->id != unit->id && occupant->owner != unit->owner) {
+            const bool occupied_by_other = occupant != nullptr && occupant->id != unit->id;
+            if (occupied_by_other && hostile_units(state, *unit, *occupant)) {
                 continue;
             }
-            const bool friendly_occupied = occupant != nullptr && occupant->id != unit->id && occupant->owner == unit->owner;
+            const bool friendly_occupied = occupied_by_other;
             const GameHex* hex = find_hex(state, next);
             if (hex == nullptr) {
                 continue;
@@ -1650,7 +1679,7 @@ std::vector<AttackableUnit> attackable_units(const GameState& state, int unit_id
 
     for (const Unit& defender : state.units) {
         if (defender.id == attacker->id
-            || defender.owner == attacker->owner
+            || !hostile_units(state, *attacker, defender)
             || defender.hp <= 0
             || !adjacent(attacker->coord, defender.coord)) {
             continue;
@@ -1700,7 +1729,7 @@ bool legal_combat_pair(const GameState& state, const Unit* attacker, const Unit*
         && !attacker->combat_done
         && can_attack(attacker->kind)
         && attacker->attack > 0
-        && attacker->owner != defender->owner
+        && hostile_units(state, *attacker, *defender)
         && defender->hp > 0
         && adjacent(attacker->coord, defender->coord);
 }
@@ -2229,6 +2258,7 @@ const Unit* nearest_enemy_unit_from_coord(
     for (const Unit& candidate : state.units) {
         if (candidate.owner == owner
             || candidate.hp <= 0
+            || !at_war(state, owner, candidate.owner)
             || (target_owner != neutral_owner && candidate.owner != target_owner)
             || (horde_only && candidate.kind != UnitKind::Horde)) {
             continue;
@@ -2909,6 +2939,7 @@ void print_diplomacy_json(const std::vector<DiplomaticRelationship>& diplomacy, 
             << ",\"target\":" << relationship.target
             << ",\"targetFaction\":\"" << escape_json(target.key) << "\""
             << ",\"affinity\":" << std::max(0, std::min(100, relationship.affinity))
+            << ",\"status\":\"" << escape_json(relationship.status == "peace" ? "peace" : "war") << "\""
             << "}";
     }
     out << "]";
@@ -3270,6 +3301,7 @@ GameState parse_game_state_json(const std::string& json) {
             owner_from_faction_key(string_field(diplomacy_json, "targetFaction", ""), neutral_owner)
         );
         relationship.affinity = std::max(0, std::min(100, int_field(diplomacy_json, "affinity", 50)));
+        relationship.status = string_field(diplomacy_json, "status", "war") == "peace" ? "peace" : "war";
         state.diplomacy.push_back(std::move(relationship));
     }
     normalize_diplomacy(state);

@@ -140,6 +140,7 @@ struct DiplomaticRelationship {
     OwnerId owner = neutral_owner;
     OwnerId target = neutral_owner;
     int affinity = 50;
+    std::string status = "war";
 };
 
 struct Unit {

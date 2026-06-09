@@ -1423,7 +1423,9 @@ function syncDiplomacyScreen() {
       if (ownerFaction.id === targetFaction.id) {
         cell.textContent = "-";
       } else {
-        cell.textContent = String(diplomacyAffinity(ownerFaction.id, targetFaction.id));
+        const status = diplomacyStatus(ownerFaction.id, targetFaction.id);
+        cell.textContent = `${titleCaseToken(status)} / ${diplomacyAffinity(ownerFaction.id, targetFaction.id)}`;
+        cell.className = status === "peace" ? "is-peace" : "is-war";
       }
       row.appendChild(cell);
     }
@@ -1789,6 +1791,7 @@ function normalizeDiplomacy(rawDiplomacy) {
   const factionsForDiplomacy = enabledScenarioFactions()
     .filter((faction) => faction.id !== factions.neutral.owner);
   const prior = new Map();
+  const priorStatus = new Map();
   if (Array.isArray(rawDiplomacy)) {
     for (const relationship of rawDiplomacy) {
       if (!relationship || typeof relationship !== "object") {
@@ -1806,7 +1809,9 @@ function normalizeDiplomacy(rawDiplomacy) {
       const affinity = Number.isFinite(relationship.affinity)
         ? Math.max(0, Math.min(100, Math.trunc(relationship.affinity)))
         : 50;
-      prior.set(diplomacyOwnerKey(owner, target), affinity);
+      const key = diplomacyOwnerKey(owner, target);
+      prior.set(key, affinity);
+      priorStatus.set(key, relationship.status === "peace" ? "peace" : "war");
     }
   }
 
@@ -1817,12 +1822,20 @@ function normalizeDiplomacy(rawDiplomacy) {
         continue;
       }
       const key = diplomacyOwnerKey(ownerFaction.id, targetFaction.id);
+      const reverseKey = diplomacyOwnerKey(targetFaction.id, ownerFaction.id);
+      const explicitStatus = priorStatus.has(key) || priorStatus.has(reverseKey);
+      const status = explicitStatus
+        && (!priorStatus.has(key) || priorStatus.get(key) === "peace")
+        && (!priorStatus.has(reverseKey) || priorStatus.get(reverseKey) === "peace")
+        ? "peace"
+        : "war";
       normalized.push({
         owner: ownerFaction.id,
         faction: ownerFaction.key,
         target: targetFaction.id,
         targetFaction: targetFaction.key,
         affinity: prior.has(key) ? prior.get(key) : 50,
+        status,
       });
     }
   }
@@ -1836,6 +1849,15 @@ function diplomacyAffinity(owner, target) {
     ? currentMap.game.diplomacy.find((candidate) => candidate.owner === owner && candidate.target === target)
     : null;
   return relationship ? relationship.affinity : 50;
+}
+
+function diplomacyStatus(owner, target) {
+  const relationship = currentMap
+    && currentMap.game
+    && Array.isArray(currentMap.game.diplomacy)
+    ? currentMap.game.diplomacy.find((candidate) => candidate.owner === owner && candidate.target === target)
+    : null;
+  return relationship && relationship.status === "peace" ? "peace" : "war";
 }
 
 function activeAiGroup() {
