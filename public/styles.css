@@ -694,6 +694,14 @@ button.is-active {
   background: var(--empty);
 }
 
+.map-section.is-diplomacy .map-panel {
+  display: none;
+}
+
+.map-section.is-diplomacy .map-toolbar {
+  display: none;
+}
+
 .map-toolbar {
   display: flex;
   align-items: center;
@@ -786,6 +794,66 @@ select[hidden] {
   width: 100%;
   height: 100%;
   min-height: 0;
+}
+
+.diplomacy-panel {
+  display: none;
+  min-height: 0;
+  overflow: auto;
+  background: #fffdf8;
+  padding: 18px;
+}
+
+.map-section.is-diplomacy .diplomacy-panel {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.diplomacy-panel[hidden] {
+  display: none;
+}
+
+.diplomacy-panel h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.diplomacy-table-wrap {
+  min-width: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  background: white;
+}
+
+.diplomacy-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.diplomacy-table th,
+.diplomacy-table td {
+  border-bottom: 1px solid rgba(185, 173, 150, 0.55);
+  border-right: 1px solid rgba(185, 173, 150, 0.55);
+  padding: 8px 10px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.diplomacy-table th:first-child,
+.diplomacy-table td:first-child {
+  position: sticky;
+  left: 0;
+  background: #fffdf8;
+  text-align: left;
+  font-weight: 700;
+}
+
+.diplomacy-table th {
+  background: var(--surface);
+  color: var(--muted);
+  font-weight: 700;
 }
 
 .context-menu {
@@ -1261,6 +1329,10 @@ select[hidden] {
 
 .execute-ai-group-button {
   min-width: 92px;
+}
+
+.diplomacy-toggle-button {
+  min-width: 98px;
 }
 
 .turn-play-button {

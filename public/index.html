@@ -301,6 +301,12 @@
               </form>
             </div>
           </div>
+          <section id="diplomacy-panel" class="diplomacy-panel" aria-label="Diplomacy" hidden>
+            <h2>Diplomacy</h2>
+            <div class="diplomacy-table-wrap">
+              <table id="diplomacy-table" class="diplomacy-table"></table>
+            </div>
+          </section>
           <dialog id="scenario-file-dialog" class="scenario-file-dialog">
             <form id="scenario-file-form" method="dialog">
               <h2 id="scenario-file-title">Scenario</h2>
@@ -423,6 +429,7 @@
               <div class="control-button-row">
                 <button id="undo-button" class="secondary undo-button" type="button" aria-label="Undo" title="Undo" disabled>Undo</button>
                 <button id="execute-ai-group-button" class="secondary execute-ai-group-button" type="button" title="Execute next AI group">AI Group</button>
+                <button id="diplomacy-toggle-button" class="secondary diplomacy-toggle-button" type="button" aria-pressed="false">Diplomacy</button>
                 <button id="status-end-turn-button" class="turn-play-button" type="button" aria-label="End current turn" title="End current turn"></button>
               </div>
               <div id="active-faction-name" hidden>Mongol</div>

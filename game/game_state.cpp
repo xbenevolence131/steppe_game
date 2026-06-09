@@ -794,6 +794,10 @@ std::vector<OwnerId> parse_turn_order(const Json& array_json) {
     return owners;
 }
 
+int diplomacy_key(OwnerId owner, OwnerId target) {
+    return owner * 1000 + target;
+}
+
 } // namespace
 
 HexTagMask tags_from_labels(const std::vector<std::string>& labels) {
@@ -849,6 +853,58 @@ bool unit_kind_available_to_archetype(UnitKind kind, const std::string& archetyp
             || kind == UnitKind::PersianCavalry;
     }
     return false;
+}
+
+void normalize_diplomacy(GameState& state) {
+    std::map<int, int> existing_affinity;
+    for (const DiplomaticRelationship& relationship : state.diplomacy) {
+        if (relationship.owner == neutral_owner || relationship.target == neutral_owner || relationship.owner == relationship.target) {
+            continue;
+        }
+        existing_affinity[diplomacy_key(relationship.owner, relationship.target)] =
+            std::max(0, std::min(100, relationship.affinity));
+    }
+
+    std::vector<OwnerId> owners;
+    for (OwnerId owner : state.turn_order) {
+        const FactionState* faction = nullptr;
+        const auto found = std::find_if(state.factions.begin(), state.factions.end(), [&](const FactionState& candidate) {
+            return candidate.id == owner;
+        });
+        if (found != state.factions.end()) {
+            faction = &*found;
+        }
+        if (owner == neutral_owner || (faction != nullptr && !faction->enabled)) {
+            continue;
+        }
+        if (std::find(owners.begin(), owners.end(), owner) == owners.end()) {
+            owners.push_back(owner);
+        }
+    }
+    if (owners.empty()) {
+        for (const FactionState& faction : state.factions) {
+            if (faction.id != neutral_owner && faction.enabled) {
+                owners.push_back(faction.id);
+            }
+        }
+    }
+
+    std::vector<DiplomaticRelationship> normalized;
+    for (OwnerId owner : owners) {
+        for (OwnerId target : owners) {
+            if (owner == target) {
+                continue;
+            }
+            const int key = diplomacy_key(owner, target);
+            const auto found = existing_affinity.find(key);
+            DiplomaticRelationship relationship;
+            relationship.owner = owner;
+            relationship.target = target;
+            relationship.affinity = found == existing_affinity.end() ? 50 : found->second;
+            normalized.push_back(relationship);
+        }
+    }
+    state.diplomacy = std::move(normalized);
 }
 
 SettlementKind settlement_kind_from_town(const Town& town) {
@@ -941,6 +997,7 @@ GameState game_state_from_generated_map(const GeneratedMap& generated) {
         faction_for_owner(chinese_owner),
     };
     state.turn_order = {mongol_owner, chinese_owner};
+    normalize_diplomacy(state);
 
     return state;
 }
@@ -965,6 +1022,7 @@ GameState create_default_play_sandbox(int width, int height, int faction_count) 
     const OwnerId default_order[] = {mongol_owner, chinese_owner, persian_owner};
     faction_count = std::max(1, std::min(faction_count, 3));
     state.turn_order.assign(default_order, default_order + faction_count);
+    normalize_diplomacy(state);
 
     state.hexes.reserve(static_cast<std::size_t>(state.width * state.height));
     for (int r = 1; r <= state.height; ++r) {
@@ -2837,6 +2895,25 @@ void print_ai_groups_json(const std::vector<AiGroup>& groups, std::ostream& out)
     out << "]";
 }
 
+void print_diplomacy_json(const std::vector<DiplomaticRelationship>& diplomacy, std::ostream& out) {
+    out << "[";
+    for (std::size_t i = 0; i < diplomacy.size(); ++i) {
+        if (i > 0) {
+            out << ",";
+        }
+        const DiplomaticRelationship& relationship = diplomacy[i];
+        const FactionState owner = faction_for_owner(relationship.owner);
+        const FactionState target = faction_for_owner(relationship.target);
+        out << "{\"owner\":" << relationship.owner
+            << ",\"faction\":\"" << escape_json(owner.key) << "\""
+            << ",\"target\":" << relationship.target
+            << ",\"targetFaction\":\"" << escape_json(target.key) << "\""
+            << ",\"affinity\":" << std::max(0, std::min(100, relationship.affinity))
+            << "}";
+    }
+    out << "]";
+}
+
 void print_game_meta_json(const GameState& state, std::ostream& out) {
     out << "\"game\":{";
     out << "\"round\":" << state.round << ",";
@@ -2873,6 +2950,8 @@ void print_game_meta_json(const GameState& state, std::ostream& out) {
     }
     out << "],\"aiGroups\":";
     print_ai_groups_json(state.ai_groups, out);
+    out << ",\"diplomacy\":";
+    print_diplomacy_json(state.diplomacy, out);
     out << "}";
 }
 
@@ -3171,6 +3250,29 @@ GameState parse_game_state_json(const std::string& json) {
         );
         state.ai_groups.push_back(std::move(group));
     }
+
+    const Json& diplomacy_items = game_json.contains("diplomacy") && game_json["diplomacy"].is_array()
+        ? game_json["diplomacy"]
+        : empty_array;
+    for (const Json& diplomacy_json : diplomacy_items) {
+        if (!diplomacy_json.is_object()) {
+            continue;
+        }
+        DiplomaticRelationship relationship;
+        relationship.owner = int_field(
+            diplomacy_json,
+            "owner",
+            owner_from_faction_key(string_field(diplomacy_json, "faction", ""), neutral_owner)
+        );
+        relationship.target = int_field(
+            diplomacy_json,
+            "target",
+            owner_from_faction_key(string_field(diplomacy_json, "targetFaction", ""), neutral_owner)
+        );
+        relationship.affinity = std::max(0, std::min(100, int_field(diplomacy_json, "affinity", 50)));
+        state.diplomacy.push_back(std::move(relationship));
+    }
+    normalize_diplomacy(state);
 
     const Json& hex_items = root.contains("hexes") && root["hexes"].is_array() ? root["hexes"] : empty_array;
     for (const Json& hex_json : hex_items) {

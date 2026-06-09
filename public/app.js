@@ -1,7 +1,10 @@
 const canvas = document.querySelector("#map-canvas");
 const ctx = canvas.getContext("2d");
 const appShell = document.querySelector("#app-shell");
+const mapSection = document.querySelector(".map-section");
 const mapPanel = document.querySelector("#map-panel");
+const diplomacyPanel = document.querySelector("#diplomacy-panel");
+const diplomacyTable = document.querySelector("#diplomacy-table");
 const contextMenu = document.querySelector("#context-menu");
 const combatPreview = document.querySelector("#combat-preview");
 const detachHerdPopover = document.querySelector("#detach-herd-popover");
@@ -64,6 +67,7 @@ const endTurnButton = document.querySelector("#end-turn-button");
 const controlEndTurnButton = document.querySelector("#control-end-turn-button");
 const statusEndTurnButton = document.querySelector("#status-end-turn-button");
 const executeAiGroupButton = document.querySelector("#execute-ai-group-button");
+const diplomacyToggleButton = document.querySelector("#diplomacy-toggle-button");
 const turnCounter = document.querySelector(".turn-counter");
 const activeFactionName = document.querySelector("#active-faction-name");
 const statusActiveFactionName = document.querySelector("#status-active-faction-name");
@@ -147,6 +151,7 @@ let pastureViewEnabled = false;
 let selectedHexCoord = null;
 let aiAnimationState = null;
 let aiAnimationInProgress = false;
+let playSurfaceMode = "map";
 
 const viewport = {
   scale: 1,
@@ -1382,6 +1387,52 @@ function syncStrategicAiDashboard() {
   }
 }
 
+function syncDiplomacyScreen() {
+  if (!diplomacyTable) {
+    return;
+  }
+  diplomacyTable.replaceChildren();
+  if (!currentMap) {
+    return;
+  }
+
+  const factionsForDiplomacy = enabledScenarioFactions()
+    .filter((faction) => faction.id !== factions.neutral.owner);
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  const corner = document.createElement("th");
+  corner.textContent = "Views";
+  headRow.appendChild(corner);
+  for (const targetFaction of factionsForDiplomacy) {
+    const th = document.createElement("th");
+    th.scope = "col";
+    th.textContent = optionLabelForFaction(targetFaction);
+    headRow.appendChild(th);
+  }
+  thead.appendChild(headRow);
+
+  const tbody = document.createElement("tbody");
+  for (const ownerFaction of factionsForDiplomacy) {
+    const row = document.createElement("tr");
+    const rowHeader = document.createElement("th");
+    rowHeader.scope = "row";
+    rowHeader.textContent = optionLabelForFaction(ownerFaction);
+    row.appendChild(rowHeader);
+    for (const targetFaction of factionsForDiplomacy) {
+      const cell = document.createElement("td");
+      if (ownerFaction.id === targetFaction.id) {
+        cell.textContent = "-";
+      } else {
+        cell.textContent = String(diplomacyAffinity(ownerFaction.id, targetFaction.id));
+      }
+      row.appendChild(cell);
+    }
+    tbody.appendChild(row);
+  }
+
+  diplomacyTable.append(thead, tbody);
+}
+
 function syncScenarioToolControls() {
   for (const region of scenarioRegions) {
     const key = region.dataset.scenarioRegion;
@@ -1730,6 +1781,63 @@ function aiGroups() {
   return currentMap.game.aiGroups;
 }
 
+function diplomacyOwnerKey(owner, target) {
+  return `${owner}->${target}`;
+}
+
+function normalizeDiplomacy(rawDiplomacy) {
+  const factionsForDiplomacy = enabledScenarioFactions()
+    .filter((faction) => faction.id !== factions.neutral.owner);
+  const prior = new Map();
+  if (Array.isArray(rawDiplomacy)) {
+    for (const relationship of rawDiplomacy) {
+      if (!relationship || typeof relationship !== "object") {
+        continue;
+      }
+      const owner = Number.isInteger(relationship.owner)
+        ? relationship.owner
+        : ownerForFactionKey(relationship.faction);
+      const target = Number.isInteger(relationship.target)
+        ? relationship.target
+        : ownerForFactionKey(relationship.targetFaction);
+      if (owner === target || owner === factions.neutral.owner || target === factions.neutral.owner) {
+        continue;
+      }
+      const affinity = Number.isFinite(relationship.affinity)
+        ? Math.max(0, Math.min(100, Math.trunc(relationship.affinity)))
+        : 50;
+      prior.set(diplomacyOwnerKey(owner, target), affinity);
+    }
+  }
+
+  const normalized = [];
+  for (const ownerFaction of factionsForDiplomacy) {
+    for (const targetFaction of factionsForDiplomacy) {
+      if (ownerFaction.id === targetFaction.id) {
+        continue;
+      }
+      const key = diplomacyOwnerKey(ownerFaction.id, targetFaction.id);
+      normalized.push({
+        owner: ownerFaction.id,
+        faction: ownerFaction.key,
+        target: targetFaction.id,
+        targetFaction: targetFaction.key,
+        affinity: prior.has(key) ? prior.get(key) : 50,
+      });
+    }
+  }
+  return normalized;
+}
+
+function diplomacyAffinity(owner, target) {
+  const relationship = currentMap
+    && currentMap.game
+    && Array.isArray(currentMap.game.diplomacy)
+    ? currentMap.game.diplomacy.find((candidate) => candidate.owner === owner && candidate.target === target)
+    : null;
+  return relationship ? relationship.affinity : 50;
+}
+
 function activeAiGroup() {
   return aiGroups().find((group) => group.id === activeAiGroupId) || null;
 }
@@ -1856,6 +1964,7 @@ function ensureGameMeta() {
     ai: faction.ai,
   }));
   currentMap.game.aiGroups = normalizeAiGroups(currentMap.game.aiGroups);
+  currentMap.game.diplomacy = normalizeDiplomacy(currentMap.game.diplomacy);
   const unitsById = new Map(currentMap.units.map((unit) => [unit.id, unit]));
   for (const group of currentMap.game.aiGroups) {
     group.unitIds = group.unitIds.filter((unitId) => {
@@ -2810,10 +2919,26 @@ function syncHexInspector() {
     : "-";
 }
 
+function setPlaySurfaceMode(mode) {
+  playSurfaceMode = mode === "diplomacy" ? "diplomacy" : "map";
+  syncModeControls();
+  if (playSurfaceMode === "map" && currentMap) {
+    requestAnimationFrame(drawMap);
+  }
+}
+
+function toggleDiplomacySurface() {
+  setPlaySurfaceMode(playSurfaceMode === "diplomacy" ? "map" : "diplomacy");
+}
+
 function syncModeControls() {
   appShell.classList.toggle("is-intro", appMode === "intro");
   appShell.classList.toggle("is-scenario", appMode === "scenario");
   appShell.classList.toggle("is-play", appMode === "play");
+  mapSection.classList.toggle("is-diplomacy", appMode === "play" && playSurfaceMode === "diplomacy");
+  if (diplomacyPanel) {
+    diplomacyPanel.hidden = appMode !== "play" || playSurfaceMode !== "diplomacy";
+  }
   appShell.classList.toggle("show-editor-inspector", appMode === "scenario" && unitEditActive() && Boolean(selectedUnit()));
   scenarioModeButton.classList.toggle("is-active", appMode === "scenario");
   playModeButton.classList.toggle("is-active", appMode === "play");
@@ -2825,9 +2950,16 @@ function syncModeControls() {
   if (executeAiGroupButton) {
     executeAiGroupButton.disabled = appMode !== "play" || aiAnimationInProgress || strategicAiGroups().length === 0;
   }
+  if (diplomacyToggleButton) {
+    diplomacyToggleButton.disabled = appMode !== "play" || aiAnimationInProgress;
+    diplomacyToggleButton.classList.toggle("is-active", appMode === "play" && playSurfaceMode === "diplomacy");
+    diplomacyToggleButton.setAttribute("aria-pressed", String(appMode === "play" && playSurfaceMode === "diplomacy"));
+    diplomacyToggleButton.textContent = playSurfaceMode === "diplomacy" ? "Map" : "Diplomacy";
+  }
   syncEditorControls();
   syncScenarioParameterControls();
   syncPlayControls();
+  syncDiplomacyScreen();
   syncUndoControls();
   syncPastureViewButton();
   syncHexInspector();
@@ -2836,6 +2968,9 @@ function syncModeControls() {
 function setAppMode(mode) {
   hideCombatPreview();
   appMode = mode;
+  if (mode !== "play") {
+    playSurfaceMode = "map";
+  }
   if (mode !== "scenario") {
     isPainting = false;
     paintStrokeKeys = new Set();
@@ -4319,7 +4454,7 @@ async function undoLastAction() {
 }
 
 function drawMap() {
-  if (!currentMap) {
+  if (!currentMap || (appMode === "play" && playSurfaceMode === "diplomacy")) {
     return;
   }
 
@@ -5311,6 +5446,9 @@ controlEndTurnButton.addEventListener("click", advanceTurn);
 statusEndTurnButton.addEventListener("click", advanceTurn);
 if (executeAiGroupButton) {
   executeAiGroupButton.addEventListener("click", executeNextAiGroupTurn);
+}
+if (diplomacyToggleButton) {
+  diplomacyToggleButton.addEventListener("click", toggleDiplomacySurface);
 }
 detachHerdForm.addEventListener("submit", (event) => {
   event.preventDefault();

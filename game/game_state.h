@@ -136,6 +136,12 @@ struct AiAnimationStep {
     std::vector<Coord> attacks;
 };
 
+struct DiplomaticRelationship {
+    OwnerId owner = neutral_owner;
+    OwnerId target = neutral_owner;
+    int affinity = 50;
+};
+
 struct Unit {
     int id = 0;
     OwnerId owner = neutral_owner;
@@ -282,6 +288,7 @@ struct GameState {
     std::vector<Crossing> crossings;
     std::vector<Settlement> settlements;
     std::vector<FactionState> factions;
+    std::vector<DiplomaticRelationship> diplomacy;
     std::vector<AiGroup> ai_groups;
     std::vector<Unit> units;
 };
