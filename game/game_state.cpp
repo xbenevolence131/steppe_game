@@ -1780,6 +1780,14 @@ bool set_unit_stance(GameState& state, int unit_id, UnitStance stance) {
     return true;
 }
 
+void cancel_horde_production(Unit& unit) {
+    if (unit.kind != UnitKind::Horde || !unit.production_active) {
+        return;
+    }
+    unit.production_active = false;
+    unit.production_turns_remaining = 0;
+}
+
 bool move_unit(GameState& state, int unit_id, Coord destination) {
     Unit* unit = find_unit(state, unit_id);
     if (unit == nullptr || unit->owner != active_faction(state) || unit->move_done) {
@@ -1792,6 +1800,7 @@ bool move_unit(GameState& state, int unit_id, Coord destination) {
     if (found == reachable.end()) {
         return false;
     }
+    cancel_horde_production(*unit);
     unit->coord = destination;
     unit->moved_this_turn = true;
     reduce_readiness(*unit, move_readiness_cost(*unit, found->scaled_cost));
@@ -1819,6 +1828,7 @@ bool attack_unit(GameState& state, int attacker_id, int defender_id) {
     if (attacker == nullptr || defender == nullptr) {
         return false;
     }
+    cancel_horde_production(*defender);
 
     if (preview.special_resolution == "feigned_retreat") {
         attacker->contacted_enemy_this_turn = true;
@@ -1830,6 +1840,7 @@ bool attack_unit(GameState& state, int attacker_id, int defender_id) {
         defender->move_done = true;
         defender->moved_this_turn = true;
         attacker->coord = preview.attacker_pursuit_to;
+        cancel_horde_production(*attacker);
         attacker->readiness = preview.attacker.result_readiness;
         attacker->remaining_scaled_move = 0;
         attacker->move_done = true;
