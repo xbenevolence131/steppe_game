@@ -419,6 +419,15 @@ body {
   white-space: nowrap;
 }
 
+.ai-generated-badge {
+  justify-self: start;
+  border: 1px solid #b9ad96;
+  background: #f2eadb;
+  padding: 4px 7px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
 .session-tool-panel {
   grid-template-columns: minmax(0, 1fr);
   align-items: stretch;

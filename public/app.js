@@ -1152,11 +1152,11 @@ function syncAiEditorControls() {
     aiGroupsContainer.appendChild(empty);
     return;
   }
-  const groups = aiGroups();
+  const groups = aiGroups().filter((group) => !group.generated);
   if (groups.length === 0) {
     const empty = document.createElement("p");
     empty.className = "ai-empty-state";
-    empty.textContent = "No AI groups.";
+    empty.textContent = "No scenario AI groups.";
     aiGroupsContainer.appendChild(empty);
     return;
   }
@@ -1346,7 +1346,8 @@ function syncStrategicAiDashboard() {
 
     const membersLabel = document.createElement("span");
     membersLabel.className = "ai-member-count";
-    membersLabel.textContent = "Members";
+    membersLabel.textContent = group.generated ? "Generated" : "Members";
+    membersLabel.classList.toggle("ai-generated-badge", group.generated);
 
     const memberCount = document.createElement("span");
     memberCount.className = "ai-member-count";
@@ -1762,6 +1763,7 @@ function normalizeAiGroup(group, index = 0, usedIds = new Set()) {
     id,
     owner,
     name: typeof (group && group.name) === "string" && group.name.trim() ? group.name.trim() : `AI Group ${index + 1}`,
+    generated: group && group.generated !== undefined ? Boolean(group.generated) : false,
     unitIds,
     directive: normalizeAiDirective(group && group.directive),
   };
@@ -1865,7 +1867,7 @@ function activeAiGroup() {
 }
 
 function nextAiGroupId() {
-  const ids = aiGroups().map((group) => group.id);
+  const ids = aiGroups().filter((group) => !group.generated && group.id > 0).map((group) => group.id);
   return ids.length > 0 ? Math.max(...ids) + 1 : 1;
 }
 

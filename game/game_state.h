@@ -127,6 +127,7 @@ struct AiGroup {
     std::string name;
     std::vector<int> unit_ids;
     AiDirective directive;
+    bool generated = false;
 };
 
 struct AiAnimationStep {
