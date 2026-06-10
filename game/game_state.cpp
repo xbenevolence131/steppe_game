@@ -2278,14 +2278,6 @@ const Unit* nearest_enemy_unit(const GameState& state, const Unit& unit) {
     return nearest_enemy_unit_from_coord(state, unit.owner, unit.coord);
 }
 
-bool ai_attack_allowed_by_directive(const Unit& defender, const AiDirective& directive) {
-    if (directive.kind == AiDirectiveKind::HuntHorde) {
-        return defender.kind == UnitKind::Horde
-            && (directive.target_owner == neutral_owner || defender.owner == directive.target_owner);
-    }
-    return true;
-}
-
 bool ai_attack_best_adjacent_enemy(
     GameState& state,
     int attacker_id,
@@ -2300,6 +2292,18 @@ bool ai_attack_best_adjacent_enemy(
     if (attacker == nullptr) {
         return false;
     }
+    bool adjacent_directive_horde = false;
+    if (directive.kind == AiDirectiveKind::HuntHorde) {
+        for (const AttackableUnit& attack : attacks) {
+            const Unit* defender = find_unit(state, attack.unit_id);
+            if (defender != nullptr
+                && defender->kind == UnitKind::Horde
+                && (directive.target_owner == neutral_owner || defender->owner == directive.target_owner)) {
+                adjacent_directive_horde = true;
+                break;
+            }
+        }
+    }
     int best_defender_id = attacks.front().unit_id;
     int best_score = std::numeric_limits<int>::max();
     for (const AttackableUnit& attack : attacks) {
@@ -2307,12 +2311,19 @@ bool ai_attack_best_adjacent_enemy(
         if (defender == nullptr) {
             continue;
         }
-        if (!ai_attack_allowed_by_directive(*defender, directive)) {
+        const bool directive_horde =
+            directive.kind == AiDirectiveKind::HuntHorde
+            && defender->kind == UnitKind::Horde
+            && (directive.target_owner == neutral_owner || defender->owner == directive.target_owner);
+        if (directive.kind == AiDirectiveKind::HuntHorde
+            && adjacent_directive_horde
+            && !directive_horde) {
             continue;
         }
         const int score = defender->hp * 100
             + effective_defense_score(state, *defender) * 10
-            + hex_distance(attacker->coord, defender->coord);
+            + hex_distance(attacker->coord, defender->coord)
+            + (directive.kind == AiDirectiveKind::HuntHorde && !directive_horde ? 500 : 0);
         if (score < best_score || (score == best_score && defender->id < best_defender_id)) {
             best_score = score;
             best_defender_id = defender->id;
