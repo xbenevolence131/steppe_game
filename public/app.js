@@ -129,6 +129,8 @@ let aiPickMode = null;
 let activeAiGroupId = 0;
 let activeStrategicAiGroupId = 0;
 let nextStrategicAiGroupIndex = 0;
+let collapsedAiGroupIds = new Set();
+let collapsedStrategicAiGroupIds = new Set();
 let openScenarioRegions = new Set(["session", "terrain", "units", "ai"]);
 let paintStrokeKeys = new Set();
 let paintUndoRecorded = false;
@@ -1162,12 +1164,32 @@ function syncAiEditorControls() {
   }
 
   for (const group of groups) {
+    const collapsed = collapsedAiGroupIds.has(group.id) && !(activeAiGroupId === group.id && aiPickMode !== null);
     const card = document.createElement("article");
     card.className = "ai-group-card";
     card.classList.toggle("is-picking", activeAiGroupId === group.id && aiPickMode !== null);
+    card.classList.toggle("is-collapsed", collapsed);
+
+    const collapseButton = document.createElement("button");
+    collapseButton.type = "button";
+    collapseButton.className = "ai-group-collapse";
+    collapseButton.setAttribute("aria-expanded", String(!collapsed));
+    collapseButton.setAttribute("aria-label", `${collapsed ? "Expand" : "Collapse"} ${group.name}`);
+    collapseButton.textContent = collapsed ? "▸" : "▾";
+    collapseButton.addEventListener("click", () => {
+      if (collapsedAiGroupIds.has(group.id)) {
+        collapsedAiGroupIds.delete(group.id);
+      } else {
+        collapsedAiGroupIds.add(group.id);
+      }
+      syncAiEditorControls();
+    });
+    const summary = document.createElement("span");
+    summary.className = "ai-group-summary";
+    summary.textContent = `${group.name} / ${optionLabelForFaction(factionForOwner(group.owner))} / ${group.unitIds.length} units / ${aiDirectiveLabel(group.directive.type)}`;
 
     const groupRow = document.createElement("div");
-    groupRow.className = "ai-group-row";
+    groupRow.className = "ai-group-edit-row";
 
     const nameLabel = document.createElement("label");
     nameLabel.className = "ai-field";
@@ -1211,11 +1233,6 @@ function syncAiEditorControls() {
     memberCount.className = "ai-member-count";
     memberCount.textContent = `${group.unitIds.length} units`;
 
-    groupRow.append(nameLabel, ownerLabel, membersButton, memberCount);
-
-    const directiveRow = document.createElement("div");
-    directiveRow.className = "ai-directive-row";
-
     const directiveLabel = document.createElement("label");
     directiveLabel.className = "ai-field";
     directiveLabel.textContent = "Directive";
@@ -1254,8 +1271,22 @@ function syncAiEditorControls() {
     targetReadout.className = "ai-target-readout";
     targetReadout.textContent = `${group.directive.target.q},${group.directive.target.r}`;
 
-    directiveRow.append(directiveLabel, targetButton, targetFactionLabel, targetReadout);
-    card.append(groupRow, directiveRow);
+    if (collapsed) {
+      groupRow.append(summary, collapseButton);
+    } else {
+      groupRow.append(
+        nameLabel,
+        ownerLabel,
+        membersButton,
+        memberCount,
+        directiveLabel,
+        targetButton,
+        targetFactionLabel,
+        targetReadout,
+        collapseButton
+      );
+    }
+    card.append(groupRow);
     aiGroupsContainer.appendChild(card);
   }
 }
@@ -1311,8 +1342,10 @@ function syncStrategicAiDashboard() {
 
   activeStrategicAiGroup();
   for (const group of groups) {
+    const collapsed = collapsedStrategicAiGroupIds.has(group.id);
     const card = document.createElement("article");
     card.className = "ai-group-card is-dashboard-row";
+    card.classList.toggle("is-collapsed", collapsed);
     card.classList.toggle("is-active", activeStrategicAiGroupId === group.id);
     card.tabIndex = 0;
     card.setAttribute("role", "button");
@@ -1325,8 +1358,28 @@ function syncStrategicAiDashboard() {
       }
     });
 
+    const collapseButton = document.createElement("button");
+    collapseButton.type = "button";
+    collapseButton.className = "ai-group-collapse";
+    collapseButton.setAttribute("aria-expanded", String(!collapsed));
+    collapseButton.setAttribute("aria-label", `${collapsed ? "Expand" : "Collapse"} ${group.name}`);
+    collapseButton.textContent = collapsed ? "▸" : "▾";
+    collapseButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (collapsedStrategicAiGroupIds.has(group.id)) {
+        collapsedStrategicAiGroupIds.delete(group.id);
+      } else {
+        collapsedStrategicAiGroupIds.add(group.id);
+      }
+      syncStrategicAiDashboard();
+    });
+
+    const summary = document.createElement("span");
+    summary.className = "ai-group-summary";
+    summary.textContent = `${group.name} / ${optionLabelForFaction(factionForOwner(group.owner))} / ${group.unitIds.length} units / ${aiDirectiveLabel(group.directive.type)}`;
+
     const groupRow = document.createElement("div");
-    groupRow.className = "ai-group-row";
+    groupRow.className = "ai-group-edit-row";
 
     const nameField = document.createElement("div");
     nameField.className = "ai-field";
@@ -1353,11 +1406,6 @@ function syncStrategicAiDashboard() {
     memberCount.className = "ai-member-count";
     memberCount.textContent = `${group.unitIds.length} units`;
 
-    groupRow.append(nameField, ownerField, membersLabel, memberCount);
-
-    const directiveRow = document.createElement("div");
-    directiveRow.className = "ai-directive-row";
-
     const directiveField = document.createElement("div");
     directiveField.className = "ai-field";
     directiveField.textContent = "Directive";
@@ -1382,8 +1430,22 @@ function syncStrategicAiDashboard() {
     targetReadout.className = "ai-target-readout";
     targetReadout.textContent = `${group.directive.target.q},${group.directive.target.r}`;
 
-    directiveRow.append(directiveField, targetLabel, targetFactionField, targetReadout);
-    card.append(groupRow, directiveRow);
+    if (collapsed) {
+      groupRow.append(summary, collapseButton);
+    } else {
+      groupRow.append(
+        nameField,
+        ownerField,
+        membersLabel,
+        memberCount,
+        directiveField,
+        targetLabel,
+        targetFactionField,
+        targetReadout,
+        collapseButton
+      );
+    }
+    card.append(groupRow);
     strategicAiGroupsContainer.appendChild(card);
   }
 }
