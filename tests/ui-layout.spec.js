@@ -1199,7 +1199,21 @@ test("unit counters use sprite glyph zoom bands", async ({ page, isMobile }) => 
   await openPlayMode(page);
   await expect.poll(() => page.evaluate(() => unitSpriteSheetReady)).toBe(true);
   await expect(page.evaluate(() => {
-    const kinds = ["infantry", "persian_infantry", "horde", "herd", "horse_archer", "chinese_cavalry", "persian_cavalry", "chinese_militia", "mongol_lancer"];
+    const kinds = [
+      "infantry",
+      "persian_infantry",
+      "jurchen_infantry",
+      "forest_warband",
+      "horde",
+      "herd",
+      "horse_archer",
+      "chinese_cavalry",
+      "persian_cavalry",
+      "jurchen_cavalry",
+      "forest_raiders",
+      "chinese_militia",
+      "mongol_lancer",
+    ];
     const medium = unitSpriteZoomLevels.find((level) => level.key === "medium");
     return {
       levels: unitSpriteZoomLevels.map((level) => level.key),
@@ -1764,7 +1778,7 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect.poll(() => page.evaluate(() => ({
     keys: currentMap.factions.map((faction) => faction.key),
     turnOrder: currentMap.game.turnOrder,
-  }))).toEqual({ keys: ["mongol", "chinese", "persian"], turnOrder: [0, 2] });
+  }))).toEqual({ keys: ["mongol", "chinese", "jurchen", "forest_nomad", "persian"], turnOrder: [0, 2] });
 
   await page.getByRole("button", { name: "Edit", exact: true }).click();
   await expect(page.locator("#editor-unit-type")).toBeHidden();

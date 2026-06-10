@@ -15,6 +15,8 @@ constexpr OwnerId neutral_owner = -1;
 constexpr OwnerId mongol_owner = 0;
 constexpr OwnerId persian_owner = 1;
 constexpr OwnerId chinese_owner = 2;
+constexpr OwnerId jurchen_owner = 3;
+constexpr OwnerId forest_nomad_owner = 4;
 
 enum class HexTag : std::uint64_t {
     BaseSteppe = 1ull << 0,
@@ -63,6 +65,10 @@ enum class UnitKind {
     Infantry,
     PersianInfantry,
     PersianCavalry,
+    JurchenInfantry,
+    JurchenCavalry,
+    ForestWarband,
+    ForestRaiders,
     Horde,
 };
 

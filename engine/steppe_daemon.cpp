@@ -158,6 +158,8 @@ std::string unit_defaults_json() {
         write_faction("mongol", steppe::game::mongol_owner);
         write_faction("chinese", steppe::game::chinese_owner);
         write_faction("persian", steppe::game::persian_owner);
+        write_faction("jurchen", steppe::game::jurchen_owner);
+        write_faction("forest_nomad", steppe::game::forest_nomad_owner);
         out << "],\"allowedArchetypes\":[";
         bool wrote_archetype = false;
         const auto write_archetype = [&](const char* key) {
@@ -173,6 +175,8 @@ std::string unit_defaults_json() {
         write_archetype("steppe_nomad");
         write_archetype("chinese");
         write_archetype("persian");
+        write_archetype("jurchen");
+        write_archetype("forest_nomad");
         out << "]"
             << "}";
     }

@@ -289,6 +289,26 @@ const factions = {
     enabled: false,
     ai: false,
   },
+  jurchen: {
+    name: "Jurchen",
+    archetype: "jurchen",
+    color: "#1f6f68",
+    owner: 3,
+    metal: 4,
+    treasure: 0,
+    enabled: false,
+    ai: true,
+  },
+  forest_nomad: {
+    name: "Forest Nomads",
+    archetype: "forest_nomad",
+    color: "#2f6b35",
+    owner: 4,
+    metal: 2,
+    treasure: 0,
+    enabled: false,
+    ai: true,
+  },
   neutral: {
     name: "Neutral",
     archetype: "neutral",
@@ -302,7 +322,7 @@ const factions = {
 };
 
 const factionCount = 2;
-const defaultFactionKeys = ["mongol", "chinese", "persian"];
+const defaultFactionKeys = ["mongol", "chinese", "jurchen", "forest_nomad", "persian"];
 const factionTurnOrder = defaultFactionKeys.slice(0, factionCount);
 
 const unitTypeDefaults = {};
@@ -314,6 +334,10 @@ const unitDisplayKindNames = {
   infantry: "Chinese Infantry",
   persian_infantry: "Persian Infantry",
   persian_cavalry: "Persian Cavalry",
+  jurchen_infantry: "Jurchen Infantry",
+  jurchen_cavalry: "Jurchen Cavalry",
+  forest_warband: "Forest Warband",
+  forest_raiders: "Forest Raiders",
   horde: "Horde",
   herd: "Herd",
 };
@@ -326,6 +350,10 @@ const unitKindLabels = {
   infantry: "Chinese Infantry",
   persian_infantry: "Persian Infantry",
   persian_cavalry: "Persian Cavalry",
+  jurchen_infantry: "Jurchen Infantry",
+  jurchen_cavalry: "Jurchen Cavalry",
+  forest_warband: "Forest Warband",
+  forest_raiders: "Forest Raiders",
   horde: "Horde",
 };
 const fallbackUnitDefaults = {
@@ -353,6 +381,10 @@ const unitSpriteColumns = {
   mongol_lancer: "mongol_lancer",
   persian_infantry: "persian_infantry",
   persian_cavalry: "persian_cavalry",
+  jurchen_infantry: "jurchen_infantry",
+  jurchen_cavalry: "jurchen_cavalry",
+  forest_warband: "forest_warband",
+  forest_raiders: "forest_raiders",
 };
 const unitSpriteZoomLevels = [
   { key: "small", pixelSize: 48, visibleHexColumns: null },
@@ -405,6 +437,26 @@ const bitmapUnitSpriteSources = {
     small: "/unit-sprites/heavy_cavalry_48.png",
     medium: "/unit-sprites/heavy_cavalry_96.png",
     large: "/unit-sprites/heavy_cavalry_128.png",
+  },
+  jurchen_infantry: {
+    small: "/unit-sprites/infantry_48.png",
+    medium: "/unit-sprites/infantry_96.png",
+    large: "/unit-sprites/infantry_128.png",
+  },
+  jurchen_cavalry: {
+    small: "/unit-sprites/heavy_cavalry_48.png",
+    medium: "/unit-sprites/heavy_cavalry_96.png",
+    large: "/unit-sprites/heavy_cavalry_128.png",
+  },
+  forest_warband: {
+    small: "/unit-sprites/militia_48.png",
+    medium: "/unit-sprites/militia_96.png",
+    large: "/unit-sprites/militia_128.png",
+  },
+  forest_raiders: {
+    small: "/unit-sprites/horse_archer_48.png",
+    medium: "/unit-sprites/horse_archer_96.png",
+    large: "/unit-sprites/horse_archer_128.png",
   },
 };
 const bitmapUnitSpriteImages = {};
@@ -3562,10 +3614,14 @@ function drawMongolLancerSprite(spriteCtx, size, color) {
 const unitSpriteDrawers = {
   infantry: drawInfantrySprite,
   persian_infantry: drawInfantrySprite,
+  jurchen_infantry: drawInfantrySprite,
+  forest_warband: drawInfantrySprite,
   horde: drawHordeSprite,
   herd: drawHerdSprite,
   chinese_cavalry: drawChineseCavalrySprite,
   persian_cavalry: drawChineseCavalrySprite,
+  jurchen_cavalry: drawChineseCavalrySprite,
+  forest_raiders: drawChineseCavalrySprite,
   mongol_lancer: drawMongolLancerSprite,
 };
 

@@ -169,6 +169,10 @@ const char* unit_kind_to_string(UnitKind kind) {
         case UnitKind::Infantry: return "infantry";
         case UnitKind::PersianInfantry: return "persian_infantry";
         case UnitKind::PersianCavalry: return "persian_cavalry";
+        case UnitKind::JurchenInfantry: return "jurchen_infantry";
+        case UnitKind::JurchenCavalry: return "jurchen_cavalry";
+        case UnitKind::ForestWarband: return "forest_warband";
+        case UnitKind::ForestRaiders: return "forest_raiders";
         case UnitKind::Horde: return "horde";
     }
     return "horse_archer";
@@ -205,6 +209,22 @@ bool try_unit_kind_from_string(const std::string& kind, UnitKind& out) {
     }
     if (kind == "persian_cavalry") {
         out = UnitKind::PersianCavalry;
+        return true;
+    }
+    if (kind == "jurchen_infantry") {
+        out = UnitKind::JurchenInfantry;
+        return true;
+    }
+    if (kind == "jurchen_cavalry") {
+        out = UnitKind::JurchenCavalry;
+        return true;
+    }
+    if (kind == "forest_warband") {
+        out = UnitKind::ForestWarband;
+        return true;
+    }
+    if (kind == "forest_raiders") {
+        out = UnitKind::ForestRaiders;
         return true;
     }
     if (kind == "horde") {
@@ -324,6 +344,12 @@ FactionState faction_for_owner(OwnerId owner) {
     if (owner == persian_owner) {
         return {persian_owner, "persian", "Persian", "persian", "#1f4fa3", 4, 0, true, false};
     }
+    if (owner == jurchen_owner) {
+        return {jurchen_owner, "jurchen", "Jurchen", "jurchen", "#1f6f68", 4, 0, true, true};
+    }
+    if (owner == forest_nomad_owner) {
+        return {forest_nomad_owner, "forest_nomad", "Forest Nomads", "forest_nomad", "#2f6b35", 2, 0, true, true};
+    }
     return {neutral_owner, "neutral", "Neutral", "neutral", "#777777", 0, 0, false, false};
 }
 
@@ -336,6 +362,12 @@ OwnerId owner_from_faction_key(const std::string& key, OwnerId fallback = neutra
     }
     if (key == "persian") {
         return persian_owner;
+    }
+    if (key == "jurchen") {
+        return jurchen_owner;
+    }
+    if (key == "forest_nomad") {
+        return forest_nomad_owner;
     }
     if (key == "neutral") {
         return neutral_owner;
@@ -381,6 +413,10 @@ std::vector<UnitKind> required_unit_kinds() {
         UnitKind::Infantry,
         UnitKind::PersianInfantry,
         UnitKind::PersianCavalry,
+        UnitKind::JurchenInfantry,
+        UnitKind::JurchenCavalry,
+        UnitKind::ForestWarband,
+        UnitKind::ForestRaiders,
         UnitKind::Horde,
     };
 }
@@ -661,7 +697,9 @@ bool uses_mounted_road_cost(UnitKind kind) {
     return kind == UnitKind::HorseArcher
         || kind == UnitKind::ChineseCavalry
         || kind == UnitKind::MongolLancer
-        || kind == UnitKind::PersianCavalry;
+        || kind == UnitKind::PersianCavalry
+        || kind == UnitKind::JurchenCavalry
+        || kind == UnitKind::ForestRaiders;
 }
 
 bool is_cavalry_unit(UnitKind kind) {
@@ -852,6 +890,15 @@ bool unit_kind_available_to_archetype(UnitKind kind, const std::string& archetyp
         return kind == UnitKind::PersianInfantry
             || kind == UnitKind::PersianCavalry;
     }
+    if (archetype == "jurchen") {
+        return kind == UnitKind::JurchenInfantry
+            || kind == UnitKind::JurchenCavalry;
+    }
+    if (archetype == "forest_nomad") {
+        return kind == UnitKind::ForestWarband
+            || kind == UnitKind::ForestRaiders
+            || kind == UnitKind::Herd;
+    }
     return false;
 }
 
@@ -1023,6 +1070,8 @@ GameState game_state_from_generated_map(const GeneratedMap& generated) {
         faction_for_owner(mongol_owner),
         faction_for_owner(persian_owner),
         faction_for_owner(chinese_owner),
+        faction_for_owner(jurchen_owner),
+        faction_for_owner(forest_nomad_owner),
     };
     state.turn_order = {mongol_owner, chinese_owner};
     normalize_diplomacy(state);
@@ -1045,10 +1094,12 @@ GameState create_default_play_sandbox(int width, int height, int faction_count) 
         faction_for_owner(mongol_owner),
         faction_for_owner(chinese_owner),
         faction_for_owner(persian_owner),
+        faction_for_owner(jurchen_owner),
+        faction_for_owner(forest_nomad_owner),
     };
 
-    const OwnerId default_order[] = {mongol_owner, chinese_owner, persian_owner};
-    faction_count = std::max(1, std::min(faction_count, 3));
+    const OwnerId default_order[] = {mongol_owner, chinese_owner, jurchen_owner, forest_nomad_owner, persian_owner};
+    faction_count = std::max(1, std::min(faction_count, 5));
     state.turn_order.assign(default_order, default_order + faction_count);
     normalize_diplomacy(state);
 
@@ -2469,7 +2520,7 @@ bool strategic_directive_for_owner(const GameState& state, OwnerId owner, Coord 
         return false;
     }
 
-    if (archetype == "chinese" || archetype == "persian") {
+    if (archetype == "chinese" || archetype == "persian" || archetype == "jurchen") {
         Coord target;
         if (nearest_owned_settlement_threat(state, owner, origin, target)) {
             directive.kind = AiDirectiveKind::DefendHex;
@@ -2479,6 +2530,19 @@ bool strategic_directive_for_owner(const GameState& state, OwnerId owner, Coord 
         if (nearest_capturable_hex(state, owner, origin, target)) {
             directive.kind = AiDirectiveKind::CaptureHex;
             directive.target = target;
+            return true;
+        }
+        if (nearest_enemy_unit_from_coord(state, owner, origin) != nullptr) {
+            directive = default_hunt_directive();
+            return true;
+        }
+    }
+
+    if (archetype == "forest_nomad") {
+        const Unit* horde = nearest_enemy_unit_from_coord(state, owner, origin, neutral_owner, true);
+        if (horde != nullptr) {
+            directive.kind = AiDirectiveKind::HuntHorde;
+            directive.target_owner = horde->owner;
             return true;
         }
         if (nearest_enemy_unit_from_coord(state, owner, origin) != nullptr) {
@@ -3502,6 +3566,10 @@ GameState parse_game_state_json(const std::string& json) {
                 unit.owner = chinese_owner;
             } else if (faction == "persian") {
                 unit.owner = persian_owner;
+            } else if (faction == "jurchen") {
+                unit.owner = jurchen_owner;
+            } else if (faction == "forest_nomad") {
+                unit.owner = forest_nomad_owner;
             }
         }
         unit.kind = unit_kind_from_string(string_field(unit_json, "kind", "horse_archer"));

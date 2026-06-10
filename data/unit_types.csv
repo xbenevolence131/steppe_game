@@ -7,4 +7,8 @@ chinese_militia,10,3,3,10,100,2,true,true,default,default,0,0
 infantry,10,4,5,10,100,2,true,true,default,default,0,0
 persian_infantry,10,4,5,10,100,2,true,true,default,default,0,0
 persian_cavalry,10,7,4,10,100,3,true,true,default,default,0,0
+jurchen_infantry,10,4,5,10,100,2,true,true,default,default,0,0
+jurchen_cavalry,10,7,4,10,100,3,true,true,default,default,0,0
+forest_warband,10,4,5,10,100,2,true,true,default,default,0,0
+forest_raiders,10,5,4,10,100,3,true,true,default,default,0,0
 horde,10,2,3,0,100,3,true,true,default,default,4,12
