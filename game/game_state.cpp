@@ -9,6 +9,7 @@
 #include <deque>
 #include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <initializer_list>
 #include <limits>
@@ -639,8 +640,11 @@ constexpr int feigned_retreat_pursuit_readiness_penalty = 15;
 constexpr int feigned_retreat_defender_hp_damage = 1;
 constexpr int feigned_retreat_defender_readiness_penalty = 10;
 constexpr int blocked_retreat_readiness_penalty = 15;
-constexpr int pasture_capacity_grassland = 100;
-constexpr int pasture_consumption_per_horse = 8;
+constexpr double pasture_capacity_grassland = 100.0;
+constexpr double pasture_consumption_per_horse = 15.0;
+constexpr double pasture_recovery_per_game_turn = pasture_capacity_grassland / 16.0;
+constexpr int pasture_grazing_radius = 2;
+constexpr int horde_horse_capacity = 20;
 constexpr int starvation_horse_loss_turn_threshold = 3;
 constexpr int starvation_horse_loss_percent = 25;
 
@@ -742,6 +746,12 @@ std::string escape_json(const std::string& text) {
         escaped.push_back(ch);
     }
     return escaped;
+}
+
+std::string decimal_2(double value) {
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(2) << value;
+    return stream.str();
 }
 
 using Json = nlohmann::json;
@@ -1017,7 +1027,7 @@ OwnerId owner_from_town(const Town& town) {
 PastureState initial_pasture_for_terrain(Terrain terrain) {
     switch (terrain) {
         case Terrain::Grassland:
-            return {pasture_capacity_grassland, pasture_capacity_grassland, 0};
+            return {pasture_capacity_grassland, pasture_capacity_grassland};
         default:
             return {};
     }
@@ -2784,18 +2794,9 @@ bool grazes_pasture(const Unit& unit) {
 
 std::vector<GameHex*> grazing_hexes_for_unit(GameState& state, const Unit& unit) {
     std::vector<GameHex*> hexes;
-    GameHex* origin = find_hex(state, unit.coord);
-    if (origin != nullptr && origin->pasture.capacity > 0) {
-        hexes.push_back(origin);
-    }
-    for (int direction = 0; direction < 6; ++direction) {
-        const Coord neighbor = neighbor_in_direction(unit.coord, direction);
-        if (!in_bounds(state, neighbor)) {
-            continue;
-        }
-        GameHex* hex = find_hex(state, neighbor);
-        if (hex != nullptr && hex->pasture.capacity > 0) {
-            hexes.push_back(hex);
+    for (GameHex& hex : state.hexes) {
+        if (hex.pasture.capacity > 0.0 && hex_distance(unit.coord, hex.coord) <= pasture_grazing_radius) {
+            hexes.push_back(&hex);
         }
     }
     std::sort(hexes.begin(), hexes.end(), [](const GameHex* first, const GameHex* second) {
@@ -2804,59 +2805,85 @@ std::vector<GameHex*> grazing_hexes_for_unit(GameState& state, const Unit& unit)
     return hexes;
 }
 
-void apply_grazing_for_faction(GameState& state, OwnerId owner) {
+void apply_pasture_for_game_turn(GameState& state) {
+    std::vector<Coord> grazed_coords;
+    std::vector<Unit*> grazing_units;
     for (Unit& unit : state.units) {
-        if (unit.owner != owner || !grazes_pasture(unit)) {
+        if (grazes_pasture(unit)) {
+            grazing_units.push_back(&unit);
+        }
+    }
+    std::sort(grazing_units.begin(), grazing_units.end(), [](const Unit* first, const Unit* second) {
+        return first->id < second->id;
+    });
+
+    for (Unit* unit : grazing_units) {
+        if (unit == nullptr || !grazes_pasture(*unit)) {
             continue;
         }
-        std::vector<GameHex*> pasture_hexes = grazing_hexes_for_unit(state, unit);
-        const int demand = unit.horses * pasture_consumption_per_horse;
-        int consumed = 0;
+        std::vector<GameHex*> pasture_hexes = grazing_hexes_for_unit(state, *unit);
+        for (const GameHex* hex : pasture_hexes) {
+            grazed_coords.push_back(hex->coord);
+        }
+
+        const double demand = unit->horses * pasture_consumption_per_horse;
+        double consumed = 0.0;
         if (!pasture_hexes.empty()) {
-            const int base = demand / static_cast<int>(pasture_hexes.size());
-            int remainder = demand % static_cast<int>(pasture_hexes.size());
+            const double consumption_per_hex = demand / static_cast<double>(pasture_hexes.size());
             for (GameHex* hex : pasture_hexes) {
-                const int consumption = base + (remainder > 0 ? 1 : 0);
-                if (remainder > 0) {
-                    --remainder;
-                }
-                const int actual_consumption = std::min(hex->pasture.remaining, consumption);
-                hex->pasture.remaining = std::max(0, hex->pasture.remaining - actual_consumption);
+                const double actual_consumption = std::min(hex->pasture.remaining, consumption_per_hex);
+                hex->pasture.remaining = std::max(0.0, hex->pasture.remaining - actual_consumption);
                 consumed += actual_consumption;
             }
         }
 
-        const int shortfall = std::max(0, demand - consumed);
-        if (shortfall == 0) {
-            unit.starvation_turns = 0;
+        const double shortfall = std::max(0.0, demand - consumed);
+        if (shortfall <= 0.0001) {
+            unit->starvation_turns = 0;
             continue;
         }
 
-        unit.starvation_turns += 1;
-        if (unit.starvation_turns < starvation_horse_loss_turn_threshold) {
+        unit->starvation_turns += 1;
+        if (unit->starvation_turns < starvation_horse_loss_turn_threshold) {
             continue;
         }
-        const int numerator = unit.horses * shortfall * starvation_horse_loss_percent;
-        const int denominator = std::max(1, demand * 100);
+        const double numerator = unit->horses * shortfall * starvation_horse_loss_percent;
+        const double denominator = std::max(1.0, demand * 100.0);
         const int horse_loss = std::min(
-            unit.horses,
-            std::max(1, (numerator + denominator - 1) / denominator)
+            unit->horses,
+            std::max(1, static_cast<int>(std::ceil(numerator / denominator)))
         );
-        unit.horses = std::max(0, unit.horses - horse_loss);
-        if (unit.horses == 0) {
-            unit.starvation_turns = 0;
+        unit->horses = std::max(0, unit->horses - horse_loss);
+        if (unit->horses == 0) {
+            unit->starvation_turns = 0;
         }
+    }
+
+    std::sort(grazed_coords.begin(), grazed_coords.end(), coord_less);
+    grazed_coords.erase(std::unique(grazed_coords.begin(), grazed_coords.end(), coord_equal), grazed_coords.end());
+
+    for (GameHex& hex : state.hexes) {
+        if (hex.pasture.capacity <= 0.0) {
+            continue;
+        }
+        const bool grazed = std::binary_search(grazed_coords.begin(), grazed_coords.end(), hex.coord, coord_less);
+        if (!grazed) {
+            hex.pasture.remaining = std::min(hex.pasture.capacity, hex.pasture.remaining + pasture_recovery_per_game_turn);
+        }
+        hex.pasture.remaining = std::max(0.0, std::min(hex.pasture.capacity, hex.pasture.remaining));
     }
 }
 
-void advance_to_next_faction(GameState& state) {
+bool advance_to_next_faction(GameState& state) {
     if (state.turn_order.empty()) {
         state.turn_order = {mongol_owner, chinese_owner};
     }
     state.active_faction_index = (state.active_faction_index + 1) % static_cast<int>(state.turn_order.size());
     if (state.active_faction_index == 0) {
         state.round += 1;
+        return true;
     }
+    return false;
 }
 
 void end_turn(GameState& state, std::vector<AiAnimationStep>* animation) {
@@ -2867,15 +2894,16 @@ void end_turn(GameState& state, std::vector<AiAnimationStep>* animation) {
         state.turn_order = {mongol_owner, chinese_owner};
     }
 
-    apply_grazing_for_faction(state, active_faction(state));
     const int faction_count = static_cast<int>(state.turn_order.size());
     for (int steps = 0; steps < faction_count; ++steps) {
-        advance_to_next_faction(state);
+        const bool completed_game_turn = advance_to_next_faction(state);
+        if (completed_game_turn) {
+            apply_pasture_for_game_turn(state);
+        }
         const OwnerId owner = active_faction(state);
         start_faction_turn(state, owner);
         if (faction_ai_controlled(state, owner)) {
             execute_ai_turn(state, owner, animation);
-            apply_grazing_for_faction(state, owner);
             continue;
         }
         break;
@@ -2906,9 +2934,8 @@ void print_string_array_json(const std::vector<std::string>& values, std::ostrea
 }
 
 void print_pasture_json(const PastureState& pasture, std::ostream& out) {
-    out << "{\"capacity\":" << pasture.capacity
-        << ",\"remaining\":" << pasture.remaining
-        << ",\"recoveryTurn\":" << pasture.recovery_turn
+    out << "{\"capacity\":" << decimal_2(pasture.capacity)
+        << ",\"remaining\":" << decimal_2(pasture.remaining)
         << "}";
 }
 
@@ -3480,12 +3507,14 @@ GameState parse_game_state_json(const std::string& json) {
         hex.pasture = initial_pasture_for_terrain(hex.terrain);
         if (hex_json.contains("pasture") && hex_json["pasture"].is_object()) {
             const Json& pasture_json = hex_json["pasture"];
-            hex.pasture.capacity = std::max(0, std::min(100, int_field(pasture_json, "capacity", hex.pasture.capacity)));
-            hex.pasture.remaining = std::max(
-                0,
-                std::min(hex.pasture.capacity, int_field(pasture_json, "remaining", hex.pasture.remaining))
+            hex.pasture.capacity = std::max(
+                0.0,
+                std::min(pasture_capacity_grassland, number_field(pasture_json, "capacity", hex.pasture.capacity))
             );
-            hex.pasture.recovery_turn = std::max(0, int_field(pasture_json, "recoveryTurn", hex.pasture.recovery_turn));
+            hex.pasture.remaining = std::max(
+                0.0,
+                std::min(hex.pasture.capacity, number_field(pasture_json, "remaining", hex.pasture.remaining))
+            );
         }
         hex.source_labels = string_array_field(hex_json, "labels");
         if (!hex.source_labels.empty()) {
@@ -3603,6 +3632,9 @@ GameState parse_game_state_json(const std::string& json) {
         unit.remaining_scaled_move = std::max(0, std::min(unit.remaining_scaled_move, unit.scaled_move));
         unit.population = std::max(0, int_field(unit_json, "population", defaults.population));
         unit.horses = std::max(0, int_field(unit_json, "horses", defaults.horses));
+        if (unit.kind == UnitKind::Horde) {
+            unit.horses = std::min(unit.horses, horde_horse_capacity);
+        }
         unit.starvation_turns = std::max(0, int_field(unit_json, "starvationTurns", 0));
         unit.production_active = string_field(unit_json, "productionState", "idle") == "building";
         unit.production_kind = unit_kind_from_string(string_field(unit_json, "productionKind", unit_kind_to_string(UnitKind::HorseArcher)));

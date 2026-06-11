@@ -79,9 +79,8 @@ enum class UnitStance {
 };
 
 struct PastureState {
-    int capacity = 0;
-    int remaining = 0;
-    int recovery_turn = 0;
+    double capacity = 0.0;
+    double remaining = 0.0;
 };
 
 struct GameHex {

@@ -155,6 +155,8 @@ let aiAnimationState = null;
 let aiAnimationInProgress = false;
 let playSurfaceMode = "map";
 
+const hordeHorseCapacity = 20;
+
 const viewport = {
   scale: 1,
   fitScale: 1,
@@ -531,7 +533,15 @@ function titleCaseToken(value) {
 
 function defaultPastureForTerrain(terrain) {
   const capacity = terrain === "grassland" ? 100 : 0;
-  return { capacity, remaining: capacity, recoveryTurn: 0 };
+  return { capacity, remaining: capacity };
+}
+
+function roundPastureValue(value) {
+  return Math.round(value * 100) / 100;
+}
+
+function formatPastureValue(value) {
+  return Number.isFinite(value) ? value.toFixed(2) : "0.00";
 }
 
 function normalizePasture(rawPasture, terrain) {
@@ -540,15 +550,12 @@ function normalizePasture(rawPasture, terrain) {
     return fallback;
   }
   const capacity = Number.isFinite(rawPasture.capacity)
-    ? Math.trunc(clamp(rawPasture.capacity, 0, 100))
+    ? roundPastureValue(clamp(rawPasture.capacity, 0, 100))
     : fallback.capacity;
   const remaining = Number.isFinite(rawPasture.remaining)
-    ? Math.trunc(clamp(rawPasture.remaining, 0, capacity))
+    ? roundPastureValue(clamp(rawPasture.remaining, 0, capacity))
     : Math.min(fallback.remaining, capacity);
-  const recoveryTurn = Number.isFinite(rawPasture.recoveryTurn)
-    ? Math.max(0, Math.trunc(rawPasture.recoveryTurn))
-    : 0;
-  return { capacity, remaining, recoveryTurn };
+  return { capacity, remaining };
 }
 
 function terrainDefensePercent(terrain) {
@@ -2209,6 +2216,11 @@ function normalizeUnitDefault(defaults) {
   return normalized;
 }
 
+function clampUnitHorses(kind, horses) {
+  const normalized = Math.max(0, Math.trunc(horses));
+  return kind === "horde" ? Math.min(normalized, hordeHorseCapacity) : normalized;
+}
+
 function unitDefaultsFor(kind) {
   return unitTypeDefaults[kind] || unitTypeDefaults.horse_archer || fallbackUnitDefaults;
 }
@@ -2312,7 +2324,7 @@ function normalizeUnit(unit, index) {
     : defaults.readiness;
   normalized.stance = typeof unit.stance === "string" ? unit.stance : defaults.stance;
   if (Number.isFinite(unit.population)) normalized.population = Math.max(0, Math.trunc(unit.population));
-  if (Number.isFinite(unit.horses)) normalized.horses = Math.max(0, Math.trunc(unit.horses));
+  if (Number.isFinite(unit.horses)) normalized.horses = clampUnitHorses(kind, unit.horses);
   if (Number.isFinite(unit.starvationTurns)) normalized.starvationTurns = Math.max(0, Math.trunc(unit.starvationTurns));
   if (typeof unit.productionState === "string") normalized.productionState = unit.productionState;
   if (typeof unit.productionKind === "string") normalized.productionKind = unit.productionKind;
@@ -2794,7 +2806,7 @@ function applyUnitTypeDefaults(unit, kind) {
   unit.projectsZoc = Boolean(defaults.projectsZoc);
   unit.respectsZoc = Boolean(defaults.respectsZoc);
   if (Number.isInteger(defaults.population)) unit.population = defaults.population;
-  if (Number.isInteger(defaults.horses)) unit.horses = defaults.horses;
+  if (Number.isInteger(defaults.horses)) unit.horses = clampUnitHorses(kind, defaults.horses);
   const stances = defaults.legalStances && defaults.legalStances.length > 0 ? defaults.legalStances : ["default"];
   unit.stance = stances.includes(unit.stance) ? unit.stance : defaults.stance;
   if (!hadCustomName) {
@@ -2866,7 +2878,11 @@ function updateEditorUnitResource(field, input) {
       return;
     }
     const value = Number.parseInt(input.value, 10);
-    unit[field] = Number.isFinite(value) ? Math.max(0, value) : (Number.isInteger(unit[field]) ? unit[field] : 0);
+    const fallback = Number.isInteger(unit[field]) ? unit[field] : 0;
+    unit[field] = Number.isFinite(value) ? Math.max(0, value) : fallback;
+    if (field === "horses") {
+      unit[field] = clampUnitHorses(unit.kind, unit[field]);
+    }
   });
 }
 
@@ -2989,6 +3005,11 @@ function syncUnitInspector() {
   unitPopulationInput.value = String(population);
   unitHorses.textContent = String(horses);
   unitHorsesInput.value = String(horses);
+  if (unit.kind === "horde") {
+    unitHorsesInput.max = String(hordeHorseCapacity);
+  } else {
+    unitHorsesInput.removeAttribute("max");
+  }
   unitStarvation.textContent = String(starvationTurns);
   unitProductionRow.hidden = unit.kind !== "horde";
   unitProduction.textContent = productionLabel(unit);
@@ -3053,7 +3074,7 @@ function syncHexInspector() {
     : "Blocked";
   hexPastureRow.hidden = pasture.capacity <= 0;
   hexPasture.textContent = pasture.capacity > 0
-    ? `${pasture.remaining}/${pasture.capacity}`
+    ? `${formatPastureValue(pasture.remaining)}/${formatPastureValue(pasture.capacity)}`
     : "-";
 }
 

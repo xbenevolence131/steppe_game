@@ -112,6 +112,34 @@ function mountedRoadMovementGameState() {
   return state;
 }
 
+function pastureGameState({ width = 7, height = 7, unit = null, pastureRemaining = 100, turnOrder = [0] } = {}) {
+  const hexes = [];
+  for (let r = 1; r <= height; r += 1) {
+    for (let q = 1; q <= width; q += 1) {
+      hexes.push({
+        q,
+        r,
+        terrain: "grassland",
+        labels: [],
+        pasture: { capacity: 100, remaining: pastureRemaining },
+      });
+    }
+  }
+  return {
+    width,
+    height,
+    seed: 0,
+    hexes,
+    units: unit ? [unit] : [],
+    game: {
+      round: 1,
+      activeFactionIndex: 0,
+      selectedUnitId: unit ? unit.id : 0,
+      turnOrder,
+    },
+  };
+}
+
 function mountainMinimumMoveGameState() {
   const hexes = [
     { q: 1, r: 1, terrain: "grassland", labels: [] },
@@ -676,6 +704,37 @@ test("end turn skips AI controlled factions", async ({ isMobile }) => {
   const advanced = runEngineJson(["game-end-turn"], state);
   expect(advanced.game.activeFactionIndex).toBe(2);
   expect(advanced.game.activeOwner).toBe(3);
+});
+
+test("pasture advances on game turns rather than faction turns", async ({ isMobile }) => {
+  test.skip(isMobile, "engine pasture rule is covered once on desktop");
+
+  const state = pastureGameState({
+    unit: { id: 1, owner: 0, faction: "mongol", kind: "horde", q: 4, r: 4, hp: 10, maxHp: 10, horses: 25 },
+    turnOrder: [0, 2],
+  });
+
+  const factionTurn = runEngineJson(["game-end-turn"], state);
+  expect(factionTurn.units.find((unit) => unit.id === 1).horses).toBe(20);
+  expect(factionTurn.game.round).toBe(1);
+  expect(factionTurn.game.activeFactionIndex).toBe(1);
+  expect(factionTurn.hexes.every((hex) => hex.pasture.remaining === 100)).toBe(true);
+
+  const gameTurn = runEngineJson(["game-end-turn"], factionTurn);
+  const grazedHexes = gameTurn.hexes.filter((hex) => hex.pasture.remaining === 84.21);
+  expect(gameTurn.game.round).toBe(2);
+  expect(gameTurn.game.activeFactionIndex).toBe(0);
+  expect(grazedHexes).toHaveLength(19);
+});
+
+test("unused pasture recovers continuously each game turn", async ({ isMobile }) => {
+  test.skip(isMobile, "engine pasture rule is covered once on desktop");
+
+  const state = pastureGameState({ width: 2, height: 2, pastureRemaining: 50 });
+  const recovered = runEngineJson(["game-end-turn"], state);
+
+  expect(recovered.game.round).toBe(2);
+  expect(recovered.hexes.every((hex) => hex.pasture.remaining === 56.25)).toBe(true);
 });
 
 test("AI directives choose distinct tactical targets", async ({ isMobile }) => {
