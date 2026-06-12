@@ -647,7 +647,7 @@ constexpr int blocked_retreat_readiness_penalty = 15;
 constexpr int unbridged_river_crossing_readiness_cost = 15;
 constexpr double pasture_capacity_grassland = 100.0;
 constexpr double pasture_consumption_per_horse = 15.0;
-constexpr double pasture_recovery_per_game_turn = pasture_capacity_grassland / 16.0;
+constexpr double pasture_recovery_per_round = pasture_capacity_grassland / 16.0;
 constexpr int pasture_grazing_radius = 2;
 constexpr int horde_horse_capacity = 20;
 constexpr int starvation_horse_loss_turn_threshold = 3;
@@ -2891,7 +2891,7 @@ std::vector<GameHex*> grazing_hexes_for_unit(GameState& state, const Unit& unit)
     return hexes;
 }
 
-void apply_pasture_for_game_turn(GameState& state) {
+void apply_pasture_for_round(GameState& state) {
     std::vector<Coord> grazed_coords;
     std::vector<Unit*> grazing_units;
     for (Unit& unit : state.units) {
@@ -2954,7 +2954,7 @@ void apply_pasture_for_game_turn(GameState& state) {
         }
         const bool grazed = std::binary_search(grazed_coords.begin(), grazed_coords.end(), hex.coord, coord_less);
         if (!grazed) {
-            hex.pasture.remaining = std::min(hex.pasture.capacity, hex.pasture.remaining + pasture_recovery_per_game_turn);
+            hex.pasture.remaining = std::min(hex.pasture.capacity, hex.pasture.remaining + pasture_recovery_per_round);
         }
         hex.pasture.remaining = std::max(0.0, std::min(hex.pasture.capacity, hex.pasture.remaining));
     }
@@ -2982,9 +2982,9 @@ void end_turn(GameState& state, std::vector<AiAnimationStep>* animation) {
 
     const int faction_count = static_cast<int>(state.turn_order.size());
     for (int steps = 0; steps < faction_count; ++steps) {
-        const bool completed_game_turn = advance_to_next_faction(state);
-        if (completed_game_turn) {
-            apply_pasture_for_game_turn(state);
+        const bool completed_round = advance_to_next_faction(state);
+        if (completed_round) {
+            apply_pasture_for_round(state);
         }
         const OwnerId owner = active_faction(state);
         start_faction_turn(state, owner);

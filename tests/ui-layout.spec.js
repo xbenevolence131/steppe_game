@@ -902,7 +902,7 @@ test("end turn skips AI controlled factions", async ({ isMobile }) => {
   expect(advanced.game.activeOwner).toBe(3);
 });
 
-test("pasture advances on game turns rather than faction turns", async ({ isMobile }) => {
+test("pasture advances on round boundaries rather than faction turns", async ({ isMobile }) => {
   test.skip(isMobile, "engine pasture rule is covered once on desktop");
 
   const state = pastureGameState({
@@ -916,14 +916,14 @@ test("pasture advances on game turns rather than faction turns", async ({ isMobi
   expect(factionTurn.game.activeFactionIndex).toBe(1);
   expect(factionTurn.hexes.every((hex) => hex.pasture.remaining === 100)).toBe(true);
 
-  const gameTurn = runEngineJson(["game-end-turn"], factionTurn);
-  const grazedHexes = gameTurn.hexes.filter((hex) => hex.pasture.remaining === 84.21);
-  expect(gameTurn.game.round).toBe(2);
-  expect(gameTurn.game.activeFactionIndex).toBe(0);
+  const nextRound = runEngineJson(["game-end-turn"], factionTurn);
+  const grazedHexes = nextRound.hexes.filter((hex) => hex.pasture.remaining === 84.21);
+  expect(nextRound.game.round).toBe(2);
+  expect(nextRound.game.activeFactionIndex).toBe(0);
   expect(grazedHexes).toHaveLength(19);
 });
 
-test("unused pasture recovers continuously each game turn", async ({ isMobile }) => {
+test("unused pasture recovers continuously each round", async ({ isMobile }) => {
   test.skip(isMobile, "engine pasture rule is covered once on desktop");
 
   const state = pastureGameState({ width: 2, height: 2, pastureRemaining: 50 });
@@ -1459,11 +1459,12 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   await expect(page.locator("#play-details-bar")).toBeVisible();
   await expect(page.locator(".hex-inspector h2")).toHaveText("Hex Inspector");
   await expect(page.locator(".control-status-region h2")).toHaveText("Control Status");
-  await expect(page.locator(".control-status-region")).toContainText("Current Turn");
+  await expect(page.locator(".control-status-region")).toContainText("Current Round");
   await expect(page.locator(".control-status-region")).toContainText("Active Faction");
   await expect(page.locator("#round-count")).toHaveText("1");
   await expect(page.locator("#status-active-faction-name")).toHaveText("Mongol");
   await expect(page.locator("#status-end-turn-button")).toBeVisible();
+  await expect(page.locator("#status-end-turn-button")).toBeEnabled();
   const detailWidths = await page.evaluate(() => {
     const unit = document.querySelector(".unit-inspector").getBoundingClientRect();
     const hex = document.querySelector(".hex-inspector").getBoundingClientRect();
