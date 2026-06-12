@@ -257,6 +257,10 @@
         <article class="play-ai-region is-active">
           <div class="play-ai-region-rail">Strategic AI</div>
           <div class="play-ai-region-body">
+            <div class="play-ai-panel-header">
+              <span id="strategic-ai-panel-summary" class="play-ai-panel-summary">No AI groups</span>
+              <button id="strategic-ai-toggle-button" class="strategic-ai-toggle-button" type="button" aria-expanded="true" aria-label="Collapse Strategic AI">-</button>
+            </div>
             <div class="play-ai-tool-panel ai-tool-panel">
               <div id="strategic-ai-groups" class="ai-groups" aria-label="Strategic AI groups"></div>
             </div>
@@ -266,36 +270,6 @@
 
       <div class="main-workbench">
         <aside id="play-controls" class="mode-sidebar play-sidebar" aria-label="Unit controls">
-          <div class="sidebar-section">
-            <h2>Play</h2>
-            <div class="turn-counter">Turn 1</div>
-            <button id="end-turn-button" type="button">End Turn</button>
-          </div>
-          <div class="sidebar-section">
-            <h2>Faction</h2>
-            <dl class="status-list">
-              <div>
-                <dt>Herds</dt>
-                <dd id="herd-count">0</dd>
-              </div>
-              <div>
-                <dt>Horse Archers</dt>
-                <dd id="horse-archer-count">0</dd>
-              </div>
-              <div>
-                <dt>Hordes</dt>
-                <dd id="horde-count">0</dd>
-              </div>
-              <div>
-                <dt>Metal</dt>
-                <dd id="sidebar-faction-metal">0</dd>
-              </div>
-            </dl>
-          </div>
-          <div class="sidebar-section">
-            <h2>Selection</h2>
-            <div class="selection-readout sidebar-selection-readout">None</div>
-          </div>
           <div class="sidebar-section">
             <h2>Units</h2>
             <div id="unit-roster" class="unit-roster" aria-label="Deployed units"></div>

@@ -123,6 +123,12 @@ body {
   display: grid;
 }
 
+.app-shell.is-play.strategic-ai-collapsed .strategic-ai-dashboard {
+  max-height: none;
+  overflow: hidden;
+  padding: 4px 8px;
+}
+
 .faction-status-title {
   min-width: 140px;
   font-weight: 650;
@@ -231,14 +237,14 @@ body {
 
 .scenario-region {
   display: grid;
-  grid-template-columns: 116px minmax(0, 1fr);
+  grid-template-columns: 174px minmax(0, 1fr);
   border: 1px solid rgba(185, 173, 150, 0.9);
   background: #f6f1e8;
 }
 
 .play-ai-region {
   display: grid;
-  grid-template-columns: 116px minmax(0, 1fr);
+  grid-template-columns: 174px minmax(0, 1fr);
   border: 1px solid rgba(185, 173, 150, 0.9);
   background: #f6f1e8;
 }
@@ -286,11 +292,43 @@ body {
   min-width: 0;
 }
 
+.play-ai-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 44px;
+  padding: 7px 10px;
+}
+
+.play-ai-panel-summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .scenario-region-toggle {
   position: absolute;
   top: 7px;
   right: 7px;
   z-index: 2;
+  display: grid;
+  place-items: center;
+  min-width: 28px;
+  width: 28px;
+  min-height: 28px;
+  height: 28px;
+  padding: 0;
+  border-color: var(--line);
+  background: #fffdf8;
+  color: var(--text);
+}
+
+.strategic-ai-toggle-button {
   display: grid;
   place-items: center;
   min-width: 28px;
@@ -434,6 +472,17 @@ body {
   display: grid;
   gap: 8px;
   padding: 10px;
+}
+
+.app-shell.is-play.strategic-ai-collapsed .play-ai-tool-panel {
+  display: none;
+}
+
+.app-shell.is-play.strategic-ai-collapsed .play-ai-region-rail,
+.app-shell.is-play.strategic-ai-collapsed .play-ai-panel-header {
+  min-height: 34px;
+  padding-top: 4px;
+  padding-bottom: 4px;
 }
 
 .ai-group-row,
@@ -1481,7 +1530,7 @@ select[hidden] {
 
   .scenario-region,
   .play-ai-region {
-    grid-template-columns: 96px minmax(0, 1fr);
+    grid-template-columns: 144px minmax(0, 1fr);
   }
 
   .parameters-grid,

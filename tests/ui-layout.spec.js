@@ -1114,7 +1114,7 @@ test("scenario controls sit above the shared map", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Parameters", exact: true })).toHaveCount(0);
   await expect(page.locator('[data-scenario-region="session"]')).toHaveClass(/is-active/);
   await expect(page.locator("#play-controls")).toBeVisible();
-  await expect(page.locator("#end-turn-button")).toBeDisabled();
+  await expect(page.locator("#unit-roster")).toBeVisible();
   await expect(page.locator(".map-section")).toBeVisible();
   const isMobileLayout = await page.evaluate(() => window.innerWidth <= 820);
   if (isMobileLayout) {
@@ -1283,9 +1283,8 @@ test("clicking inactive units inspects without enabling actions", async ({ page,
   });
 
   await page.mouse.click(point.x, point.y);
-  await expect(page.locator("#unit-name")).toHaveText("Chinese Cavalry");
+  await expect(page.locator("#unit-name")).toHaveText(/c_chinese_cavalry_\d+/);
   await expect(page.locator("#unit-type")).toHaveText("Chinese Cavalry");
-  await expect(page.locator(".sidebar-selection-readout")).toHaveText("Chinese Cavalry");
   await expect.poll(() => page.evaluate(() => ({
     selectedUnitId: currentMap.game.selectedUnitId,
     legalMoves: currentMap.game.legalMoves.length,
@@ -1407,17 +1406,35 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   await expect(page.locator("#faction-horses-total")).toHaveText("5");
   await expect(page.locator("#faction-metal-total")).toHaveText("2");
   await expect(page.locator("#faction-treasure-total")).toHaveText("0");
-  await expect(page.locator("#sidebar-faction-metal")).toHaveText("2");
+  await expect(page.locator("#play-controls .sidebar-section")).toHaveCount(1);
+  await expect(page.locator("#play-controls")).toContainText("Units");
+  await expect(page.locator("#play-controls")).not.toContainText("Faction");
+  await expect(page.locator("#play-controls")).not.toContainText("End Turn");
+  await expect(page.locator("#play-controls")).not.toContainText("Selection");
 
   const rosterItems = page.locator(".unit-roster-item");
-  await expect(rosterItems.first()).toContainText("Mongol Horse Archers");
+  await expect(rosterItems.first()).toContainText(/m_horse_archer_\d+/);
   await expect(rosterItems.first()).toContainText("Horse Archers - HP 10/10");
+  const shortNameStats = await page.evaluate(() => {
+    const names = currentMap.units.map((unit) => unitDisplayName(unit));
+    return {
+      count: names.length,
+      uniqueCount: new Set(names).size,
+      valid: names.every((name) => /^[a-z]_[a-z_]+_\d+$/.test(name)),
+      hasMongol: names.some((name) => /^m_[a-z_]+_\d+$/.test(name)),
+      hasChinese: names.some((name) => /^c_[a-z_]+_\d+$/.test(name)),
+    };
+  });
+  expect(shortNameStats.count).toBeGreaterThan(0);
+  expect(shortNameStats.uniqueCount).toBe(shortNameStats.count);
+  expect(shortNameStats.valid).toBe(true);
+  expect(shortNameStats.hasMongol).toBe(true);
+  expect(shortNameStats.hasChinese).toBe(true);
 
   await rosterItems.first().click();
 
-  await expect(page.locator(".sidebar-selection-readout")).toHaveText("Mongol Horse Archers");
   await expect(page.locator(".unit-inspector h2")).toHaveText("Unit Inspector");
-  await expect(page.locator("#unit-name")).toHaveText("Mongol Horse Archers");
+  await expect(page.locator("#unit-name")).toHaveText(/m_horse_archer_\d+/);
   await expect(page.locator("#unit-type")).toHaveText("Horse Archers");
   await expect(page.locator("#unit-hp")).toHaveText("10");
   await expect(page.locator("#unit-readiness")).toHaveText("100");
@@ -1444,7 +1461,6 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   await expect(page.locator(".control-status-region h2")).toHaveText("Control Status");
   await expect(page.locator(".control-status-region")).toContainText("Current Turn");
   await expect(page.locator(".control-status-region")).toContainText("Active Faction");
-  await expect(page.locator("#herd-count")).toHaveText("1");
   await expect(page.locator("#round-count")).toHaveText("1");
   await expect(page.locator("#status-active-faction-name")).toHaveText("Mongol");
   await expect(page.locator("#status-end-turn-button")).toBeVisible();
@@ -1466,7 +1482,6 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   await expect(page.locator("#faction-population-total")).toHaveText("4");
   await expect(page.locator("#faction-horses-total")).toHaveText("12");
   await expect(page.locator("#faction-metal-total")).toHaveText("4");
-  await expect(page.locator("#sidebar-faction-metal")).toHaveText("4");
 
   const layout = await page.evaluate(() => {
     const sidebar = document.querySelector("#play-controls").getBoundingClientRect();
@@ -1484,6 +1499,51 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   expect(layout.mapLeft).toBeGreaterThanOrEqual(layout.sidebarRight - 1);
   expect(layout.inspectorHeight).toBeGreaterThan(0);
   expect(layout.scrollWidth).toBeLessThanOrEqual(layout.viewportWidth);
+});
+
+test("play strategic AI panel collapses to a single row", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop layout has stable panel height assertions");
+
+  await openPlayMode(page);
+  await page.evaluate(() => {
+    ensureGameMeta();
+    currentMap.game.aiGroups = normalizeAiGroups([{
+      id: 11,
+      owner: 2,
+      name: "Reserve Screen",
+      unitIds: [currentMap.units.find((unit) => unit.owner === 2).id],
+      directive: { type: "inactive", target: { q: 1, r: 1 }, owner: 0, faction: "mongol" },
+    }]);
+    syncStrategicAiDashboard();
+    syncModeControls();
+  });
+
+  await expect(page.locator("#strategic-ai-panel-summary")).toHaveText("1 AI group / 1 units");
+  await expect(page.locator("#strategic-ai-groups")).toBeVisible();
+
+  const expanded = await page.evaluate(() => {
+    const dashboard = document.querySelector("#strategic-ai-dashboard").getBoundingClientRect();
+    const map = document.querySelector(".map-section").getBoundingClientRect();
+    return { dashboardHeight: dashboard.height, mapTop: map.top };
+  });
+
+  await page.locator("#strategic-ai-toggle-button").click();
+  await expect(page.locator("#app-shell")).toHaveClass(/strategic-ai-collapsed/);
+  await expect(page.locator("#strategic-ai-toggle-button")).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator("#strategic-ai-groups")).toBeHidden();
+
+  const collapsed = await page.evaluate(() => {
+    const dashboard = document.querySelector("#strategic-ai-dashboard").getBoundingClientRect();
+    const map = document.querySelector(".map-section").getBoundingClientRect();
+    return { dashboardHeight: dashboard.height, mapTop: map.top };
+  });
+  expect(collapsed.dashboardHeight).toBeLessThan(expanded.dashboardHeight);
+  expect(collapsed.dashboardHeight).toBeLessThanOrEqual(64);
+  expect(collapsed.mapTop).toBeLessThan(expanded.mapTop);
+
+  await page.locator("#strategic-ai-toggle-button").click();
+  await expect(page.locator("#app-shell")).not.toHaveClass(/strategic-ai-collapsed/);
+  await expect(page.locator("#strategic-ai-groups")).toBeVisible();
 });
 
 test("unit counters use sprite glyph zoom bands", async ({ page, isMobile }) => {
@@ -1581,7 +1641,7 @@ test("horde inspector shows resource counters", async ({ page, isMobile }) => {
 
   await openPlayMode(page);
 
-  await page.locator(".unit-roster-item").filter({ hasText: "Mongol Horde" }).click();
+  await page.locator(".unit-roster-item").filter({ hasText: /m_horde_\d+/ }).click();
   await expect(page.locator("#unit-type")).toHaveText("Horde");
   await expect(page.locator("#unit-resources")).toBeVisible();
   await expect(page.locator("#unit-population")).toHaveText("4");
@@ -1975,7 +2035,7 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await page.getByRole("button", { name: "New Scenario" }).click();
   await expect(page.locator("#play-controls")).toBeVisible();
   await expect(page.locator("#play-details-bar")).toBeVisible();
-  await expect(page.locator("#end-turn-button")).toBeDisabled();
+  await expect(page.locator("#unit-roster")).toBeVisible();
   await expect(page.getByRole("button", { name: "Hide Panel" })).toBeVisible();
   const expandedMapHeight = await page.evaluate(() => document.querySelector("#map-panel").getBoundingClientRect().height);
   await page.getByRole("button", { name: "Hide Panel" }).click();
@@ -2324,12 +2384,12 @@ test("AI smoke scenario can enter play and end the human turn", async ({ page, i
   });
   await page.getByRole("button", { name: "Play" }).click();
   await expect(page.locator("#faction-status-name")).toHaveText("Mongol");
-  await expect(page.locator("#end-turn-button")).toBeEnabled();
+  await expect(page.locator("#status-end-turn-button")).toBeVisible();
   const redBefore = await page.evaluate(() => currentMap.units
     .filter((unit) => unit.owner === 2)
     .map((unit) => ({ id: unit.id, q: unit.q, r: unit.r, hp: unit.hp })));
 
-  await page.locator("#end-turn-button").click();
+  await page.locator("#status-end-turn-button").click();
   await expect(page.locator("#faction-status-name")).toHaveText("Mongol");
   await expect.poll(() => page.evaluate(() => ({
     round: currentMap.game.round,

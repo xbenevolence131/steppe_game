@@ -64,6 +64,8 @@ const terrainPalette = document.querySelector("#terrain-palette");
 const addAiGroupButton = document.querySelector("#add-ai-group-button");
 const aiGroupsContainer = document.querySelector("#ai-groups");
 const strategicAiGroupsContainer = document.querySelector("#strategic-ai-groups");
+const strategicAiToggleButton = document.querySelector("#strategic-ai-toggle-button");
+const strategicAiPanelSummary = document.querySelector("#strategic-ai-panel-summary");
 const endTurnButton = document.querySelector("#end-turn-button");
 const controlEndTurnButton = document.querySelector("#control-end-turn-button");
 const statusEndTurnButton = document.querySelector("#status-end-turn-button");
@@ -132,6 +134,7 @@ let activeStrategicAiGroupId = 0;
 let nextStrategicAiGroupIndex = 0;
 let collapsedAiGroupIds = new Set();
 let collapsedStrategicAiGroupIds = new Set();
+let strategicAiCollapsed = false;
 let openScenarioRegions = new Set(["session", "terrain", "units", "ai"]);
 let paintStrokeKeys = new Set();
 let paintUndoRecorded = false;
@@ -1388,10 +1391,20 @@ function syncStrategicAiDashboard() {
   }
   strategicAiGroupsContainer.replaceChildren();
   if (appMode !== "play" || !currentMap) {
+    if (strategicAiPanelSummary) {
+      strategicAiPanelSummary.textContent = "No AI groups";
+    }
     return;
   }
 
   const groups = aiGroups();
+  if (strategicAiPanelSummary) {
+    const groupText = groups.length === 1 ? "1 AI group" : `${groups.length} AI groups`;
+    const unitCount = groups.reduce((sum, group) => sum + group.unitIds.length, 0);
+    strategicAiPanelSummary.textContent = groups.length > 0
+      ? `${groupText} / ${unitCount} units`
+      : "No AI groups";
+  }
   if (groups.length === 0) {
     activeStrategicAiGroupId = 0;
     const empty = document.createElement("p");
@@ -2764,9 +2777,7 @@ function unitDisplayName(unit) {
   if (unit && typeof unit.name === "string" && unit.name.trim()) {
     return unit.name.trim();
   }
-  const faction = factions[unit.faction] || factions.mongol;
-  const kind = unitDisplayKindNames[unit.kind] || unit.kind;
-  return `${faction.name} ${kind}`;
+  return defaultUnitDisplayNameFor(unit);
 }
 
 function unitKindLabel(unit) {
@@ -2808,9 +2819,18 @@ function resourceFieldsForUnit(unit) {
 }
 
 function defaultUnitDisplayNameFor(unit, kind = unit.kind) {
-  const faction = factions[unit.faction] || factions.mongol;
-  const displayKind = unitDisplayKindNames[kind] || kind;
-  return `${faction.name} ${displayKind}`;
+  const owner = Number.isInteger(unit && unit.owner)
+    ? unit.owner
+    : (factions[unit && unit.faction] ? factions[unit.faction].owner : factions.neutral.owner);
+  const faction = factionForOwner(owner);
+  const factionName = typeof faction.name === "string" && faction.name.trim()
+    ? faction.name.trim()
+    : (typeof (unit && unit.faction) === "string" && unit.faction.trim() ? unit.faction.trim() : "unit");
+  const prefixMatch = factionName.match(/[A-Za-z0-9]/);
+  const prefix = prefixMatch ? prefixMatch[0].toLowerCase() : "u";
+  const unitKind = typeof kind === "string" && kind.trim() ? kind.trim() : "unit";
+  const id = Number.isInteger(unit && unit.id) ? unit.id : 0;
+  return `${prefix}_${unitKind}_${id}`;
 }
 
 function editorInspectorUnit() {
@@ -2969,7 +2989,9 @@ function syncUnitInspector() {
   const unitInspector = document.querySelector(".unit-inspector");
   unitInspector.classList.toggle("is-editing", editing);
   if (!unit) {
-    sidebarSelectionReadout.textContent = "None";
+    if (sidebarSelectionReadout) {
+      sidebarSelectionReadout.textContent = "None";
+    }
     unitName.textContent = "None";
     unitNameInput.value = "";
     unitType.textContent = "-";
@@ -2996,7 +3018,9 @@ function syncUnitInspector() {
     unitProduction.textContent = "Idle";
     return;
   }
-  sidebarSelectionReadout.textContent = unitDisplayName(unit);
+  if (sidebarSelectionReadout) {
+    sidebarSelectionReadout.textContent = unitDisplayName(unit);
+  }
   unitName.textContent = unitDisplayName(unit);
   unitNameInput.value = unitDisplayName(unit);
   unitType.textContent = unitKindLabel(unit);
@@ -3047,21 +3071,33 @@ function syncPlayControls() {
   ensureGameMeta();
   const faction = activeFaction();
   const owner = activeOwner();
-  turnCounter.textContent = `Round ${currentTurn} · ${faction.name} turn`;
-  activeFactionName.textContent = faction.name;
+  if (turnCounter) {
+    turnCounter.textContent = `Round ${currentTurn} · ${faction.name} turn`;
+  }
+  if (activeFactionName) {
+    activeFactionName.textContent = faction.name;
+  }
   statusActiveFactionName.textContent = faction.name;
   factionStatusName.textContent = faction.name;
   roundCount.textContent = String(currentTurn);
   turnStatusReadout.textContent = `${faction.name} turn`;
-  herdCount.textContent = String(countUnits("herd", owner));
-  horseArcherCount.textContent = String(countUnits("horse_archer", owner));
-  hordeCount.textContent = String(countUnits("horde", owner));
+  if (herdCount) {
+    herdCount.textContent = String(countUnits("herd", owner));
+  }
+  if (horseArcherCount) {
+    horseArcherCount.textContent = String(countUnits("horse_archer", owner));
+  }
+  if (hordeCount) {
+    hordeCount.textContent = String(countUnits("horde", owner));
+  }
   const resources = activeFactionResources(owner);
   factionPopulationTotal.textContent = String(resources.population);
   factionHorsesTotal.textContent = String(resources.horses);
   factionMetalTotal.textContent = String(resources.metal);
   factionTreasureTotal.textContent = String(resources.treasure);
-  sidebarFactionMetal.textContent = String(resources.metal);
+  if (sidebarFactionMetal) {
+    sidebarFactionMetal.textContent = String(resources.metal);
+  }
   if (executeAiGroupButton) {
     executeAiGroupButton.disabled = appMode !== "play" || aiAnimationInProgress || strategicAiGroups().length === 0;
   }
@@ -3118,6 +3154,14 @@ function toggleDiplomacySurface() {
   setPlaySurfaceMode(playSurfaceMode === "diplomacy" ? "map" : "diplomacy");
 }
 
+function toggleStrategicAiPanel() {
+  if (appMode !== "play") {
+    return;
+  }
+  strategicAiCollapsed = !strategicAiCollapsed;
+  syncModeControls();
+}
+
 function toggleScenarioDetailsPanel() {
   if (appMode !== "scenario") {
     return;
@@ -3134,6 +3178,7 @@ function syncModeControls() {
   appShell.classList.toggle("is-scenario", appMode === "scenario");
   appShell.classList.toggle("is-play", appMode === "play");
   appShell.classList.toggle("scenario-details-collapsed", appMode === "scenario" && scenarioDetailsCollapsed);
+  appShell.classList.toggle("strategic-ai-collapsed", appMode === "play" && strategicAiCollapsed);
   mapSection.classList.toggle("is-diplomacy", appMode === "play" && playSurfaceMode === "diplomacy");
   if (diplomacyPanel) {
     diplomacyPanel.hidden = appMode !== "play" || playSurfaceMode !== "diplomacy";
@@ -3143,11 +3188,20 @@ function syncModeControls() {
   playModeButton.classList.toggle("is-active", appMode === "play");
   scenarioModeButton.setAttribute("aria-pressed", String(appMode === "scenario"));
   playModeButton.setAttribute("aria-pressed", String(appMode === "play"));
-  endTurnButton.disabled = appMode !== "play" || aiAnimationInProgress;
+  if (endTurnButton) {
+    endTurnButton.disabled = appMode !== "play" || aiAnimationInProgress;
+  }
   controlEndTurnButton.disabled = appMode !== "play" || aiAnimationInProgress;
   statusEndTurnButton.disabled = appMode !== "play" || aiAnimationInProgress;
   if (executeAiGroupButton) {
     executeAiGroupButton.disabled = appMode !== "play" || aiAnimationInProgress || strategicAiGroups().length === 0;
+  }
+  if (strategicAiToggleButton) {
+    strategicAiToggleButton.hidden = appMode !== "play";
+    strategicAiToggleButton.textContent = strategicAiCollapsed ? "+" : "-";
+    strategicAiToggleButton.title = strategicAiCollapsed ? "Show Strategic AI" : "Hide Strategic AI";
+    strategicAiToggleButton.setAttribute("aria-expanded", String(!strategicAiCollapsed));
+    strategicAiToggleButton.setAttribute("aria-label", strategicAiCollapsed ? "Expand Strategic AI" : "Collapse Strategic AI");
   }
   if (diplomacyToggleButton) {
     diplomacyToggleButton.disabled = appMode !== "play" || aiAnimationInProgress;
@@ -5794,11 +5848,16 @@ scenarioFileForm.addEventListener("submit", (event) => {
 undoButton.addEventListener("click", () => {
   undoLastAction().catch((error) => window.alert(error.message));
 });
-endTurnButton.addEventListener("click", advanceTurn);
+if (endTurnButton) {
+  endTurnButton.addEventListener("click", advanceTurn);
+}
 controlEndTurnButton.addEventListener("click", advanceTurn);
 statusEndTurnButton.addEventListener("click", advanceTurn);
 if (executeAiGroupButton) {
   executeAiGroupButton.addEventListener("click", executeNextAiGroupTurn);
+}
+if (strategicAiToggleButton) {
+  strategicAiToggleButton.addEventListener("click", toggleStrategicAiPanel);
 }
 if (diplomacyToggleButton) {
   diplomacyToggleButton.addEventListener("click", toggleDiplomacySurface);
