@@ -1005,6 +1005,43 @@ test("AI animation orders combat retreat after the triggering attack", async ({ 
   expect(step.attackEvents[0].attackerTo).toEqual({ q: 2, r: 2 });
 });
 
+test("AI animation recenters distant action before playing", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop viewport geometry is stable for camera assertions");
+
+  await openPlayMode(page);
+  const result = await page.evaluate(async () => {
+    const unit = currentMap.units[0];
+    unit.q = 70;
+    unit.r = 30;
+    viewport.zoomLevelIndex = 2;
+    viewport.scale = zoomScaleForLevel(viewport.zoomLevelIndex);
+    centerViewportOnWorldPoint(hexCenter({ q: 1, r: 1 }));
+    const step = {
+      unitId: unit.id,
+      from: { q: 70, r: 30 },
+      to: { q: 71, r: 30 },
+      attacks: [],
+      attackEvents: [],
+    };
+    const focus = aiAnimationStepFocusPoint(step);
+    const distanceFromCenter = (point) => Math.hypot(
+      point.x - viewport.width / 2,
+      point.y - viewport.height / 2
+    );
+    const before = screenPointForWorldPoint(focus);
+    await animateAiPatch({ aiAnimation: [step] });
+    const after = screenPointForWorldPoint(focus);
+    return {
+      beforeDistance: distanceFromCenter(before),
+      afterDistance: distanceFromCenter(after),
+      afterNearCenter: pointNearViewportCenter(focus),
+    };
+  });
+
+  expect(result.beforeDistance).toBeGreaterThan(result.afterDistance * 3);
+  expect(result.afterNearCenter).toBe(true);
+});
+
 test("inactive units can be selected for inspection without legal actions", async ({ isMobile }) => {
   test.skip(isMobile, "engine selection rule is covered once on desktop");
 

@@ -1077,6 +1077,83 @@ function panBy(dx, dy) {
   drawMap();
 }
 
+function screenPointForWorldPoint(point) {
+  return {
+    x: viewport.offsetX + point.x * viewport.scale,
+    y: viewport.offsetY + point.y * viewport.scale,
+  };
+}
+
+function viewportCenterWorldPoint() {
+  return {
+    x: (viewport.width / 2 - viewport.offsetX) / viewport.scale,
+    y: (viewport.height / 2 - viewport.offsetY) / viewport.scale,
+  };
+}
+
+function centerViewportOnWorldPoint(point) {
+  if (!currentMap || !point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+    return false;
+  }
+  const before = { x: viewport.offsetX, y: viewport.offsetY };
+  viewport.offsetX = viewport.width / 2 - point.x * viewport.scale;
+  viewport.offsetY = viewport.height / 2 - point.y * viewport.scale;
+  constrainViewport();
+  const moved = Math.abs(viewport.offsetX - before.x) > 0.5 || Math.abs(viewport.offsetY - before.y) > 0.5;
+  if (moved) {
+    drawMap();
+  }
+  return moved;
+}
+
+function pointNearViewportCenter(point) {
+  if (!point || viewport.width <= 0 || viewport.height <= 0) {
+    return true;
+  }
+  const screen = screenPointForWorldPoint(point);
+  return Math.abs(screen.x - viewport.width / 2) <= viewport.width * 0.28
+    && Math.abs(screen.y - viewport.height / 2) <= viewport.height * 0.28;
+}
+
+function aiAnimationStepFocusPoint(step) {
+  const coords = [];
+  const addCoord = (coord) => {
+    if (coord && Number.isInteger(coord.q) && Number.isInteger(coord.r)) {
+      coords.push(coord);
+    }
+  };
+  addCoord(step && step.from);
+  addCoord(step && step.to);
+  for (const attack of step && Array.isArray(step.attacks) ? step.attacks : []) {
+    addCoord(attack);
+  }
+  for (const event of step && Array.isArray(step.attackEvents) ? step.attackEvents : []) {
+    addCoord(event.target);
+    addCoord(event.defenderFrom);
+    addCoord(event.defenderTo);
+    addCoord(event.attackerTo);
+  }
+  if (coords.length === 0) {
+    return viewportCenterWorldPoint();
+  }
+  const points = coords.map(hexCenter);
+  const minX = Math.min(...points.map((point) => point.x));
+  const maxX = Math.max(...points.map((point) => point.x));
+  const minY = Math.min(...points.map((point) => point.y));
+  const maxY = Math.max(...points.map((point) => point.y));
+  return {
+    x: (minX + maxX) / 2,
+    y: (minY + maxY) / 2,
+  };
+}
+
+async function focusAiAnimationStep(step) {
+  const focus = aiAnimationStepFocusPoint(step);
+  if (!pointNearViewportCenter(focus) && centerViewportOnWorldPoint(focus)) {
+    await sleep(180);
+  }
+}
+
 function stopPanning() {
   isPanning = false;
   mapPanel.classList.remove("is-panning");
@@ -4596,6 +4673,7 @@ async function animateAiPatch(payload) {
   syncModeControls();
   try {
     for (const step of steps) {
+      await focusAiAnimationStep(step);
       const unit = currentMap.units.find((candidate) => candidate.id === step.unitId);
       aiAnimationState = {
         unitId: step.unitId,
