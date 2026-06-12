@@ -112,6 +112,33 @@ function mountedRoadMovementGameState() {
   return state;
 }
 
+function riverCrossingMovementGameState({ bridged = false, remainingScaledMove = 16 } = {}) {
+  return {
+    width: 2,
+    height: 1,
+    seed: 0,
+    hexes: [
+      { q: 1, r: 1, terrain: "grassland", labels: [] },
+      { q: 2, r: 1, terrain: "grassland", labels: [] },
+    ],
+    edges: [
+      { a: { q: 1, r: 1 }, b: { q: 2, r: 1 }, river: true },
+    ],
+    crossings: bridged
+      ? [{ id: 1, kind: "bridge", edge: { a: { q: 1, r: 1 }, b: { q: 2, r: 1 } } }]
+      : [],
+    units: [
+      { id: 1, owner: 1, faction: "mongol", kind: "infantry", q: 1, r: 1, hp: 10, maxHp: 10, remainingScaledMove },
+    ],
+    game: {
+      round: 1,
+      activeFactionIndex: 0,
+      selectedUnitId: 1,
+      turnOrder: [1],
+    },
+  };
+}
+
 function pastureGameState({ width = 7, height = 7, unit = null, pastureRemaining = 100, turnOrder = [0] } = {}) {
   const hexes = [];
   for (let r = 1; r <= height; r += 1) {
@@ -224,6 +251,46 @@ function blockedRetreatCombatGameState() {
     { id: 6, owner: 2, faction: "chinese", kind: "infantry", q: 3, r: 2, hp: 10, maxHp: 10, remainingScaledMove: 16 }
   );
   return state;
+}
+
+function riverCombatGameState({ bridged = false } = {}) {
+  const state = combatGameState("grassland");
+  state.edges = [
+    { a: { q: 1, r: 1 }, b: { q: 2, r: 1 }, river: true },
+  ];
+  state.crossings = bridged
+    ? [{ id: 1, kind: "bridge", edge: { a: { q: 1, r: 1 }, b: { q: 2, r: 1 } } }]
+    : [];
+  return state;
+}
+
+function bridgedRiverRetreatCombatGameState() {
+  return {
+    width: 3,
+    height: 1,
+    seed: 0,
+    hexes: [
+      { q: 1, r: 1, terrain: "grassland", labels: [] },
+      { q: 2, r: 1, terrain: "grassland", labels: [] },
+      { q: 3, r: 1, terrain: "grassland", labels: [] },
+    ],
+    edges: [
+      { a: { q: 2, r: 1 }, b: { q: 3, r: 1 }, river: true },
+    ],
+    crossings: [
+      { id: 1, kind: "bridge", edge: { a: { q: 2, r: 1 }, b: { q: 3, r: 1 } } },
+    ],
+    units: [
+      { id: 1, owner: 1, faction: "mongol", kind: "horse_archer", q: 1, r: 1, hp: 10, maxHp: 10, remainingScaledMove: 32 },
+      { id: 2, owner: 2, faction: "chinese", kind: "horse_archer", q: 2, r: 1, hp: 4, maxHp: 10, readiness: 40, remainingScaledMove: 32 },
+    ],
+    game: {
+      round: 1,
+      activeFactionIndex: 0,
+      selectedUnitId: 1,
+      turnOrder: [1, 2],
+    },
+  };
 }
 
 function flankingCombatGameState(flankerCoord) {
@@ -704,6 +771,95 @@ test("movement uses road costs and allows one expensive terrain step", async ({ 
   const movedUnit = moved.units.find((candidate) => candidate.id === 1);
   expect(moved.ok).toBe(true);
   expect(movedUnit.remainingScaledMove).toBe(0);
+});
+
+test("unbridged river crossings require full movement and spend readiness", async ({ isMobile }) => {
+  test.skip(isMobile, "engine river movement rule is covered once on desktop");
+
+  const reachable = runEngineJson(["game-reachable", "--unit", "1"], riverCrossingMovementGameState()).reachable;
+  expect(reachable.find((hex) => hex.q === 2 && hex.r === 1))
+    .toEqual(expect.objectContaining({ scaledCost: 16 }));
+
+  const partialReachable = runEngineJson(
+    ["game-reachable", "--unit", "1"],
+    riverCrossingMovementGameState({ remainingScaledMove: 8 })
+  ).reachable;
+  expect(partialReachable.some((hex) => hex.q === 2 && hex.r === 1)).toBe(false);
+
+  const moved = runEngineJson(["game-move", "--unit", "1", "--q", "2", "--r", "1"], riverCrossingMovementGameState());
+  const movedUnit = moved.units.find((candidate) => candidate.id === 1);
+  expect(moved.ok).toBe(true);
+  expect(moved.edges).toHaveLength(1);
+  expect(moved.crossings).toHaveLength(0);
+  expect(movedUnit.remainingScaledMove).toBe(0);
+  expect(movedUnit.moveDone).toBe(true);
+  expect(movedUnit.readiness).toBe(85);
+
+  const bridgedReachable = runEngineJson(
+    ["game-reachable", "--unit", "1"],
+    riverCrossingMovementGameState({ bridged: true })
+  ).reachable;
+  expect(bridgedReachable.find((hex) => hex.q === 2 && hex.r === 1))
+    .toEqual(expect.objectContaining({ scaledCost: 8 }));
+
+  const bridgedMoved = runEngineJson(
+    ["game-move", "--unit", "1", "--q", "2", "--r", "1"],
+    riverCrossingMovementGameState({ bridged: true })
+  );
+  const bridgedMovedUnit = bridgedMoved.units.find((candidate) => candidate.id === 1);
+  expect(bridgedMoved.ok).toBe(true);
+  expect(bridgedMoved.crossings).toHaveLength(1);
+  expect(bridgedMovedUnit.remainingScaledMove).toBe(8);
+  expect(bridgedMovedUnit.moveDone).toBe(false);
+  expect(bridgedMovedUnit.readiness).toBe(96);
+});
+
+test("unbridged rivers block attacks while bridges allow them", async ({ isMobile }) => {
+  test.skip(isMobile, "engine river combat rule is covered once on desktop");
+
+  const unbridgedAttackable = runEngineJson(["game-attackable", "--unit", "1"], riverCombatGameState()).attackable;
+  expect(unbridgedAttackable.some((target) => target.unitId === 2)).toBe(false);
+
+  const unbridgedPreview = runEngineJson(
+    ["game-combat-preview", "--attacker", "1", "--defender", "2"],
+    riverCombatGameState()
+  );
+  expect(unbridgedPreview.valid).toBe(false);
+
+  const bridgedAttackable = runEngineJson(
+    ["game-attackable", "--unit", "1"],
+    riverCombatGameState({ bridged: true })
+  ).attackable;
+  expect(bridgedAttackable.find((target) => target.unitId === 2))
+    .toEqual(expect.objectContaining({ q: 2, r: 1 }));
+
+  const bridgedPreview = runEngineJson(
+    ["game-combat-preview", "--attacker", "1", "--defender", "2"],
+    riverCombatGameState({ bridged: true })
+  );
+  expect(bridgedPreview.valid).toBe(true);
+});
+
+test("retreat cannot cross river edges even at bridges", async ({ isMobile }) => {
+  test.skip(isMobile, "engine river retreat rule is covered once on desktop");
+
+  const preview = runEngineJson(
+    ["game-combat-preview", "--attacker", "1", "--defender", "2"],
+    bridgedRiverRetreatCombatGameState()
+  );
+  expect(preview.valid).toBe(true);
+  expect(preview.retreatOption).toBe("defender");
+  expect(preview.retreatBlocked).toBe(true);
+  expect(preview.defenderRetreatTo).toEqual({ q: 0, r: 0 });
+
+  const resolved = runEngineJson(
+    ["game-attack", "--attacker", "1", "--defender", "2"],
+    bridgedRiverRetreatCombatGameState()
+  );
+  const defender = resolved.units.find((candidate) => candidate.id === 2);
+  expect(resolved.ok).toBe(true);
+  expect({ q: defender.q, r: defender.r }).toEqual({ q: 2, r: 1 });
+  expect(defender.readiness).toBe(15);
 });
 
 test("readiness recovers only after quiet non-contact turns", async ({ isMobile }) => {

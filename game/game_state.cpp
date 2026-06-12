@@ -640,6 +640,7 @@ constexpr int feigned_retreat_pursuit_readiness_penalty = 15;
 constexpr int feigned_retreat_defender_hp_damage = 1;
 constexpr int feigned_retreat_defender_readiness_penalty = 10;
 constexpr int blocked_retreat_readiness_penalty = 15;
+constexpr int unbridged_river_crossing_readiness_cost = 15;
 constexpr double pasture_capacity_grassland = 100.0;
 constexpr double pasture_consumption_per_horse = 15.0;
 constexpr double pasture_recovery_per_game_turn = pasture_capacity_grassland / 16.0;
@@ -697,6 +698,32 @@ bool road_connects(const GameState& state, const Coord& first, const Coord& seco
     return false;
 }
 
+RiverEdge canonical_edge(const Coord& first, const Coord& second) {
+    return coord_less(second, first) ? RiverEdge{second, first} : RiverEdge{first, second};
+}
+
+bool edge_equal(const RiverEdge& first, const RiverEdge& second) {
+    return coord_equal(first.a, second.a) && coord_equal(first.b, second.b);
+}
+
+bool river_edge_between(const GameState& state, const Coord& first, const Coord& second) {
+    const RiverEdge edge = canonical_edge(first, second);
+    return std::find_if(state.rivers.begin(), state.rivers.end(), [&](const RiverEdge& river) {
+        return edge_equal(canonical_edge(river.a, river.b), edge);
+    }) != state.rivers.end();
+}
+
+bool bridge_crossing_between(const GameState& state, const Coord& first, const Coord& second) {
+    const RiverEdge edge = canonical_edge(first, second);
+    return std::find_if(state.crossings.begin(), state.crossings.end(), [&](const Crossing& crossing) {
+        return crossing.kind == "bridge" && edge_equal(canonical_edge(crossing.edge.a, crossing.edge.b), edge);
+    }) != state.crossings.end();
+}
+
+bool unbridged_river_crossing_between(const GameState& state, const Coord& first, const Coord& second) {
+    return river_edge_between(state, first, second) && !bridge_crossing_between(state, first, second);
+}
+
 bool uses_mounted_road_cost(UnitKind kind) {
     return kind == UnitKind::HorseArcher
         || kind == UnitKind::ChineseCavalry
@@ -721,6 +748,9 @@ int road_modified_movement_cost(UnitKind kind, int terrain_cost) {
 }
 
 int movement_cost(const GameState& state, const Unit& unit, const Coord& from, const GameHex& to_hex) {
+    if (unbridged_river_crossing_between(state, from, to_hex.coord)) {
+        return blocked_movement_cost();
+    }
     const int terrain_cost = terrain_movement_cost(to_hex.terrain);
     if (road_connects(state, from, to_hex.coord)) {
         return road_modified_movement_cost(unit.kind, terrain_cost);
@@ -1604,6 +1634,9 @@ bool find_ordinary_retreat_hex(const GameState& state, const Unit& retreating, c
         if (!in_bounds(state, candidate) || occupied_by_other_unit(state, candidate, retreating.id)) {
             continue;
         }
+        if (river_edge_between(state, retreating.coord, candidate)) {
+            continue;
+        }
         const GameHex* hex = find_hex(state, candidate);
         if (hex == nullptr || movement_cost(state, retreating, retreating.coord, *hex) == blocked_movement_cost()) {
             continue;
@@ -1638,6 +1671,9 @@ bool find_feigned_retreat_hex(const GameState& state, const Unit& attacker, cons
     for (int direction = 0; direction < 6; ++direction) {
         const Coord candidate = neighbor_in_direction(defender.coord, direction);
         if (!in_bounds(state, candidate) || occupied_by_other_unit(state, candidate, defender.id)) {
+            continue;
+        }
+        if (river_edge_between(state, defender.coord, candidate)) {
             continue;
         }
         const GameHex* hex = find_hex(state, candidate);
@@ -1693,12 +1729,20 @@ std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id) {
             if (hex == nullptr) {
                 continue;
             }
-            const int step_cost = movement_cost(state, *unit, current, *hex);
+            const bool unbridged_river_crossing = unbridged_river_crossing_between(state, current, next);
+            const bool first_step = current_cost == 0 && coord_equal(current, unit->coord);
+            if (unbridged_river_crossing
+                && (!first_step || unit->moved_this_turn || unit->remaining_scaled_move != unit->scaled_move)) {
+                continue;
+            }
+            int step_cost = movement_cost(state, *unit, current, *hex);
+            if (unbridged_river_crossing && terrain_movement_cost(hex->terrain) != blocked_movement_cost()) {
+                step_cost = unit->remaining_scaled_move;
+            }
             if (step_cost == blocked_movement_cost()) {
                 continue;
             }
             const int next_cost = current_cost + step_cost;
-            const bool first_step = current_cost == 0 && coord_equal(current, unit->coord);
             const bool affordable = next_cost <= unit->remaining_scaled_move;
             const bool minimum_step = first_step && !unit->moved_this_turn;
             if (!affordable && !minimum_step) {
@@ -1712,7 +1756,9 @@ std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id) {
             if (!friendly_occupied) {
                 reachable.push_back({next, next_cost});
             }
-            if (affordable && (!unit->respects_zoc || !enemy_zoc_at(state, next, *unit))) {
+            if (!unbridged_river_crossing
+                && affordable
+                && (!unit->respects_zoc || !enemy_zoc_at(state, next, *unit))) {
                 queue.push_back(next);
             }
         }
@@ -1742,7 +1788,8 @@ std::vector<AttackableUnit> attackable_units(const GameState& state, int unit_id
         if (defender.id == attacker->id
             || !hostile_units(state, *attacker, defender)
             || defender.hp <= 0
-            || !adjacent(attacker->coord, defender.coord)) {
+            || !adjacent(attacker->coord, defender.coord)
+            || unbridged_river_crossing_between(state, attacker->coord, defender.coord)) {
             continue;
         }
         attackable.push_back({defender.id, defender.coord});
@@ -1792,7 +1839,8 @@ bool legal_combat_pair(const GameState& state, const Unit* attacker, const Unit*
         && attacker->attack > 0
         && hostile_units(state, *attacker, *defender)
         && defender->hp > 0
-        && adjacent(attacker->coord, defender->coord);
+        && adjacent(attacker->coord, defender->coord)
+        && !unbridged_river_crossing_between(state, attacker->coord, defender->coord);
 }
 
 CombatPreview combat_preview(const GameState& state, int attacker_id, int defender_id) {
@@ -1960,10 +2008,16 @@ bool move_unit(GameState& state, int unit_id, Coord destination) {
     if (found == reachable.end()) {
         return false;
     }
+    const bool unbridged_river_crossing = unbridged_river_crossing_between(state, unit->coord, destination);
     cancel_horde_production(*unit);
     unit->coord = destination;
     unit->moved_this_turn = true;
-    reduce_readiness(*unit, move_readiness_cost(*unit, found->scaled_cost));
+    reduce_readiness(
+        *unit,
+        unbridged_river_crossing
+            ? unbridged_river_crossing_readiness_cost
+            : move_readiness_cost(*unit, found->scaled_cost)
+    );
     unit->remaining_scaled_move = std::max(0, unit->remaining_scaled_move - found->scaled_cost);
     if (unit->respects_zoc && enemy_zoc_at(state, destination, *unit)) {
         unit->remaining_scaled_move = 0;
@@ -2943,6 +2997,21 @@ void print_edge_json(const RiverEdge& edge, std::ostream& out) {
     out << "}";
 }
 
+void print_river_edges_array_json(const std::vector<RiverEdge>& edges, std::ostream& out) {
+    out << "[";
+    for (std::size_t i = 0; i < edges.size(); ++i) {
+        if (i > 0) {
+            out << ",";
+        }
+        out << "{\"a\":";
+        print_coord_json(edges[i].a, out);
+        out << ",\"b\":";
+        print_coord_json(edges[i].b, out);
+        out << ",\"river\":true}";
+    }
+    out << "]";
+}
+
 void print_string_array_json(const std::vector<std::string>& values, std::ostream& out) {
     out << "[";
     for (std::size_t i = 0; i < values.size(); ++i) {
@@ -3101,6 +3170,22 @@ void print_wall_gates_array_json(const std::vector<WallGate>& gates, std::ostrea
     out << "]";
 }
 
+void print_crossings_array_json(const std::vector<Crossing>& crossings, std::ostream& out) {
+    out << "[";
+    for (std::size_t i = 0; i < crossings.size(); ++i) {
+        if (i > 0) {
+            out << ",";
+        }
+        const Crossing& crossing = crossings[i];
+        out << "{\"id\":" << crossing.id
+            << ",\"kind\":\"" << escape_json(crossing.kind) << "\""
+            << ",\"edge\":";
+        print_edge_json(crossing.edge, out);
+        out << "}";
+    }
+    out << "]";
+}
+
 void print_ai_groups_json(const std::vector<AiGroup>& groups, std::ostream& out) {
     out << "[";
     for (std::size_t i = 0; i < groups.size(); ++i) {
@@ -3217,13 +3302,17 @@ void print_game_state_json(const GameState& state, std::ostream& out) {
         out << "}";
     }
     out << "],\"towns\":[],\"river_sources\":[],\"river_destinations\":[],\"merge_points\":[],";
-    out << "\"river_segments\":[],\"edges\":[],\"lake_river_connections\":[],\"roads\":";
+    out << "\"river_segments\":[],\"edges\":";
+    print_river_edges_array_json(state.rivers, out);
+    out << ",\"lake_river_connections\":[],\"roads\":";
     print_roads_array_json(state.roads, out);
     out << ",\"walls\":";
     print_walls_array_json(state.walls, out);
     out << ",\"wall_gates\":";
     print_wall_gates_array_json(state.wall_gates, out);
-    out << ",\"crossings\":[],";
+    out << ",\"crossings\":";
+    print_crossings_array_json(state.crossings, out);
+    out << ",";
     out << "\"units\":";
     print_units_json(state.units, out);
     out << ",";
@@ -3412,13 +3501,17 @@ void print_game_patch_json(
         out << "}";
     }
     out << "],\"towns\":[],\"river_sources\":[],\"river_destinations\":[],\"merge_points\":[],";
-    out << "\"river_segments\":[],\"edges\":[],\"lake_river_connections\":[],\"roads\":";
+    out << "\"river_segments\":[],\"edges\":";
+    print_river_edges_array_json(state.rivers, out);
+    out << ",\"lake_river_connections\":[],\"roads\":";
     print_roads_array_json(state.roads, out);
     out << ",\"walls\":";
     print_walls_array_json(state.walls, out);
     out << ",\"wall_gates\":";
     print_wall_gates_array_json(state.wall_gates, out);
-    out << ",\"crossings\":[],";
+    out << ",\"crossings\":";
+    print_crossings_array_json(state.crossings, out);
+    out << ",";
     out << "\"units\":";
     print_units_json(state.units, out);
     out << ",";
@@ -3565,6 +3658,18 @@ GameState parse_game_state_json(const std::string& json) {
         state.hexes.push_back(std::move(hex));
     }
 
+    const Json& river_edge_items = root.contains("edges") && root["edges"].is_array() ? root["edges"] : empty_array;
+    for (const Json& edge_json : river_edge_items) {
+        if (!edge_json.is_object()
+            || !edge_json.contains("a")
+            || !edge_json["a"].is_object()
+            || !edge_json.contains("b")
+            || !edge_json["b"].is_object()) {
+            continue;
+        }
+        state.rivers.push_back(canonical_edge(coord_from_json(edge_json["a"]), coord_from_json(edge_json["b"])));
+    }
+
     const Json& road_items = root.contains("roads") && root["roads"].is_array() ? root["roads"] : empty_array;
     for (const Json& road_json : road_items) {
         if (!road_json.is_object()) {
@@ -3617,6 +3722,27 @@ GameState parse_game_state_json(const std::string& json) {
             edge_json.contains("b") && edge_json["b"].is_object() ? coord_from_json(edge_json["b"]) : Coord{0, 0}
         };
         state.wall_gates.push_back(gate);
+    }
+
+    const Json& crossing_items = root.contains("crossings") && root["crossings"].is_array() ? root["crossings"] : empty_array;
+    for (const Json& crossing_json : crossing_items) {
+        if (!crossing_json.is_object()) {
+            continue;
+        }
+        const Json& edge_json = crossing_json.contains("edge") && crossing_json["edge"].is_object()
+            ? crossing_json["edge"]
+            : empty_object;
+        if (!edge_json.contains("a")
+            || !edge_json["a"].is_object()
+            || !edge_json.contains("b")
+            || !edge_json["b"].is_object()) {
+            continue;
+        }
+        Crossing crossing;
+        crossing.id = int_field(crossing_json, "id", 0);
+        crossing.kind = string_field(crossing_json, "kind", "ford") == "bridge" ? "bridge" : "ford";
+        crossing.edge = canonical_edge(coord_from_json(edge_json["a"]), coord_from_json(edge_json["b"]));
+        state.crossings.push_back(std::move(crossing));
     }
 
     const Json& unit_items = root.contains("units") && root["units"].is_array() ? root["units"] : empty_array;
