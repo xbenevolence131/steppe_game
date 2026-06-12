@@ -1409,6 +1409,20 @@ select[hidden] {
   font-weight: 650;
 }
 
+.hex-inspector h2 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#hex-title-coordinate {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .hex-inspector-list {
   display: grid;
   gap: 5px;
@@ -1444,7 +1458,35 @@ select[hidden] {
 }
 
 .control-status-region {
-  grid-template-rows: auto auto auto;
+  grid-template-rows: auto auto auto auto;
+}
+
+.control-status-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.control-status-line strong,
+.control-status-line #status-active-faction-name {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.unit-cycle-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.unit-cycle-button {
+  min-height: 30px;
+  font-size: 15px;
+  line-height: 1;
 }
 
 .control-button-row {

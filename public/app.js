@@ -70,6 +70,8 @@ const endTurnButton = document.querySelector("#end-turn-button");
 const controlEndTurnButton = document.querySelector("#control-end-turn-button");
 const statusEndTurnButton = document.querySelector("#status-end-turn-button");
 const executeAiGroupButton = document.querySelector("#execute-ai-group-button");
+const prevUnitButton = document.querySelector("#prev-unit-button");
+const nextUnitButton = document.querySelector("#next-unit-button");
 const diplomacyToggleButton = document.querySelector("#diplomacy-toggle-button");
 const turnCounter = document.querySelector(".turn-counter");
 const activeFactionName = document.querySelector("#active-faction-name");
@@ -111,6 +113,7 @@ const unitStarvationRow = document.querySelector("#unit-starvation-row");
 const unitStarvation = document.querySelector("#unit-starvation");
 const unitProductionRow = document.querySelector("#unit-production-row");
 const unitProduction = document.querySelector("#unit-production");
+const hexTitleCoordinate = document.querySelector("#hex-title-coordinate");
 const hexCoordinate = document.querySelector("#hex-coordinate");
 const hexTerrain = document.querySelector("#hex-terrain");
 const hexDefense = document.querySelector("#hex-defense");
@@ -132,6 +135,8 @@ let aiPickMode = null;
 let activeAiGroupId = 0;
 let activeStrategicAiGroupId = 0;
 let nextStrategicAiGroupIndex = 0;
+let unitSelectionRequestId = 0;
+let unitSelectionInProgress = false;
 let collapsedAiGroupIds = new Set();
 let collapsedStrategicAiGroupIds = new Set();
 let strategicAiCollapsed = false;
@@ -2133,6 +2138,16 @@ function countUnits(kind, owner = null) {
     : 0;
 }
 
+function activeFactionUnits() {
+  const owner = activeOwner();
+  return currentMap && Array.isArray(currentMap.units)
+    ? currentMap.units
+      .filter((unit) => unit.owner === owner && (!Number.isFinite(unit.hp) || unit.hp > 0))
+      .slice()
+      .sort((first, second) => first.id - second.id)
+    : [];
+}
+
 function activeFactionResources(owner) {
   const faction = activeFaction();
   const totals = {
@@ -3178,6 +3193,16 @@ function syncPlayControls() {
   if (executeAiGroupButton) {
     executeAiGroupButton.disabled = appMode !== "play" || aiAnimationInProgress || strategicAiGroups().length === 0;
   }
+  const canCycleUnits = appMode === "play"
+    && !aiAnimationInProgress
+    && !unitSelectionInProgress
+    && activeFactionUnits().length > 0;
+  if (prevUnitButton) {
+    prevUnitButton.disabled = !canCycleUnits;
+  }
+  if (nextUnitButton) {
+    nextUnitButton.disabled = !canCycleUnits;
+  }
   syncUnitRoster();
   syncUnitInspector();
   syncStrategicAiDashboard();
@@ -3194,6 +3219,9 @@ function syncHexInspector() {
     if (selectedHexCoord && currentMap) {
       selectedHexCoord = null;
     }
+    if (hexTitleCoordinate) {
+      hexTitleCoordinate.textContent = "None";
+    }
     hexCoordinate.textContent = "None";
     hexTerrain.textContent = "-";
     hexDefense.textContent = "-";
@@ -3206,7 +3234,11 @@ function syncHexInspector() {
 
   const terrainCost = terrainMovementCostScaled(hex.terrain);
   const pasture = normalizePasture(hex.pasture, hex.terrain);
-  hexCoordinate.textContent = `${hex.q},${hex.r}`;
+  const coordinateLabel = `${hex.q},${hex.r}`;
+  if (hexTitleCoordinate) {
+    hexTitleCoordinate.textContent = coordinateLabel;
+  }
+  hexCoordinate.textContent = coordinateLabel;
   hexTerrain.textContent = titleCaseToken(hex.terrain);
   hexDefense.textContent = `${terrainDefensePercent(hex.terrain)}%`;
   hexMoveCost.textContent = formatMoveCost(terrainCost);
@@ -4595,16 +4627,47 @@ async function selectUnit(unit) {
   if (!unit) {
     return false;
   }
+  const requestId = unitSelectionRequestId + 1;
+  unitSelectionRequestId = requestId;
+  unitSelectionInProgress = true;
   hideCombatPreview();
   selectedHexCoord = { q: unit.q, r: unit.r };
-  const payload = await postAppCommand({
-    type: "select_unit",
-    unitId: unit.id,
-  });
-  applyGamePatch(payload);
   syncModeControls();
   drawMap();
-  return true;
+  try {
+    const payload = await postAppCommand({
+      type: "select_unit",
+      unitId: unit.id,
+    });
+    if (requestId !== unitSelectionRequestId) {
+      return false;
+    }
+    applyGamePatch(payload);
+    return true;
+  } finally {
+    if (requestId === unitSelectionRequestId) {
+      unitSelectionInProgress = false;
+      syncModeControls();
+      drawMap();
+    }
+  }
+}
+
+async function cycleActiveFactionUnit(direction) {
+  if (appMode !== "play" || aiAnimationInProgress || unitSelectionInProgress) {
+    return false;
+  }
+  const units = activeFactionUnits();
+  if (units.length === 0) {
+    return false;
+  }
+  const selected = selectedUnit();
+  const selectedIndex = selected ? units.findIndex((unit) => unit.id === selected.id) : -1;
+  const step = direction < 0 ? -1 : 1;
+  const nextIndex = selectedIndex < 0
+    ? (step < 0 ? units.length - 1 : 0)
+    : (selectedIndex + step + units.length) % units.length;
+  return selectUnit(units[nextIndex]);
 }
 
 async function setUnitStance(unit, stance) {
@@ -5933,6 +5996,16 @@ controlEndTurnButton.addEventListener("click", advanceTurn);
 statusEndTurnButton.addEventListener("click", advanceTurn);
 if (executeAiGroupButton) {
   executeAiGroupButton.addEventListener("click", executeNextAiGroupTurn);
+}
+if (prevUnitButton) {
+  prevUnitButton.addEventListener("click", () => {
+    cycleActiveFactionUnit(-1).catch((error) => window.alert(error.message));
+  });
+}
+if (nextUnitButton) {
+  nextUnitButton.addEventListener("click", () => {
+    cycleActiveFactionUnit(1).catch((error) => window.alert(error.message));
+  });
 }
 if (strategicAiToggleButton) {
   strategicAiToggleButton.addEventListener("click", toggleStrategicAiPanel);

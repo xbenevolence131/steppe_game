@@ -1494,14 +1494,38 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   ])).resolves.toEqual(["#237a3b", "#237a3b", "#a97800", "#a97800", "#c93632"]);
   await expect(page.locator("#unit-resources")).toBeHidden();
   await expect(page.locator("#play-details-bar")).toBeVisible();
-  await expect(page.locator(".hex-inspector h2")).toHaveText("Hex Inspector");
+  await expect(page.locator(".hex-inspector h2")).toContainText("Hex Inspector");
+  await expect(page.locator("#hex-title-coordinate")).toHaveText(await page.locator("#hex-coordinate").textContent());
+  await expect(page.evaluate(() => {
+    const title = document.querySelector(".hex-inspector h2").getBoundingClientRect();
+    const coordinate = document.querySelector("#hex-title-coordinate").getBoundingClientRect();
+    return coordinate.top >= title.top - 1 && coordinate.bottom <= title.bottom + 1;
+  })).resolves.toBe(true);
   await expect(page.locator(".control-status-region h2")).toHaveText("Control Status");
-  await expect(page.locator(".control-status-region")).toContainText("Current Round");
-  await expect(page.locator(".control-status-region")).toContainText("Active Faction");
+  await expect(page.locator(".control-status-line")).toContainText("Round");
+  await expect(page.locator(".control-status-line")).toContainText("Mongol");
   await expect(page.locator("#round-count")).toHaveText("1");
   await expect(page.locator("#status-active-faction-name")).toHaveText("Mongol");
+  await expect(page.evaluate(() => {
+    const round = document.querySelector("#round-count").getBoundingClientRect();
+    const faction = document.querySelector("#status-active-faction-name").getBoundingClientRect();
+    return Math.abs(round.top - faction.top) <= 1;
+  })).resolves.toBe(true);
   await expect(page.locator("#status-end-turn-button")).toBeVisible();
   await expect(page.locator("#status-end-turn-button")).toBeEnabled();
+  await expect(page.locator("#prev-unit-button")).toBeEnabled();
+  await expect(page.locator("#next-unit-button")).toBeEnabled();
+  const cycleState = await page.evaluate(() => ({
+    activeIds: activeFactionUnits().map((unit) => unit.id),
+    beforeId: currentMap.game.selectedUnitId,
+  }));
+  const beforeIndex = cycleState.activeIds.indexOf(cycleState.beforeId);
+  expect(beforeIndex).toBeGreaterThanOrEqual(0);
+  const expectedNextId = cycleState.activeIds[(beforeIndex + 1) % cycleState.activeIds.length];
+  await page.locator("#next-unit-button").click();
+  await expect.poll(() => page.evaluate(() => currentMap.game.selectedUnitId)).toBe(expectedNextId);
+  await page.locator("#prev-unit-button").click();
+  await expect.poll(() => page.evaluate(() => currentMap.game.selectedUnitId)).toBe(cycleState.beforeId);
   const detailWidths = await page.evaluate(() => {
     const unit = document.querySelector(".unit-inspector").getBoundingClientRect();
     const hex = document.querySelector(".hex-inspector").getBoundingClientRect();
@@ -1513,13 +1537,31 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   expect(detailWidths.hex).toBeGreaterThan(detailWidths.status * 0.9);
   expect(detailWidths.hex).toBeLessThan(detailWidths.status * 1.1);
 
+  const nextFactionStatus = await page.evaluate(() => {
+    const order = Array.isArray(currentMap.game.turnOrder) ? currentMap.game.turnOrder : [];
+    const currentIndex = Number.isInteger(currentMap.game.activeFactionIndex) ? currentMap.game.activeFactionIndex : 0;
+    const owner = order.length > 0 ? order[(currentIndex + 1) % order.length] : activeOwner();
+    const faction = currentMap.game.factions.find((candidate) => candidate.id === owner);
+    const localHordeResources = currentMap.units
+      .filter((unit) => unit.owner === owner && unit.kind === "horde")
+      .reduce((totals, unit) => ({
+        population: totals.population + (Number.isInteger(unit.population) ? unit.population : 0),
+        horses: totals.horses + (Number.isInteger(unit.horses) ? unit.horses : 0),
+      }), { population: 0, horses: 0 });
+    return {
+      name: faction ? faction.name : "Unknown",
+      population: String(localHordeResources.population),
+      horses: String(localHordeResources.horses),
+      metal: String(faction && Number.isInteger(faction.metal) ? faction.metal : 0),
+    };
+  });
   await page.locator("#status-end-turn-button").click();
-  await expect(page.locator("#status-active-faction-name")).toHaveText("Chinese");
+  await expect(page.locator("#status-active-faction-name")).toHaveText(nextFactionStatus.name);
   await expect(page.locator("#round-count")).toHaveText("1");
-  await expect(page.locator("#faction-status-name")).toHaveText("Chinese");
-  await expect(page.locator("#faction-population-total")).toHaveText("4");
-  await expect(page.locator("#faction-horses-total")).toHaveText("12");
-  await expect(page.locator("#faction-metal-total")).toHaveText("4");
+  await expect(page.locator("#faction-status-name")).toHaveText(nextFactionStatus.name);
+  await expect(page.locator("#faction-population-total")).toHaveText(nextFactionStatus.population);
+  await expect(page.locator("#faction-horses-total")).toHaveText(nextFactionStatus.horses);
+  await expect(page.locator("#faction-metal-total")).toHaveText(nextFactionStatus.metal);
 
   const layout = await page.evaluate(() => {
     const sidebar = document.querySelector("#play-controls").getBoundingClientRect();

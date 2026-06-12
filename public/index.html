@@ -383,7 +383,7 @@
               </dl>
             </section>
             <section class="hex-inspector play-detail-region" aria-label="Hex inspector">
-              <h2>Hex Inspector</h2>
+              <h2><span>Hex Inspector</span><span id="hex-title-coordinate">None</span></h2>
               <dl class="hex-inspector-list">
                 <div>
                   <dt>Hex</dt>
@@ -413,16 +413,14 @@
             </section>
             <section class="control-status-region play-detail-region" aria-label="Control status">
               <h2>Control Status</h2>
-              <dl class="status-list">
-                <div>
-                  <dt>Current Round</dt>
-                  <dd id="round-count">1</dd>
-                </div>
-                <div>
-                  <dt>Active Faction</dt>
-                  <dd id="status-active-faction-name">Mongol</dd>
-                </div>
-              </dl>
+              <div class="control-status-line" aria-label="Current round and faction">
+                <span>Round <strong id="round-count">1</strong></span>
+                <span id="status-active-faction-name">Mongol</span>
+              </div>
+              <div class="unit-cycle-row" aria-label="Cycle active faction units">
+                <button id="prev-unit-button" class="secondary unit-cycle-button" type="button" aria-label="Previous unit" title="Previous unit">&#9664;</button>
+                <button id="next-unit-button" class="secondary unit-cycle-button" type="button" aria-label="Next unit" title="Next unit">&#9654;</button>
+              </div>
               <div class="control-button-row">
                 <button id="undo-button" class="secondary undo-button" type="button" aria-label="Undo" title="Undo" disabled>Undo</button>
                 <button id="execute-ai-group-button" class="secondary execute-ai-group-button" type="button" title="Execute next AI group">AI Group</button>
