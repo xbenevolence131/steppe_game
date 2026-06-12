@@ -140,6 +140,16 @@ struct AiAnimationStep {
     Coord from;
     Coord to;
     std::vector<Coord> attacks;
+    struct AttackEvent {
+        Coord target;
+        int defender_id = 0;
+        Coord defender_from;
+        Coord defender_to;
+        bool defender_moved = false;
+        Coord attacker_to;
+        bool attacker_moved = false;
+    };
+    std::vector<AttackEvent> attack_events;
 };
 
 struct DiplomaticRelationship {

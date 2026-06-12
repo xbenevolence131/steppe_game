@@ -8,6 +8,7 @@
 #include <iterator>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -137,8 +138,9 @@ int main(int argc, char** argv) {
         }
         if (command == "game-end-turn") {
             steppe::game::GameState state = steppe::game::parse_game_state_json(read_stdin());
-            steppe::game::end_turn(state);
-            steppe::game::print_game_patch_json(state, true, std::cout);
+            std::vector<steppe::game::AiAnimationStep> animation;
+            steppe::game::end_turn(state, &animation);
+            steppe::game::print_game_patch_json(state, true, std::cout, &animation);
             return EXIT_SUCCESS;
         }
 

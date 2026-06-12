@@ -2378,6 +2378,28 @@ function normalizeAnimationCoord(coord) {
   return { q: coord.q, r: coord.r };
 }
 
+function normalizeAiAttackEvent(event) {
+  if (!event || typeof event !== "object") {
+    return null;
+  }
+  const target = normalizeAnimationCoord(event.target);
+  const defenderFrom = normalizeAnimationCoord(event.defenderFrom);
+  const defenderTo = normalizeAnimationCoord(event.defenderTo);
+  const attackerTo = normalizeAnimationCoord(event.attackerTo);
+  if (!target || !defenderFrom || !defenderTo || !attackerTo) {
+    return null;
+  }
+  return {
+    target,
+    defenderId: Number.isInteger(event.defenderId) ? event.defenderId : 0,
+    defenderFrom,
+    defenderTo,
+    defenderMoved: Boolean(event.defenderMoved),
+    attackerTo,
+    attackerMoved: Boolean(event.attackerMoved),
+  };
+}
+
 function normalizeAiAnimationStep(step) {
   if (!step || !Number.isInteger(step.unitId)) {
     return null;
@@ -2393,6 +2415,9 @@ function normalizeAiAnimationStep(step) {
     to,
     attacks: Array.isArray(step.attacks)
       ? step.attacks.map(normalizeAnimationCoord).filter(Boolean)
+      : [],
+    attackEvents: Array.isArray(step.attackEvents)
+      ? step.attackEvents.map(normalizeAiAttackEvent).filter(Boolean)
       : [],
   };
 }
@@ -4518,19 +4543,66 @@ async function animateAiPatch(payload) {
         await sleep(160);
       }
 
-      for (const target of step.attacks) {
+      const attackEvents = step.attackEvents.length > 0
+        ? step.attackEvents
+        : step.attacks.map((target) => ({
+          target,
+          defenderId: 0,
+          defenderFrom: target,
+          defenderTo: target,
+          defenderMoved: false,
+          attackerTo: step.to,
+          attackerMoved: false,
+        }));
+      for (const event of attackEvents) {
         aiAnimationState = {
           unitId: step.unitId,
           unitCoord: step.to,
-          attackTarget: target,
+          attackTarget: event.target,
         };
         drawMap();
         await sleep(320);
+
+        if (event.defenderMoved) {
+          const defender = currentMap.units.find((candidate) => (
+            event.defenderId > 0
+              ? candidate.id === event.defenderId
+              : candidate.q === event.defenderFrom.q && candidate.r === event.defenderFrom.r
+          ));
+          if (defender) {
+            defender.q = event.defenderTo.q;
+            defender.r = event.defenderTo.r;
+          }
+          aiAnimationState = {
+            unitId: event.defenderId,
+            unitCoord: event.defenderTo,
+            attackTarget: null,
+          };
+          drawMap();
+          await sleep(320);
+        }
+
+        if (event.attackerMoved) {
+          const attacker = currentMap.units.find((candidate) => candidate.id === step.unitId);
+          if (attacker) {
+            attacker.q = event.attackerTo.q;
+            attacker.r = event.attackerTo.r;
+          }
+          aiAnimationState = {
+            unitId: step.unitId,
+            unitCoord: event.attackerTo,
+            attackTarget: null,
+          };
+          drawMap();
+          await sleep(320);
+        }
       }
 
+      const finalUnit = currentMap.units.find((candidate) => candidate.id === step.unitId);
+      const finalCoord = finalUnit ? { q: finalUnit.q, r: finalUnit.r } : step.to;
       aiAnimationState = {
         unitId: step.unitId,
-        unitCoord: step.to,
+        unitCoord: finalCoord,
         attackTarget: null,
       };
       drawMap();

@@ -2393,10 +2393,31 @@ bool ai_attack_best_adjacent_enemy(
     if (best_score == std::numeric_limits<int>::max()) {
         return false;
     }
+    const CombatPreview preview = combat_preview(state, attacker_id, best_defender_id);
     if (animation_step != nullptr) {
+        const Unit* attacker_before_attack = find_unit(state, attacker_id);
         const Unit* defender = find_unit(state, best_defender_id);
-        if (defender != nullptr) {
+        if (attacker_before_attack != nullptr && defender != nullptr) {
+            animation_step->to = attacker_before_attack->coord;
             animation_step->attacks.push_back(defender->coord);
+
+            AiAnimationStep::AttackEvent event;
+            event.target = defender->coord;
+            event.defender_id = defender->id;
+            event.defender_from = defender->coord;
+            event.defender_to = defender->coord;
+            event.attacker_to = attacker_before_attack->coord;
+            if (preview.valid && !preview.defender.destroyed) {
+                if (!preview.retreat_blocked && preview.retreat_option == "defender") {
+                    event.defender_to = preview.defender_retreat_to;
+                    event.defender_moved = !coord_equal(event.defender_from, event.defender_to);
+                }
+                if (preview.special_resolution == "feigned_retreat") {
+                    event.attacker_to = preview.attacker_pursuit_to;
+                    event.attacker_moved = !coord_equal(attacker_before_attack->coord, event.attacker_to);
+                }
+            }
+            animation_step->attack_events.push_back(event);
         }
     }
     return attack_unit(state, attacker_id, best_defender_id);
@@ -2709,11 +2730,11 @@ void execute_ai_units(
         step.to = unit->coord;
         execute_ai_unit_directive(state, unit_id, directive, animation == nullptr ? nullptr : &step);
         const Unit* updated = find_unit(state, unit_id);
-        if (updated != nullptr) {
+        if (updated != nullptr && step.attack_events.empty()) {
             step.to = updated->coord;
         }
         if (animation != nullptr
-            && (!coord_equal(step.from, step.to) || !step.attacks.empty())) {
+            && (!coord_equal(step.from, step.to) || !step.attacks.empty() || !step.attack_events.empty())) {
             animation->push_back(std::move(step));
         }
     }
@@ -3338,6 +3359,25 @@ void print_ai_animation_json(const std::vector<AiAnimationStep>& animation, std:
                 out << ",";
             }
             print_coord_json(step.attacks[attack_index], out);
+        }
+        out << "],\"attackEvents\":[";
+        for (std::size_t event_index = 0; event_index < step.attack_events.size(); ++event_index) {
+            if (event_index > 0) {
+                out << ",";
+            }
+            const AiAnimationStep::AttackEvent& event = step.attack_events[event_index];
+            out << "{\"target\":";
+            print_coord_json(event.target, out);
+            out << ",\"defenderId\":" << event.defender_id
+                << ",\"defenderFrom\":";
+            print_coord_json(event.defender_from, out);
+            out << ",\"defenderTo\":";
+            print_coord_json(event.defender_to, out);
+            out << ",\"defenderMoved\":" << (event.defender_moved ? "true" : "false")
+                << ",\"attackerTo\":";
+            print_coord_json(event.attacker_to, out);
+            out << ",\"attackerMoved\":" << (event.attacker_moved ? "true" : "false")
+                << "}";
         }
         out << "]}";
     }

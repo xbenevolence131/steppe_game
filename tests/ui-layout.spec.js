@@ -347,6 +347,46 @@ function aiDirectiveGameState(directive, units) {
   };
 }
 
+function aiFeignedRetreatAnimationGameState() {
+  const hexes = [];
+  for (let r = 1; r <= 3; r += 1) {
+    for (let q = 1; q <= 4; q += 1) {
+      hexes.push({ q, r, terrain: "grassland", labels: [] });
+    }
+  }
+  return {
+    width: 4,
+    height: 3,
+    seed: 0,
+    hexes,
+    units: [
+      { id: 1, owner: 2, faction: "chinese", kind: "infantry", q: 1, r: 2, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+      {
+        id: 2,
+        owner: 0,
+        faction: "mongol",
+        kind: "horse_archer",
+        stance: "feigned_retreat",
+        q: 2,
+        r: 2,
+        hp: 10,
+        maxHp: 10,
+        remainingScaledMove: 32,
+      },
+    ],
+    game: {
+      round: 1,
+      activeFactionIndex: 0,
+      selectedUnitId: 0,
+      turnOrder: [0, 2],
+      factions: [
+        { id: 0, key: "mongol", name: "Mongol", color: "#d6a21a", enabled: true, ai: false, metal: 4, treasure: 0 },
+        { id: 2, key: "chinese", name: "Chinese", color: "#c93632", enabled: true, ai: true, metal: 4, treasure: 0 },
+      ],
+    },
+  };
+}
+
 test("movement can pass through friendly units without stacking", async ({ isMobile }) => {
   test.skip(isMobile, "engine rule is covered once on desktop");
 
@@ -769,6 +809,28 @@ test("AI directives choose distinct tactical targets", async ({ isMobile }) => {
   ));
   expect(defend.units.find((unit) => unit.id === 3).q).toBeLessThan(8);
   expect(defend.game.aiGroups[0].directive.type).toBe("defend_hex");
+});
+
+test("AI animation orders combat retreat after the triggering attack", async ({ isMobile }) => {
+  test.skip(isMobile, "engine AI animation rule is covered once on desktop");
+
+  const result = runEngineJson(["game-end-turn"], aiFeignedRetreatAnimationGameState());
+  expect(result.aiAnimation).toHaveLength(1);
+  const [step] = result.aiAnimation;
+  expect(step.unitId).toBe(1);
+  expect(step.from).toEqual({ q: 1, r: 2 });
+  expect(step.to).toEqual({ q: 1, r: 2 });
+  expect(step.attacks).toEqual([{ q: 2, r: 2 }]);
+  expect(step.attackEvents).toHaveLength(1);
+  expect(step.attackEvents[0]).toEqual(expect.objectContaining({
+    target: { q: 2, r: 2 },
+    defenderId: 2,
+    defenderFrom: { q: 2, r: 2 },
+    defenderMoved: true,
+    attackerMoved: true,
+  }));
+  expect(step.attackEvents[0].defenderTo).not.toEqual({ q: 2, r: 2 });
+  expect(step.attackEvents[0].attackerTo).toEqual({ q: 2, r: 2 });
 });
 
 test("inactive units can be selected for inspection without legal actions", async ({ isMobile }) => {
