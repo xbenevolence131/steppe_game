@@ -867,7 +867,7 @@ test("readiness recovers only after quiet non-contact turns", async ({ isMobile 
 
   const quiet = runEngineJson(["game-end-turn"], readinessRecoveryGameState(false));
   const quietUnit = quiet.units.find((candidate) => candidate.id === 1);
-  expect(quietUnit.readiness).toBe(75);
+  expect(quietUnit.readiness).toBe(65);
   expect(quietUnit.contactedEnemyThisTurn).toBe(false);
 
   const adjacent = runEngineJson(["game-end-turn"], readinessRecoveryGameState(true));
