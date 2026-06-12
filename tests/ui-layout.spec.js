@@ -967,6 +967,22 @@ test("AI directives choose distinct tactical targets", async ({ isMobile }) => {
   expect(defend.game.aiGroups[0].directive.type).toBe("defend_hex");
 });
 
+test("inactive AI directive leaves assigned units idle", async ({ isMobile }) => {
+  test.skip(isMobile, "engine AI directive rules are covered once on desktop");
+
+  const inactive = runEngineJson(["game-end-turn"], aiDirectiveGameState(
+    { type: "inactive" },
+    [
+      { id: 1, owner: 0, faction: "mongol", kind: "infantry", q: 7, r: 3, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+      { id: 3, owner: 2, faction: "chinese", kind: "chinese_cavalry", q: 8, r: 3, hp: 10, maxHp: 10, remainingScaledMove: 24 },
+    ]
+  ));
+  expect(inactive.units.find((unit) => unit.id === 1).hp).toBe(10);
+  expect(inactive.units.find((unit) => unit.id === 3).q).toBe(8);
+  expect(inactive.units.find((unit) => unit.id === 3).combatDone).toBe(false);
+  expect(inactive.game.aiGroups[0].directive.type).toBe("inactive");
+});
+
 test("AI animation orders combat retreat after the triggering attack", async ({ isMobile }) => {
   test.skip(isMobile, "engine AI animation rule is covered once on desktop");
 

@@ -378,6 +378,7 @@ OwnerId owner_from_faction_key(const std::string& key, OwnerId fallback = neutra
 
 const char* ai_directive_kind_to_string(AiDirectiveKind kind) {
     switch (kind) {
+        case AiDirectiveKind::Inactive: return "inactive";
         case AiDirectiveKind::DefendHex: return "defend_hex";
         case AiDirectiveKind::HuntHorde: return "hunt_horde";
         case AiDirectiveKind::CaptureHex: return "capture_hex";
@@ -387,6 +388,9 @@ const char* ai_directive_kind_to_string(AiDirectiveKind kind) {
 }
 
 AiDirectiveKind ai_directive_kind_from_string(const std::string& value) {
+    if (value == "inactive") {
+        return AiDirectiveKind::Inactive;
+    }
     if (value == "defend_hex") {
         return AiDirectiveKind::DefendHex;
     }
@@ -2651,6 +2655,8 @@ AiDirective strategic_directive_for_owner(const GameState& state, OwnerId owner)
 
 std::string strategic_group_name(const AiDirective& directive) {
     switch (directive.kind) {
+        case AiDirectiveKind::Inactive:
+            return "Inactive";
         case AiDirectiveKind::Hunt:
             return "Strategic: Hunt";
         case AiDirectiveKind::DefendHex:
@@ -2716,6 +2722,8 @@ void refresh_generated_strategic_ai_group(GameState& state, OwnerId owner) {
 
 const Unit* ai_target_for_directive(const GameState& state, const Unit& unit, const AiDirective& directive) {
     switch (directive.kind) {
+        case AiDirectiveKind::Inactive:
+            return nullptr;
         case AiDirectiveKind::HuntHorde:
             return nearest_enemy_unit_from_coord(state, unit.owner, unit.coord, directive.target_owner, true);
         case AiDirectiveKind::DefendHex:
@@ -2734,6 +2742,9 @@ void execute_ai_unit_directive(
     const AiDirective& directive,
     AiAnimationStep* animation_step = nullptr
 ) {
+    if (directive.kind == AiDirectiveKind::Inactive) {
+        return;
+    }
     if (ai_attack_best_adjacent_enemy(state, unit_id, directive, animation_step)) {
         return;
     }

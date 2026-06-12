@@ -115,6 +115,7 @@ struct FactionState {
 
 enum class AiDirectiveKind {
     Hunt,
+    Inactive,
     DefendHex,
     HuntHorde,
     CaptureHex,

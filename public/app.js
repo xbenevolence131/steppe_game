@@ -1800,6 +1800,7 @@ function normalizeScenarioFactions(rawFactions, units = []) {
 }
 
 const aiDirectiveTypes = [
+  { key: "inactive", label: "Inactive" },
   { key: "hunt", label: "Hunt" },
   { key: "defend_hex", label: "Defend Hex" },
   { key: "hunt_horde", label: "Hunt Horde" },
