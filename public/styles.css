@@ -525,6 +525,7 @@ body {
 .edge-feature-choices {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -816,6 +817,10 @@ select[hidden] {
   border-color: #2f8f4e;
   background: #eaf5ec;
   color: #163a22;
+}
+
+.details-toggle-button {
+  min-width: 92px;
 }
 
 .map-panel {
@@ -1187,6 +1192,10 @@ select[hidden] {
   border-top: 1px solid var(--line);
   background: var(--surface);
   min-height: 104px;
+}
+
+.app-shell.is-scenario.scenario-details-collapsed .play-details-bar {
+  display: none;
 }
 
 .unit-inspector,

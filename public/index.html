@@ -103,11 +103,17 @@
                   <option value="terrain">Hex Terrain</option>
                   <option value="river">River Edge</option>
                   <option value="road">Road Edge</option>
+                  <option value="bridge">Bridge</option>
+                  <option value="wall">Great Wall Edge</option>
+                  <option value="wall_pass">Great Wall Pass</option>
                 </select>
                 <div id="terrain-palette" class="terrain-palette" aria-label="Terrain palette"></div>
                 <div id="edge-feature-choices" class="edge-feature-choices" aria-label="Edge feature choices" hidden>
                   <button class="edge-feature-button is-active" type="button" data-edge-feature="river">River</button>
                   <button class="edge-feature-button" type="button" data-edge-feature="road">Road</button>
+                  <button class="edge-feature-button" type="button" data-edge-feature="bridge">Bridge</button>
+                  <button class="edge-feature-button" type="button" data-edge-feature="wall">Great Wall</button>
+                  <button class="edge-feature-button" type="button" data-edge-feature="wall_pass">Pass</button>
                 </div>
               </div>
               <div class="field-grid generation-parameter-grid generation-defaults" hidden>
@@ -302,6 +308,7 @@
             <button id="zoom-in-button" class="secondary icon-button" type="button" aria-label="Zoom in" title="Zoom in">+</button>
             <button id="fit-button" class="secondary fit-button" type="button" aria-label="Fit map" title="Fit map">Fit</button>
             <button id="pasture-view-button" class="secondary view-toggle-button" type="button" aria-pressed="false" title="Toggle pasture view">Pasture</button>
+            <button id="details-toggle-button" class="secondary details-toggle-button" type="button" aria-expanded="true" title="Hide bottom panel" hidden>Hide Panel</button>
           </div>
           <div id="map-panel" class="map-panel" tabindex="0">
             <canvas id="map-canvas"></canvas>

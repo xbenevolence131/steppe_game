@@ -46,6 +46,7 @@ const zoomInButton = document.querySelector("#zoom-in-button");
 const zoomOutButton = document.querySelector("#zoom-out-button");
 const fitButton = document.querySelector("#fit-button");
 const pastureViewButton = document.querySelector("#pasture-view-button");
+const detailsToggleButton = document.querySelector("#details-toggle-button");
 const scenarioNameInput = document.querySelector("#scenario-name");
 const scenarioRegions = Array.from(document.querySelectorAll(".scenario-region"));
 const scenarioToolButtons = Array.from(document.querySelectorAll("[data-scenario-activate]"));
@@ -150,6 +151,7 @@ let scenarioFileMode = "load";
 let selectedScenarioFile = "";
 let appInitialization = null;
 let pastureViewEnabled = false;
+let scenarioDetailsCollapsed = false;
 let selectedHexCoord = null;
 let aiAnimationState = null;
 let aiAnimationInProgress = false;
@@ -1642,7 +1644,7 @@ function setTerrainEditMode(mode) {
 }
 
 function setEditorEdgeFeature(feature) {
-  editorEdgeFeatureSelect.value = feature === "road" ? "road" : "river";
+  editorEdgeFeatureSelect.value = ["river", "road", "bridge", "wall", "wall_pass"].includes(feature) ? feature : "river";
   setScenarioTool("terrain");
 }
 
@@ -3115,10 +3117,22 @@ function toggleDiplomacySurface() {
   setPlaySurfaceMode(playSurfaceMode === "diplomacy" ? "map" : "diplomacy");
 }
 
+function toggleScenarioDetailsPanel() {
+  if (appMode !== "scenario") {
+    return;
+  }
+  scenarioDetailsCollapsed = !scenarioDetailsCollapsed;
+  syncModeControls();
+  if (currentMap) {
+    requestAnimationFrame(drawMap);
+  }
+}
+
 function syncModeControls() {
   appShell.classList.toggle("is-intro", appMode === "intro");
   appShell.classList.toggle("is-scenario", appMode === "scenario");
   appShell.classList.toggle("is-play", appMode === "play");
+  appShell.classList.toggle("scenario-details-collapsed", appMode === "scenario" && scenarioDetailsCollapsed);
   mapSection.classList.toggle("is-diplomacy", appMode === "play" && playSurfaceMode === "diplomacy");
   if (diplomacyPanel) {
     diplomacyPanel.hidden = appMode !== "play" || playSurfaceMode !== "diplomacy";
@@ -3139,6 +3153,13 @@ function syncModeControls() {
     diplomacyToggleButton.classList.toggle("is-active", appMode === "play" && playSurfaceMode === "diplomacy");
     diplomacyToggleButton.setAttribute("aria-pressed", String(appMode === "play" && playSurfaceMode === "diplomacy"));
     diplomacyToggleButton.textContent = playSurfaceMode === "diplomacy" ? "Map" : "Diplomacy";
+  }
+  if (detailsToggleButton) {
+    const scenarioMode = appMode === "scenario";
+    detailsToggleButton.hidden = !scenarioMode;
+    detailsToggleButton.textContent = scenarioDetailsCollapsed ? "Show Panel" : "Hide Panel";
+    detailsToggleButton.title = scenarioDetailsCollapsed ? "Show bottom panel" : "Hide bottom panel";
+    detailsToggleButton.setAttribute("aria-expanded", String(!scenarioDetailsCollapsed));
   }
   syncEditorControls();
   syncScenarioParameterControls();
@@ -4782,6 +4803,13 @@ function roadEdgeKey(road) {
   return edgeKey(canonicalEdge(road.path[0], road.path[1]));
 }
 
+function wallEdgeKey(edge) {
+  if (!edge || !edge.a || !edge.b) {
+    return "";
+  }
+  return edgeKey(canonicalEdge(edge.a, edge.b));
+}
+
 function toggleRoadEdge(edge) {
   currentMap.roads = currentMap.roads || [];
   const key = edgeKey(edge);
@@ -4795,6 +4823,89 @@ function toggleRoadEdge(edge) {
     id: nextId,
     feature: "editor_road",
     path: [{ ...edge.a }, { ...edge.b }],
+  });
+}
+
+function crossingEdgeKey(crossing) {
+  return crossing && crossing.edge ? wallEdgeKey(crossing.edge) : "";
+}
+
+function toggleCrossingEdge(edge, kind) {
+  currentMap.crossings = Array.isArray(currentMap.crossings) ? currentMap.crossings : [];
+  const key = edgeKey(edge);
+  const index = currentMap.crossings.findIndex((crossing) => (
+    crossing.kind === kind && crossingEdgeKey(crossing) === key
+  ));
+  if (index >= 0) {
+    currentMap.crossings.splice(index, 1);
+    return;
+  }
+
+  const nextId = currentMap.crossings.reduce((maxId, crossing) => (
+    Math.max(maxId, Number.isInteger(crossing.id) ? crossing.id : 0)
+  ), 0) + 1;
+  currentMap.crossings.push({
+    id: nextId,
+    kind,
+    edge: { a: { ...edge.a }, b: { ...edge.b } },
+  });
+}
+
+function editableGreatWall() {
+  currentMap.walls = Array.isArray(currentMap.walls) ? currentMap.walls : [];
+  let wall = currentMap.walls.find((candidate) => candidate.feature === "great_wall");
+  if (!wall) {
+    const nextId = currentMap.walls.reduce((maxId, candidate) => (
+      Math.max(maxId, Number.isInteger(candidate.id) ? candidate.id : 0)
+    ), 0) + 1;
+    wall = {
+      id: nextId,
+      feature: "great_wall",
+      edge_path: [],
+    };
+    currentMap.walls.push(wall);
+  }
+  wall.edge_path = Array.isArray(wall.edge_path) ? wall.edge_path : [];
+  return wall;
+}
+
+function toggleWallEdge(edge) {
+  const wall = editableGreatWall();
+  const key = edgeKey(edge);
+  const index = wall.edge_path.findIndex((existing) => wallEdgeKey(existing) === key);
+  if (index >= 0) {
+    wall.edge_path.splice(index, 1);
+    currentMap.wall_gates = Array.isArray(currentMap.wall_gates)
+      ? currentMap.wall_gates.filter((gate) => wallEdgeKey(gate.edge) !== key)
+      : [];
+    if (wall.edge_path.length === 0) {
+      currentMap.walls = currentMap.walls.filter((candidate) => candidate !== wall);
+    }
+    return;
+  }
+  wall.edge_path.push({ a: { ...edge.a }, b: { ...edge.b } });
+}
+
+function toggleWallPass(edge) {
+  currentMap.wall_gates = Array.isArray(currentMap.wall_gates) ? currentMap.wall_gates : [];
+  const key = edgeKey(edge);
+  const index = currentMap.wall_gates.findIndex((gate) => wallEdgeKey(gate.edge) === key);
+  if (index >= 0) {
+    currentMap.wall_gates.splice(index, 1);
+    return;
+  }
+
+  const wall = editableGreatWall();
+  if (!wall.edge_path.some((existing) => wallEdgeKey(existing) === key)) {
+    wall.edge_path.push({ a: { ...edge.a }, b: { ...edge.b } });
+  }
+  const nextId = currentMap.wall_gates.reduce((maxId, gate) => (
+    Math.max(maxId, Number.isInteger(gate.id) ? gate.id : 0)
+  ), 0) + 1;
+  currentMap.wall_gates.push({
+    id: nextId,
+    kind: "gate",
+    edge: { a: { ...edge.a }, b: { ...edge.b } },
   });
 }
 
@@ -5014,7 +5125,7 @@ function paintAtPointer(event) {
   }
 
   const point = panelToWorld(event);
-  if (editorEdgeFeatureSelect.value === "river" || editorEdgeFeatureSelect.value === "road") {
+  if (["river", "road", "bridge", "wall", "wall_pass"].includes(editorEdgeFeatureSelect.value)) {
     const edge = findNearestEditableEdge(point);
     if (!edge) {
       return;
@@ -5030,6 +5141,12 @@ function paintAtPointer(event) {
     }
     if (editorEdgeFeatureSelect.value === "road") {
       toggleRoadEdge(edge);
+    } else if (editorEdgeFeatureSelect.value === "bridge") {
+      toggleCrossingEdge(edge, "bridge");
+    } else if (editorEdgeFeatureSelect.value === "wall") {
+      toggleWallEdge(edge);
+    } else if (editorEdgeFeatureSelect.value === "wall_pass") {
+      toggleWallPass(edge);
     } else {
       if (event.shiftKey) {
         setRiverEdge(edge, false);
@@ -5696,6 +5813,9 @@ detachHerdPopover.addEventListener("click", (event) => event.stopPropagation());
 zoomInButton.addEventListener("click", () => zoomFromCenter(1));
 zoomOutButton.addEventListener("click", () => zoomFromCenter(-1));
 fitButton.addEventListener("click", fitMap);
+if (detailsToggleButton) {
+  detailsToggleButton.addEventListener("click", toggleScenarioDetailsPanel);
+}
 pastureViewButton.addEventListener("click", () => {
   pastureViewEnabled = !pastureViewEnabled;
   syncPastureViewButton();

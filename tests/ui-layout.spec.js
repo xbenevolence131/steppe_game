@@ -1804,6 +1804,15 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect(page.locator("#play-controls")).toBeVisible();
   await expect(page.locator("#play-details-bar")).toBeVisible();
   await expect(page.locator("#end-turn-button")).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Hide Panel" })).toBeVisible();
+  const expandedMapHeight = await page.evaluate(() => document.querySelector("#map-panel").getBoundingClientRect().height);
+  await page.getByRole("button", { name: "Hide Panel" }).click();
+  await expect(page.locator("#play-details-bar")).toBeHidden();
+  await expect(page.getByRole("button", { name: "Show Panel" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.querySelector("#map-panel").getBoundingClientRect().height))
+    .toBeGreaterThan(expandedMapHeight + 40);
+  await page.getByRole("button", { name: "Show Panel" }).click();
+  await expect(page.locator("#play-details-bar")).toBeVisible();
   await page.getByLabel("AI Control Chinese").check();
   await expect.poll(() => page.evaluate(() => ({
     chineseAi: currentMap.game.factions.find((faction) => faction.key === "chinese").ai,
@@ -1871,16 +1880,51 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await page.mouse.click(point.x, point.y);
   await expect.poll(() => page.evaluate(() => currentMap.edges.length)).toBe(0);
 
+  await page.getByRole("button", { name: "Bridge" }).click();
+  point = await edgePoint({ q: 2, r: 2 }, { q: 3, r: 2 });
+  await page.mouse.click(point.x, point.y);
+  await expect.poll(() => page.evaluate(() => ({
+    crossings: currentMap.crossings.length,
+    crossingKind: currentMap.crossings[0]?.kind,
+  }))).toEqual({
+    crossings: 1,
+    crossingKind: "bridge",
+  });
+  await page.mouse.click(point.x, point.y);
+  await expect.poll(() => page.evaluate(() => currentMap.crossings.length)).toBe(0);
+
+  await page.getByRole("button", { name: "Pass" }).click();
+  point = await edgePoint({ q: 2, r: 2 }, { q: 3, r: 2 });
+  await page.mouse.click(point.x, point.y);
+  await expect.poll(() => page.evaluate(() => ({
+    walls: currentMap.walls.length,
+    wallEdges: currentMap.walls[0]?.edge_path.length ?? 0,
+    gates: currentMap.wall_gates.length,
+    gateKind: currentMap.wall_gates[0]?.kind,
+  }))).toEqual({
+    walls: 1,
+    wallEdges: 1,
+    gates: 1,
+    gateKind: "gate",
+  });
+
+  await page.getByRole("button", { name: "Great Wall" }).click();
+  await page.mouse.click(point.x, point.y);
+  await expect.poll(() => page.evaluate(() => ({
+    walls: currentMap.walls.length,
+    gates: currentMap.wall_gates.length,
+  }))).toEqual({ walls: 0, gates: 0 });
+
   await page.getByRole("button", { name: "Units", exact: true }).click();
   await expect(page.locator("#editor-unit-type")).toBeVisible();
   await expect(page.locator("#editor-unit-side")).toBeVisible();
   await page.locator("#editor-unit-type").selectOption("horde");
-  await page.locator("#editor-unit-side").selectOption("chinese");
+  await page.locator("#editor-unit-side").selectOption("mongol");
   point = await hexPoint({ q: 3, r: 3 });
   await page.mouse.click(point.x, point.y);
   await expect.poll(() => page.evaluate(() => currentMap.units.length)).toBe(1);
   await expect.poll(() => page.evaluate(() => currentMap.units[0].kind)).toBe("horde");
-  await expect.poll(() => page.evaluate(() => currentMap.units[0].faction)).toBe("chinese");
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].faction)).toBe("mongol");
   await expect.poll(() => page.evaluate(() => currentMap.units[0].move)).toBe(3);
   await expect.poll(() => page.evaluate(() => currentMap.units[0].projectsZoc)).toBe(true);
   await expect.poll(() => page.evaluate(() => currentMap.units[0].respectsZoc)).toBe(true);
@@ -1899,7 +1943,7 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect.poll(() => page.evaluate(() => ({
     keys: currentMap.factions.map((faction) => faction.key),
     turnOrder: currentMap.game.turnOrder,
-  }))).toEqual({ keys: ["mongol", "chinese", "jurchen", "forest_nomad", "persian"], turnOrder: [0, 2] });
+  }))).toEqual({ keys: ["mongol", "chinese", "persian", "jurchen", "forest_nomad"], turnOrder: [0, 2] });
 
   await page.getByRole("button", { name: "Edit", exact: true }).click();
   await expect(page.locator("#editor-unit-type")).toBeHidden();
@@ -1947,9 +1991,9 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
     population: currentMap.units[0].population,
     horses: currentMap.units[0].horses,
   }))).toEqual({ population: 6, horses: 15 });
-  await page.locator("#unit-type-input").selectOption("chinese_militia");
-  await expect.poll(() => page.evaluate(() => currentMap.units[0].kind)).toBe("chinese_militia");
-  await expect(page.locator("#unit-type-input")).toHaveValue("chinese_militia");
+  await page.locator("#unit-type-input").selectOption("horse_archer");
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].kind)).toBe("horse_archer");
+  await expect(page.locator("#unit-type-input")).toHaveValue("horse_archer");
   await expect(page.locator("#unit-resources")).toBeHidden();
   await page.locator("#unit-hp-input").fill("7");
   await page.locator("#unit-hp-input").dispatchEvent("change");
