@@ -91,6 +91,7 @@ const horseArcherCount = document.querySelector("#horse-archer-count");
 const hordeCount = document.querySelector("#horde-count");
 const sidebarFactionMetal = document.querySelector("#sidebar-faction-metal");
 const sidebarSelectionReadout = document.querySelector(".sidebar-selection-readout");
+const unitInspectorInfoToggle = document.querySelector("#unit-inspector-info-toggle");
 const unitRoster = document.querySelector("#unit-roster");
 const unitName = document.querySelector("#unit-name");
 const unitNameInput = document.querySelector("#unit-name-input");
@@ -100,9 +101,13 @@ const unitHp = document.querySelector("#unit-hp");
 const unitHpInput = document.querySelector("#unit-hp-input");
 const unitAttack = document.querySelector("#unit-attack");
 const unitDefense = document.querySelector("#unit-defense");
+const unitReadinessDamage = document.querySelector("#unit-readiness-damage");
 const unitReadiness = document.querySelector("#unit-readiness");
 const unitReadinessInput = document.querySelector("#unit-readiness-input");
 const unitMove = document.querySelector("#unit-move");
+const unitZoc = document.querySelector("#unit-zoc");
+const unitSpecialProperties = document.querySelector("#unit-special-properties");
+const unitStatsView = document.querySelector("#unit-stats-view");
 const unitStance = document.querySelector("#unit-stance");
 const unitStanceInput = document.querySelector("#unit-stance-input");
 const unitResources = document.querySelector("#unit-resources");
@@ -163,6 +168,7 @@ let selectedScenarioFile = "";
 let appInitialization = null;
 let pastureViewEnabled = false;
 let coordinateLabelsEnabled = true;
+let unitInspectorStatsVisible = false;
 let scenarioDetailsCollapsed = false;
 let selectedHexCoord = null;
 let aiAnimationState = null;
@@ -1608,10 +1614,9 @@ function syncStrategicAiDashboard() {
 
   activeStrategicAiGroup();
   for (const group of groups) {
-    const collapsed = collapsedStrategicAiGroupIds.has(group.id);
+    const collapsed = false;
     const card = document.createElement("article");
     card.className = "ai-group-card is-dashboard-row";
-    card.classList.toggle("is-collapsed", collapsed);
     card.classList.toggle("is-active", activeStrategicAiGroupId === group.id);
     card.tabIndex = 0;
     card.setAttribute("role", "button");
@@ -1647,6 +1652,14 @@ function syncStrategicAiDashboard() {
     const groupRow = document.createElement("div");
     groupRow.className = "ai-group-edit-row";
 
+    const statusField = document.createElement("div");
+    statusField.className = "ai-field";
+    statusField.textContent = "AI Status";
+    const statusBadge = document.createElement("span");
+    statusBadge.className = "ai-status-badge";
+    statusBadge.textContent = group.generated ? "Auto AI" : "Manual AI";
+    statusField.appendChild(statusBadge);
+
     const nameField = document.createElement("div");
     nameField.className = "ai-field";
     nameField.textContent = "Name";
@@ -1663,14 +1676,13 @@ function syncStrategicAiDashboard() {
     ownerValue.textContent = optionLabelForFaction(factionForOwner(group.owner));
     ownerField.appendChild(ownerValue);
 
+    const membersField = document.createElement("div");
+    membersField.className = "ai-field ai-members-field";
+    membersField.textContent = "Members";
     const membersLabel = document.createElement("span");
-    membersLabel.className = "ai-member-count";
-    membersLabel.textContent = group.generated ? "Generated" : "Members";
-    membersLabel.classList.toggle("ai-generated-badge", group.generated);
-
-    const memberCount = document.createElement("span");
-    memberCount.className = "ai-member-count";
-    memberCount.textContent = `${group.unitIds.length} units`;
+    membersLabel.className = "ai-member-count ai-member-pill";
+    membersLabel.textContent = `${group.unitIds.length} units`;
+    membersField.appendChild(membersLabel);
 
     const directiveField = document.createElement("div");
     directiveField.className = "ai-field";
@@ -1681,10 +1693,13 @@ function syncStrategicAiDashboard() {
     directiveField.appendChild(directiveValue);
 
     const targetHex = strategicAiTargetHex(group);
+    const targetField = document.createElement("div");
+    targetField.className = "ai-field ai-target-field";
+    targetField.textContent = "Target Hex";
     const targetButton = document.createElement("button");
     targetButton.type = "button";
     targetButton.className = "ai-target-jump-button";
-    targetButton.textContent = targetHex ? `Target Hex ${targetHex.q},${targetHex.r}` : "Target Hex -";
+    targetButton.textContent = targetHex ? `${targetHex.q},${targetHex.r}` : "-";
     targetButton.disabled = !targetHex;
     targetButton.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -1696,6 +1711,7 @@ function syncStrategicAiDashboard() {
       syncModeControls();
       centerViewportOnWorldPoint(hexCenter(targetHex));
     });
+    targetField.appendChild(targetButton);
 
     const targetFactionField = document.createElement("div");
     targetFactionField.className = "ai-field";
@@ -1705,20 +1721,15 @@ function syncStrategicAiDashboard() {
     targetFactionValue.textContent = optionLabelForFaction(factionForOwner(group.directive.owner));
     targetFactionField.appendChild(targetFactionValue);
 
-    if (collapsed) {
-      groupRow.append(summary, collapseButton);
-    } else {
-      groupRow.append(
-        nameField,
-        ownerField,
-        membersLabel,
-        memberCount,
-        directiveField,
-        targetButton,
-        targetFactionField,
-        collapseButton
-      );
-    }
+    groupRow.append(
+      statusField,
+      nameField,
+      ownerField,
+      membersField,
+      directiveField,
+      targetField,
+      targetFactionField
+    );
     card.append(groupRow);
     strategicAiGroupsContainer.appendChild(card);
   }
@@ -3006,6 +3017,44 @@ function stanceLabel(stance) {
     .join(" ");
 }
 
+function unitZocLabel(unit) {
+  const parts = [];
+  if (unit && unit.projectsZoc) {
+    parts.push("Projects");
+  }
+  parts.push(unit && unit.respectsZoc ? "Respects" : "Ignores");
+  return parts.join(" / ");
+}
+
+function unitSpecialPropertyLabels(unit) {
+  if (!unit || unit.kind === "horde" || unit.kind === "herd") {
+    return [];
+  }
+  const labels = [];
+  const stances = legalStancesForUnit(unit);
+  if (stances.includes("feigned_retreat")) {
+    labels.push("Feigned Retreat");
+  }
+  if (unit.respectsZoc === false) {
+    labels.push("Ignores ZOC");
+  }
+  return labels;
+}
+
+function syncUnitInspectorView() {
+  const unitInspector = document.querySelector(".unit-inspector");
+  const statsVisible = unitInspectorStatsVisible && Boolean(selectedUnit());
+  unitInspector.classList.toggle("is-stats-view", statsVisible);
+  if (unitStatsView) {
+    unitStatsView.hidden = !statsVisible;
+  }
+  if (unitInspectorInfoToggle) {
+    unitInspectorInfoToggle.setAttribute("aria-pressed", String(statsVisible));
+    unitInspectorInfoToggle.setAttribute("aria-label", statsVisible ? "Show unit parameters" : "Show unit stats");
+    unitInspectorInfoToggle.title = statsVisible ? "Show unit parameters" : "Show unit stats";
+  }
+}
+
 function productionLabel(unit) {
   if (!unit || unit.kind !== "horde" || unit.productionState !== "building") {
     return "Idle";
@@ -3215,9 +3264,12 @@ function syncUnitInspector() {
     unitHpInput.value = "";
     unitAttack.textContent = "-";
     unitDefense.textContent = "-";
+    unitReadinessDamage.textContent = "-";
     unitReadiness.textContent = "-";
     unitReadinessInput.value = "";
     unitMove.textContent = "-";
+    unitZoc.textContent = "-";
+    unitSpecialProperties.textContent = "None";
     unitStance.textContent = "-";
     unitStanceInput.replaceChildren();
     unitResources.hidden = true;
@@ -3231,6 +3283,7 @@ function syncUnitInspector() {
     unitStarvation.textContent = "0";
     unitProductionRow.hidden = true;
     unitProduction.textContent = "Idle";
+    syncUnitInspectorView();
     return;
   }
   if (sidebarSelectionReadout) {
@@ -3244,9 +3297,13 @@ function syncUnitInspector() {
   unitHpInput.value = Number.isFinite(unit.hp) ? String(unit.hp) : "";
   unitAttack.textContent = Number.isFinite(unit.attack) ? String(unit.attack) : "-";
   unitDefense.textContent = Number.isFinite(unit.defense) ? String(unit.defense) : "-";
+  unitReadinessDamage.textContent = Number.isFinite(unit.readinessDamage) ? String(unit.readinessDamage) : "-";
   unitReadiness.textContent = Number.isFinite(unit.readiness) ? String(unit.readiness) : "-";
   unitReadinessInput.value = Number.isFinite(unit.readiness) ? String(unit.readiness) : "";
   unitMove.textContent = Number.isFinite(unit.move) ? String(unit.move) : "-";
+  unitZoc.textContent = unitZocLabel(unit);
+  const specialProperties = unitSpecialPropertyLabels(unit);
+  unitSpecialProperties.textContent = specialProperties.length > 0 ? specialProperties.join(", ") : "None";
   unitStance.textContent = stanceLabel(unit.stance);
   const stances = legalStancesForUnit(unit);
   const previousStance = unitStanceInput.value;
@@ -3280,6 +3337,7 @@ function syncUnitInspector() {
   unitStarvation.textContent = String(starvationTurns);
   unitProductionRow.hidden = unit.kind !== "horde";
   unitProduction.textContent = productionLabel(unit);
+  syncUnitInspectorView();
 }
 
 function syncPlayControls() {
@@ -4152,7 +4210,7 @@ function drawUnitCounters(units) {
     const dividerX = x + metrics.dividerOffset;
 
     roundedRectPath(x, y, counterWidth, counterHeight, metrics.cornerRadius);
-    ctx.fillStyle = strategicMemberIds.has(unit.id) ? "#dff4df" : "#fffdf8";
+    ctx.fillStyle = strategicMemberIds.has(unit.id) ? "#bfe8bf" : "#fffdf8";
     ctx.fill();
     if (legalAttackForUnit(unit)) {
       ctx.fillStyle = "rgba(201, 54, 50, 0.24)";
@@ -4355,9 +4413,9 @@ function drawStrategicAiHighlights() {
       }
     });
     ctx.closePath();
-    ctx.fillStyle = "rgba(255, 36, 36, 0.22)";
+    ctx.fillStyle = "rgba(217, 35, 190, 0.2)";
     ctx.fill();
-    ctx.strokeStyle = "#ff1414";
+    ctx.strokeStyle = "#d923be";
     ctx.lineWidth = 4.2 / viewport.scale;
     ctx.stroke();
   }
@@ -6119,6 +6177,12 @@ unitTypeInput.addEventListener("change", updateEditorUnitType);
 unitHpInput.addEventListener("change", updateEditorUnitHp);
 unitReadinessInput.addEventListener("change", updateEditorUnitReadiness);
 unitStanceInput.addEventListener("change", updateEditorUnitStance);
+if (unitInspectorInfoToggle) {
+  unitInspectorInfoToggle.addEventListener("click", () => {
+    unitInspectorStatsVisible = !unitInspectorStatsVisible;
+    syncUnitInspectorView();
+  });
+}
 unitPopulationInput.addEventListener("change", () => updateEditorUnitResource("population", unitPopulationInput));
 unitHorsesInput.addEventListener("change", () => updateEditorUnitResource("horses", unitHorsesInput));
 saveButton.addEventListener("click", saveCurrentMap);

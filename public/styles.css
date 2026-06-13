@@ -461,6 +461,52 @@ body {
   cursor: pointer;
 }
 
+.ai-group-card.is-dashboard-row .ai-group-edit-row {
+  grid-template-columns:
+    96px
+    180px
+    128px
+    104px
+    136px
+    128px
+    144px;
+  min-width: 964px;
+  align-items: end;
+}
+
+.ai-group-card.is-dashboard-row .ai-field,
+.ai-group-card.is-dashboard-row .ai-members-field {
+  align-self: end;
+}
+
+.ai-group-card.is-dashboard-row .ai-target-readout {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 28px;
+  min-height: 28px;
+  padding: 5px 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ai-group-card.is-dashboard-row .ai-member-pill {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 28px;
+  min-height: 28px;
+  box-sizing: border-box;
+}
+
+.ai-group-card.is-dashboard-row .ai-status-badge,
+.ai-group-card.is-dashboard-row .ai-target-jump-button {
+  width: 100%;
+  height: 28px;
+  box-sizing: border-box;
+}
+
 .ai-group-card.is-dashboard-row:focus-visible,
 .ai-group-card.is-dashboard-row.is-active {
   outline: 0;
@@ -517,30 +563,52 @@ body {
   white-space: nowrap;
 }
 
+.ai-status-badge,
+.ai-member-pill {
+  min-height: 28px;
+  padding: 5px 8px;
+  border: 1px solid #86c98a;
+  background: #bfe8bf;
+  color: #173f1b;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ai-status-badge {
+  display: block;
+  text-align: center;
+  border-color: #b9ad96;
+  background: #f2eadb;
+  color: var(--muted);
+}
+
+.ai-members-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ai-target-button,
 .ai-target-jump-button {
   min-height: 28px;
   min-width: 0;
   padding: 4px 8px;
-  border-color: var(--line);
+  border-color: #d923be;
   background: #fffdf8;
-  color: var(--text);
+  color: #8d177e;
   font-size: 13px;
+  font-weight: 700;
   white-space: nowrap;
 }
 
+.ai-target-button:not(:disabled):hover,
+.ai-target-button:not(:disabled):focus-visible,
 .ai-target-jump-button:not(:disabled):hover,
 .ai-target-jump-button:not(:disabled):focus-visible {
-  border-color: #9f2f2b;
-  background: #f7e5df;
-}
-
-.ai-generated-badge {
-  justify-self: start;
-  border: 1px solid #b9ad96;
-  background: #f2eadb;
-  padding: 4px 7px;
-  color: var(--muted);
-  font-weight: 700;
+  border-color: #b917a1;
+  background: rgba(217, 35, 190, 0.1);
+  color: #721064;
 }
 
 .session-tool-panel {
@@ -1314,8 +1382,44 @@ select[hidden] {
   font-weight: 650;
 }
 
+.unit-inspector h2 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.unit-inspector-info-toggle {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  min-height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  border-color: var(--line);
+  background: #fffdf8;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.unit-inspector-info-toggle[aria-pressed="true"],
+.unit-inspector-info-toggle:hover,
+.unit-inspector-info-toggle:focus-visible {
+  border-color: #1f4f52;
+  background: #e3f0e4;
+  color: #173f1b;
+}
+
 .unit-inspector-list {
   display: contents;
+}
+
+.unit-inspector.is-stats-view .unit-params-view {
+  display: none;
 }
 
 .unit-inspector-list div {
@@ -1466,6 +1570,58 @@ select[hidden] {
 .unit-resource-field input {
   width: 7ch;
   min-width: 0;
+}
+
+.unit-stats-view {
+  display: contents;
+}
+
+.unit-stats-view[hidden] {
+  display: none;
+}
+
+.unit-stats-view div {
+  display: grid;
+  grid-template-columns: var(--unit-label-width) minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  min-height: var(--bottom-panel-row-height);
+}
+
+.unit-stats-view div:nth-child(1) {
+  grid-row: 2;
+}
+
+.unit-stats-view div:nth-child(2) {
+  grid-row: 3;
+}
+
+.unit-stats-view div:nth-child(3) {
+  grid-row: 4;
+}
+
+.unit-stats-view dt {
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.unit-stats-view dd {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 650;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unit-stat-pair {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .unit-condition-label {

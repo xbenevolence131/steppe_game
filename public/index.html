@@ -329,8 +329,11 @@
           </dialog>
           <div id="play-details-bar" class="play-details-bar" aria-label="Bottom panel">
             <section class="unit-inspector" aria-label="Unit inspector panel">
-              <h2>Unit Inspector Panel</h2>
-              <dl class="status-list unit-inspector-list">
+              <h2>
+                <span>Unit Inspector Panel</span>
+                <button id="unit-inspector-info-toggle" class="unit-inspector-info-toggle" type="button" aria-label="Show unit stats" aria-pressed="false" title="Show unit stats">i</button>
+              </h2>
+              <dl class="status-list unit-inspector-list unit-params-view">
                 <div>
                   <dt>Name</dt>
                   <dd>
@@ -360,12 +363,33 @@
                   </dd>
                 </div>
               </dl>
-              <div class="unit-derived-stats" hidden>
-                <span id="unit-attack">-</span>
-                <span id="unit-defense">-</span>
-                <span id="unit-move">-</span>
-              </div>
-              <dl id="unit-resources" class="status-list unit-inspector-list unit-resources" hidden>
+              <dl id="unit-stats-view" class="unit-stats-view" hidden>
+                <div>
+                  <dt>Combat</dt>
+                  <dd class="unit-stat-pair">
+                    <span class="unit-condition-label">ATK</span>
+                    <span id="unit-attack">-</span>
+                    <span class="unit-condition-label">DEF</span>
+                    <span id="unit-defense">-</span>
+                    <span class="unit-condition-label">RDY Dmg</span>
+                    <span id="unit-readiness-damage">-</span>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Mobility</dt>
+                  <dd class="unit-stat-pair">
+                    <span class="unit-condition-label">Move</span>
+                    <span id="unit-move">-</span>
+                    <span class="unit-condition-label">ZOC</span>
+                    <span id="unit-zoc">-</span>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Special</dt>
+                  <dd id="unit-special-properties">None</dd>
+                </div>
+              </dl>
+              <dl id="unit-resources" class="status-list unit-inspector-list unit-resources unit-params-view" hidden>
                 <div class="unit-resource-row">
                   <dt>Resources</dt>
                   <dd class="unit-resource-pair">
