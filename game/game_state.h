@@ -86,6 +86,7 @@ struct PastureState {
 struct GameHex {
     Coord coord;
     Terrain terrain = Terrain::None;
+    std::string name = "None";
     HexTagMask tags = 0;
     OwnerId owner = neutral_owner;
     PastureState pasture;

@@ -46,6 +46,7 @@ const zoomInButton = document.querySelector("#zoom-in-button");
 const zoomOutButton = document.querySelector("#zoom-out-button");
 const fitButton = document.querySelector("#fit-button");
 const pastureViewButton = document.querySelector("#pasture-view-button");
+const coordinatesViewButton = document.querySelector("#coordinates-view-button");
 const detailsToggleButton = document.querySelector("#details-toggle-button");
 const scenarioNameInput = document.querySelector("#scenario-name");
 const foodConsumptionEnabledInput = document.querySelector("#food-consumption-enabled");
@@ -116,7 +117,7 @@ const unitStarvation = document.querySelector("#unit-starvation");
 const unitProductionRow = document.querySelector("#unit-production-row");
 const unitProduction = document.querySelector("#unit-production");
 const hexTitleCoordinate = document.querySelector("#hex-title-coordinate");
-const hexCoordinate = document.querySelector("#hex-coordinate");
+const hexName = document.querySelector("#hex-name");
 const hexTerrain = document.querySelector("#hex-terrain");
 const hexDefense = document.querySelector("#hex-defense");
 const hexMoveCost = document.querySelector("#hex-move-cost");
@@ -161,6 +162,7 @@ let scenarioFileMode = "load";
 let selectedScenarioFile = "";
 let appInitialization = null;
 let pastureViewEnabled = false;
+let coordinateLabelsEnabled = true;
 let scenarioDetailsCollapsed = false;
 let selectedHexCoord = null;
 let aiAnimationState = null;
@@ -637,11 +639,93 @@ function normalizeMapHex(hex) {
     q: Number(hex.q),
     r: Number(hex.r),
     terrain,
+    name: normalizeHexName(hex.name),
     labels: Array.isArray(hex.labels)
       ? hex.labels.filter((label) => typeof label === "string")
       : editorLabelsForTerrain(terrain),
     pasture: normalizePasture(hex.pasture, terrain),
   };
+}
+
+function normalizeHexName(name) {
+  return typeof name === "string" && name.trim() ? name.trim() : "None";
+}
+
+function townName(town) {
+  if (!town || typeof town !== "object") {
+    return "None";
+  }
+  if (typeof town.name === "string" && town.name.trim()) {
+    return town.name.trim();
+  }
+  switch (town.feature) {
+    case "persian_town":
+      return "Persian Town";
+    case "chinese_town":
+      return "Chinese Town";
+    case "dzungarian_gate":
+      return "Dzungarian Gate";
+    case "oasis":
+      return "Oasis";
+    case "grassland_water":
+      return "Water Town";
+    default:
+      return "Town";
+  }
+}
+
+function hexNameFromLabels(labels) {
+  if (!Array.isArray(labels)) {
+    return "None";
+  }
+  if (labels.includes("persian_town")) {
+    return "Persian Town";
+  }
+  if (labels.includes("chinese_town")) {
+    return "Chinese Town";
+  }
+  if (labels.includes("dzungarian_gate")) {
+    return "Dzungarian Gate";
+  }
+  if (labels.includes("oasis")) {
+    return "Oasis";
+  }
+  if (labels.includes("water_adjacent_town") || labels.includes("grassland_water")) {
+    return "Water Town";
+  }
+  return labels.includes("urban") ? "Town" : "None";
+}
+
+function syncHexNamesFromTowns(map) {
+  if (!map || !Array.isArray(map.hexes)) {
+    return;
+  }
+  for (const hex of map.hexes) {
+    hex.name = normalizeHexName(hex.name);
+    if (hex.name === "None") {
+      hex.name = hexNameFromLabels(hex.labels);
+    }
+  }
+  if (!Array.isArray(map.towns)) {
+    return;
+  }
+  const hexesByCoord = new Map(map.hexes.map((hex) => [coordKey(hex), hex]));
+  for (const town of map.towns) {
+    if (!town || !Number.isInteger(town.q) || !Number.isInteger(town.r)) {
+      continue;
+    }
+    const hex = hexesByCoord.get(coordKey(town));
+    if (!hex) {
+      continue;
+    }
+    const currentName = normalizeHexName(hex.name);
+    const labelName = hexNameFromLabels(hex.labels);
+    const hasExplicitTownName = typeof town.name === "string" && town.name.trim();
+    if (!hasExplicitTownName && currentName !== "None" && currentName !== labelName) {
+      continue;
+    }
+    hex.name = townName(town);
+  }
 }
 
 function newSeed() {
@@ -875,6 +959,7 @@ function refreshDerivedTopology(map = currentMap) {
   if (!map) {
     return null;
   }
+  syncHexNamesFromTowns(map);
   map.lake_river_connections = deriveLakeRiverConnections(map);
   map.metadata = map.metadata && typeof map.metadata === "object" ? map.metadata : {};
   map.metadata.lake_river_connection_model = "river-terminal-lake-vertex.v1";
@@ -3254,6 +3339,14 @@ function syncPastureViewButton() {
   pastureViewButton.setAttribute("aria-pressed", String(pastureViewEnabled));
 }
 
+function syncCoordinateViewButton() {
+  if (!coordinatesViewButton) {
+    return;
+  }
+  coordinatesViewButton.classList.toggle("is-active", coordinateLabelsEnabled);
+  coordinatesViewButton.setAttribute("aria-pressed", String(coordinateLabelsEnabled));
+}
+
 function syncHexInspector() {
   const hex = selectedHex();
   if (!hex) {
@@ -3263,7 +3356,7 @@ function syncHexInspector() {
     if (hexTitleCoordinate) {
       hexTitleCoordinate.textContent = "None";
     }
-    hexCoordinate.textContent = "None";
+    hexName.textContent = "None";
     hexTerrain.textContent = "-";
     hexDefense.textContent = "-";
     hexMoveCost.textContent = "-";
@@ -3279,7 +3372,7 @@ function syncHexInspector() {
   if (hexTitleCoordinate) {
     hexTitleCoordinate.textContent = coordinateLabel;
   }
-  hexCoordinate.textContent = coordinateLabel;
+  hexName.textContent = normalizeHexName(hex.name);
   hexTerrain.textContent = titleCaseToken(hex.terrain);
   hexDefense.textContent = `${terrainDefensePercent(hex.terrain)}%`;
   hexMoveCost.textContent = formatMoveCost(terrainCost);
@@ -3372,6 +3465,7 @@ function syncModeControls() {
   syncDiplomacyScreen();
   syncUndoControls();
   syncPastureViewButton();
+  syncCoordinateViewButton();
   syncHexInspector();
 }
 
@@ -3491,7 +3585,7 @@ function drawHex(cx, cy, size, label, hex) {
   ctx.stroke();
 
   const visibleSize = size * viewport.scale;
-  if (visibleSize < 8) {
+  if (!coordinateLabelsEnabled || visibleSize < 8) {
     return;
   }
 
@@ -4046,6 +4140,7 @@ function drawUnitCounters(units) {
   const selectedUnitId = currentMap && currentMap.game && Number.isInteger(currentMap.game.selectedUnitId)
     ? currentMap.game.selectedUnitId
     : 0;
+  const strategicMemberIds = activeStrategicAiMemberIds();
   for (const unit of units) {
     const faction = factions[unit.faction] || factions.mongol;
     const metrics = unitCounterMetrics();
@@ -4057,7 +4152,7 @@ function drawUnitCounters(units) {
     const dividerX = x + metrics.dividerOffset;
 
     roundedRectPath(x, y, counterWidth, counterHeight, metrics.cornerRadius);
-    ctx.fillStyle = "#fffdf8";
+    ctx.fillStyle = strategicMemberIds.has(unit.id) ? "#dff4df" : "#fffdf8";
     ctx.fill();
     if (legalAttackForUnit(unit)) {
       ctx.fillStyle = "rgba(201, 54, 50, 0.24)";
@@ -4232,6 +4327,11 @@ function strategicAiTargetHex(group) {
   return mapHexAt(directive.target);
 }
 
+function activeStrategicAiMemberIds() {
+  const group = appMode === "play" ? activeStrategicAiGroup() : null;
+  return new Set(group ? group.unitIds : []);
+}
+
 function drawStrategicAiHighlights() {
   if (appMode !== "play") {
     return;
@@ -4241,34 +4341,11 @@ function drawStrategicAiHighlights() {
     return;
   }
 
-  const memberIds = new Set(group.unitIds);
   ctx.save();
-  for (const unit of currentMap.units || []) {
-    if (!memberIds.has(unit.id)) {
-      continue;
-    }
-    const center = hexCenter(unit);
-    const points = hexPoints(center.x, center.y, geometry.size * 0.84);
-    ctx.beginPath();
-    points.forEach(([x, y], index) => {
-      if (index === 0) {
-        ctx.moveTo(x, y);
-      } else {
-        ctx.lineTo(x, y);
-      }
-    });
-    ctx.closePath();
-    ctx.fillStyle = "rgba(28, 255, 76, 0.34)";
-    ctx.fill();
-    ctx.strokeStyle = "#00f236";
-    ctx.lineWidth = 2.4 / viewport.scale;
-    ctx.stroke();
-  }
-
   const target = strategicAiTargetHex(group);
   if (target) {
     const center = hexCenter(target);
-    const points = hexPoints(center.x, center.y, geometry.size * 0.74);
+    const points = hexPoints(center.x, center.y, geometry.size * 0.92);
     ctx.beginPath();
     points.forEach(([x, y], index) => {
       if (index === 0) {
@@ -4278,10 +4355,10 @@ function drawStrategicAiHighlights() {
       }
     });
     ctx.closePath();
-    ctx.fillStyle = "rgba(255, 36, 36, 0.38)";
+    ctx.fillStyle = "rgba(255, 36, 36, 0.22)";
     ctx.fill();
     ctx.strokeStyle = "#ff1414";
-    ctx.lineWidth = 2.8 / viewport.scale;
+    ctx.lineWidth = 4.2 / viewport.scale;
     ctx.stroke();
   }
   ctx.restore();
@@ -6098,6 +6175,13 @@ pastureViewButton.addEventListener("click", () => {
   syncPastureViewButton();
   drawMap();
 });
+if (coordinatesViewButton) {
+  coordinatesViewButton.addEventListener("click", () => {
+    coordinateLabelsEnabled = !coordinateLabelsEnabled;
+    syncCoordinateViewButton();
+    drawMap();
+  });
+}
 
 mapPanel.addEventListener("wheel", (event) => {
   if (!currentMap) {

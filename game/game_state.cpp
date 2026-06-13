@@ -1080,6 +1080,7 @@ GameState game_state_from_generated_map(const GeneratedMap& generated) {
         GameHex game_hex;
         game_hex.coord = hex.coord;
         game_hex.terrain = hex.terrain;
+        game_hex.name = "None";
         game_hex.tags = tags_from_labels(hex.labels);
         game_hex.pasture = initial_pasture_for_terrain(hex.terrain);
         game_hex.source_labels = hex.labels;
@@ -3332,6 +3333,7 @@ void print_game_state_json(const GameState& state, std::ostream& out) {
         out << "{\"q\":" << hex.coord.q
             << ",\"r\":" << hex.coord.r
             << ",\"terrain\":\"" << terrain_to_string(hex.terrain) << "\""
+            << ",\"name\":\"" << escape_json(hex.name.empty() ? "None" : hex.name) << "\""
             << ",\"labels\":";
         print_string_array_json(hex.source_labels, out);
         out << ",\"pasture\":";
@@ -3531,6 +3533,7 @@ void print_game_patch_json(
         out << "{\"q\":" << hex.coord.q
             << ",\"r\":" << hex.coord.r
             << ",\"terrain\":\"" << terrain_to_string(hex.terrain) << "\""
+            << ",\"name\":\"" << escape_json(hex.name.empty() ? "None" : hex.name) << "\""
             << ",\"labels\":";
         print_string_array_json(hex.source_labels, out);
         out << ",\"pasture\":";
@@ -3675,6 +3678,10 @@ GameState parse_game_state_json(const std::string& json) {
         GameHex hex;
         hex.coord = coord_from_json(hex_json);
         hex.terrain = terrain_from_string(string_field(hex_json, "terrain", "none"));
+        hex.name = string_field(hex_json, "name", "None");
+        if (hex.name.empty()) {
+            hex.name = "None";
+        }
         hex.tags = hex.terrain == Terrain::Grassland ? tag_mask(HexTag::BaseSteppe) : 0;
         hex.pasture = initial_pasture_for_terrain(hex.terrain);
         if (hex_json.contains("pasture") && hex_json["pasture"].is_object()) {

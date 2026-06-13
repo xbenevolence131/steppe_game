@@ -277,22 +277,23 @@
       </section>
 
       <div class="main-workbench">
-        <aside id="play-controls" class="mode-sidebar play-sidebar" aria-label="Unit controls">
+        <aside id="play-controls" class="mode-sidebar play-sidebar" aria-label="Unit list panel">
           <div class="sidebar-section">
             <h2>Units</h2>
             <div id="unit-roster" class="unit-roster" aria-label="Deployed units"></div>
           </div>
         </aside>
 
-        <section class="map-section" aria-label="Shared map view">
-          <div class="map-toolbar" aria-label="Map view controls">
+        <section class="map-section" aria-label="Map view panel">
+          <div class="map-toolbar" aria-label="Map control panel">
             <button id="zoom-out-button" class="secondary icon-button" type="button" aria-label="Zoom out" title="Zoom out">-</button>
             <button id="zoom-in-button" class="secondary icon-button" type="button" aria-label="Zoom in" title="Zoom in">+</button>
             <button id="fit-button" class="secondary fit-button" type="button" aria-label="Fit map" title="Fit map">Fit</button>
             <button id="pasture-view-button" class="secondary view-toggle-button" type="button" aria-pressed="false" title="Toggle pasture view">Pasture</button>
+            <button id="coordinates-view-button" class="secondary view-toggle-button" type="button" aria-pressed="true" title="Toggle hex coordinates">Coords</button>
             <button id="details-toggle-button" class="secondary details-toggle-button" type="button" aria-expanded="true" title="Hide bottom panel" hidden>Hide Panel</button>
           </div>
-          <div id="map-panel" class="map-panel" tabindex="0">
+          <div id="map-panel" class="map-panel" tabindex="0" aria-label="Map view panel">
             <canvas id="map-canvas"></canvas>
             <div id="context-menu" class="context-menu" role="menu" hidden></div>
             <div id="combat-preview" class="combat-preview" hidden></div>
@@ -326,9 +327,9 @@
               </menu>
             </form>
           </dialog>
-          <div id="play-details-bar" class="play-details-bar" aria-label="Play details">
-            <section class="unit-inspector" aria-label="Unit inspector">
-              <h2>Unit Inspector</h2>
+          <div id="play-details-bar" class="play-details-bar" aria-label="Bottom panel">
+            <section class="unit-inspector" aria-label="Unit inspector panel">
+              <h2>Unit Inspector Panel</h2>
               <dl class="status-list unit-inspector-list">
                 <div>
                   <dt>Name</dt>
@@ -390,12 +391,12 @@
                 </div>
               </dl>
             </section>
-            <section class="hex-inspector play-detail-region" aria-label="Hex inspector">
-              <h2><span>Hex Inspector</span><span id="hex-title-coordinate">None</span></h2>
+            <section class="hex-inspector play-detail-region" aria-label="Hex inspector panel">
+              <h2><span>Hex Inspector Panel</span><span id="hex-title-coordinate">None</span></h2>
               <dl class="hex-inspector-list">
                 <div>
-                  <dt>Hex</dt>
-                  <dd id="hex-coordinate">None</dd>
+                  <dt>Name</dt>
+                  <dd id="hex-name">None</dd>
                 </div>
                 <div>
                   <dt>Terrain</dt>
@@ -419,8 +420,8 @@
                 </div>
               </dl>
             </section>
-            <section class="control-status-region play-detail-region" aria-label="Control status">
-              <h2>Control Status</h2>
+            <section class="control-status-region play-detail-region" aria-label="Game control panel">
+              <h2>Game Control Panel</h2>
               <div class="control-status-line" aria-label="Current round and faction">
                 <span>Round <strong id="round-count">1</strong></span>
                 <span id="status-active-faction-name">Mongol</span>

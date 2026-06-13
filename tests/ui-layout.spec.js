@@ -1511,7 +1511,7 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
 
   await rosterItems.first().click();
 
-  await expect(page.locator(".unit-inspector h2")).toHaveText("Unit Inspector");
+  await expect(page.locator(".unit-inspector h2")).toHaveText("Unit Inspector Panel");
   await expect(page.locator("#unit-name")).toHaveText(/m_horse_archer_\d+/);
   await expect(page.locator("#unit-type")).toHaveText("Horse Archers");
   await expect(page.locator("#unit-hp")).toHaveText("10");
@@ -1535,14 +1535,15 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   ])).resolves.toEqual(["#237a3b", "#237a3b", "#a97800", "#a97800", "#c93632"]);
   await expect(page.locator("#unit-resources")).toBeHidden();
   await expect(page.locator("#play-details-bar")).toBeVisible();
-  await expect(page.locator(".hex-inspector h2")).toContainText("Hex Inspector");
-  await expect(page.locator("#hex-title-coordinate")).toHaveText(await page.locator("#hex-coordinate").textContent());
+  await expect(page.locator(".hex-inspector h2")).toContainText("Hex Inspector Panel");
+  await expect(page.locator("#hex-title-coordinate")).toHaveText(/\d+,\d+/);
+  await expect(page.locator("#hex-name")).toHaveText(await page.evaluate(() => selectedHex().name));
   await expect(page.evaluate(() => {
     const title = document.querySelector(".hex-inspector h2").getBoundingClientRect();
     const coordinate = document.querySelector("#hex-title-coordinate").getBoundingClientRect();
     return coordinate.top >= title.top - 1 && coordinate.bottom <= title.bottom + 1;
   })).resolves.toBe(true);
-  await expect(page.locator(".control-status-region h2")).toHaveText("Control Status");
+  await expect(page.locator(".control-status-region h2")).toHaveText("Game Control Panel");
   await expect(page.locator(".control-status-line")).toContainText("Round");
   await expect(page.locator(".control-status-line")).toContainText("Mongol");
   await expect(page.locator("#round-count")).toHaveText("1");
