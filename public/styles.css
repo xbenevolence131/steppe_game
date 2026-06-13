@@ -517,6 +517,23 @@ body {
   white-space: nowrap;
 }
 
+.ai-target-jump-button {
+  min-height: 28px;
+  min-width: 0;
+  padding: 4px 8px;
+  border-color: var(--line);
+  background: #fffdf8;
+  color: var(--text);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.ai-target-jump-button:not(:disabled):hover,
+.ai-target-jump-button:not(:disabled):focus-visible {
+  border-color: #9f2f2b;
+  background: #f7e5df;
+}
+
 .ai-generated-badge {
   justify-self: start;
   border: 1px solid #b9ad96;

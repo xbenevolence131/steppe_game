@@ -1595,9 +1595,22 @@ function syncStrategicAiDashboard() {
     directiveValue.textContent = aiDirectiveLabel(group.directive.type);
     directiveField.appendChild(directiveValue);
 
-    const targetLabel = document.createElement("span");
-    targetLabel.className = "ai-member-count";
-    targetLabel.textContent = "Target Hex";
+    const targetHex = strategicAiTargetHex(group);
+    const targetButton = document.createElement("button");
+    targetButton.type = "button";
+    targetButton.className = "ai-target-jump-button";
+    targetButton.textContent = targetHex ? `Target Hex ${targetHex.q},${targetHex.r}` : "Target Hex -";
+    targetButton.disabled = !targetHex;
+    targetButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      selectStrategicAiGroup(group.id);
+      if (!targetHex) {
+        return;
+      }
+      playSurfaceMode = "map";
+      syncModeControls();
+      centerViewportOnWorldPoint(hexCenter(targetHex));
+    });
 
     const targetFactionField = document.createElement("div");
     targetFactionField.className = "ai-field";
@@ -1606,10 +1619,6 @@ function syncStrategicAiDashboard() {
     targetFactionValue.className = "ai-target-readout";
     targetFactionValue.textContent = optionLabelForFaction(factionForOwner(group.directive.owner));
     targetFactionField.appendChild(targetFactionValue);
-
-    const targetReadout = document.createElement("span");
-    targetReadout.className = "ai-target-readout";
-    targetReadout.textContent = `${group.directive.target.q},${group.directive.target.r}`;
 
     if (collapsed) {
       groupRow.append(summary, collapseButton);
@@ -1620,9 +1629,8 @@ function syncStrategicAiDashboard() {
         membersLabel,
         memberCount,
         directiveField,
-        targetLabel,
+        targetButton,
         targetFactionField,
-        targetReadout,
         collapseButton
       );
     }
@@ -4206,6 +4214,24 @@ function drawAiEditorHighlights() {
   ctx.restore();
 }
 
+function mapHexAt(coord) {
+  if (!currentMap || !coord || !Number.isInteger(coord.q) || !Number.isInteger(coord.r)) {
+    return null;
+  }
+  return (currentMap.hexes || []).find((hex) => hex.q === coord.q && hex.r === coord.r) || null;
+}
+
+function strategicAiTargetHex(group) {
+  if (!group || !currentMap) {
+    return null;
+  }
+  const directive = group.directive || {};
+  if (directive.type !== "capture_hex" && directive.type !== "defend_hex") {
+    return null;
+  }
+  return mapHexAt(directive.target);
+}
+
 function drawStrategicAiHighlights() {
   if (appMode !== "play") {
     return;
@@ -4232,17 +4258,17 @@ function drawStrategicAiHighlights() {
       }
     });
     ctx.closePath();
-    ctx.fillStyle = "rgba(31, 79, 82, 0.28)";
+    ctx.fillStyle = "rgba(28, 255, 76, 0.34)";
     ctx.fill();
-    ctx.strokeStyle = "#1f4f52";
-    ctx.lineWidth = 1.8 / viewport.scale;
+    ctx.strokeStyle = "#00f236";
+    ctx.lineWidth = 2.4 / viewport.scale;
     ctx.stroke();
   }
 
-  const target = group.directive && group.directive.target;
-  if (target && Number.isInteger(target.q) && Number.isInteger(target.r)) {
+  const target = strategicAiTargetHex(group);
+  if (target) {
     const center = hexCenter(target);
-    const points = hexPoints(center.x, center.y, geometry.size * 0.66);
+    const points = hexPoints(center.x, center.y, geometry.size * 0.74);
     ctx.beginPath();
     points.forEach(([x, y], index) => {
       if (index === 0) {
@@ -4252,10 +4278,10 @@ function drawStrategicAiHighlights() {
       }
     });
     ctx.closePath();
-    ctx.fillStyle = "rgba(202, 126, 32, 0.3)";
+    ctx.fillStyle = "rgba(255, 36, 36, 0.38)";
     ctx.fill();
-    ctx.strokeStyle = "#a15b16";
-    ctx.lineWidth = 2 / viewport.scale;
+    ctx.strokeStyle = "#ff1414";
+    ctx.lineWidth = 2.8 / viewport.scale;
     ctx.stroke();
   }
   ctx.restore();
