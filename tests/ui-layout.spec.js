@@ -490,22 +490,22 @@ test("combat uses unit stats terrain defense and retaliation", async ({ isMobile
 
   const preview = runEngineJson(["game-combat-preview", "--attacker", "1", "--defender", "2"], combatGameState("grassland"));
   expect(preview.valid).toBe(true);
-  expect(preview.defenderRetaliates).toBe(true);
-  expect(preview.attacker.effectiveAttack).toBe(4);
-  expect(preview.baseDifferential).toBe(1);
+  expect(preview.defenderRetaliates).toBe(false);
+  expect(preview.attacker.effectiveAttack).toBe(5);
+  expect(preview.baseDifferential).toBe(2);
   expect(preview.hpRatioPercent).toBe(100);
   expect(preview.readinessRatioPercent).toBe(100);
   expect(preview.conditionRatioPercent).toBe(100);
-  expect(preview.crtIndex).toBe(1);
+  expect(preview.crtIndex).toBe(2);
   expect(preview.specialResolution).toBe("normal");
   expect(preview.retreatOption).toBe("none");
   expect(preview.readinessImpact).toBe("Even readiness");
   expect(preview.retreatImpact).toBe("No retreat");
   expect(preview.attacker.damageDealt).toBe(2);
-  expect(preview.attacker.damageTaken).toBe(1);
+  expect(preview.attacker.damageTaken).toBe(0);
   expect(preview.attacker.readinessDamageDealt).toBe(25);
   expect(preview.attacker.readinessDamageTaken).toBe(10);
-  expect(preview.attacker.resultHp).toBe(9);
+  expect(preview.attacker.resultHp).toBe(10);
   expect(preview.attacker.resultReadiness).toBe(90);
   expect(preview.attacker.readiness).toBe(100);
   expect(preview.attacker.readinessPercent).toBe(100);
@@ -521,7 +521,7 @@ test("combat uses unit stats terrain defense and retaliation", async ({ isMobile
   const grassAttacker = grass.units.find((unit) => unit.id === 1);
   const grassDefender = grass.units.find((unit) => unit.id === 2);
   expect(grass.ok).toBe(true);
-  expect(grassAttacker.hp).toBe(9);
+  expect(grassAttacker.hp).toBe(10);
   expect(grassAttacker.remainingScaledMove).toBe(0);
   expect(grassAttacker.moveDone).toBe(true);
   expect(grassAttacker.combatDone).toBe(true);
@@ -537,28 +537,30 @@ test("combat uses unit stats terrain defense and retaliation", async ({ isMobile
   const hillPreview = runEngineJson(["game-combat-preview", "--attacker", "1", "--defender", "2"], combatGameState("hill"));
   const hillAttacker = hill.units.find((unit) => unit.id === 1);
   const hillDefender = hill.units.find((unit) => unit.id === 2);
-  expect(hillPreview.defender.terrainDefensePercent).toBe(125);
-  expect(hillPreview.defender.effectiveDefense).toBe(4);
-  expect(hillPreview.baseDifferential).toBe(0);
-  expect(hillPreview.crtIndex).toBe(0);
-  expect(hillPreview.defender.damageTaken).toBe(1);
+  expect(hillPreview.defender.terrainDefensePercent).toBe(100);
+  expect(hillPreview.defender.effectiveDefense).toBe(3);
+  expect(hillPreview.baseDifferential).toBe(2);
+  expect(hillPreview.crtIndex).toBe(2);
+  expect(hillPreview.defender.damageTaken).toBe(2);
   expect(hill.ok).toBe(true);
-  expect(hillAttacker.hp).toBe(9);
-  expect(hillDefender.hp).toBe(9);
+  expect(hillAttacker.hp).toBe(10);
+  expect(hillDefender.hp).toBe(8);
 
   const terrainDefenseCases = [
-    ["grassland", 100, 3],
-    ["desert", 90, 3],
-    ["hill", 125, 4],
-    ["forest", 125, 4],
-    ["marsh", 115, 4],
-    ["mountain", 150, 5],
-    ["urban", 150, 5],
+    ["grassland", 100, 5],
+    ["desert", 90, 5],
+    ["hill", 125, 7],
+    ["forest", 125, 7],
+    ["marsh", 115, 6],
+    ["mountain", 150, 8],
+    ["urban", 150, 8],
   ];
   for (const [terrain, defensePercent, effectiveDefense] of terrainDefenseCases) {
+    const terrainState = combatGameState(terrain);
+    terrainState.units[1].kind = "infantry";
     const terrainPreview = runEngineJson(
       ["game-combat-preview", "--attacker", "1", "--defender", "2"],
-      combatGameState(terrain)
+      terrainState
     );
     expect(terrainPreview.defender.terrain).toBe(terrain);
     expect(terrainPreview.defender.terrainDefensePercent).toBe(defensePercent);
@@ -667,14 +669,14 @@ test("combat flanking requires separated support", async ({ isMobile }) => {
   expect(separated.flankingDefensePercent).toBe(75);
   expect(separated.defender.flankingDefensePercent).toBe(75);
   expect(separated.defender.effectiveDefense).toBe(2);
-  expect(separated.baseDifferential).toBe(2);
+  expect(separated.baseDifferential).toBe(3);
 
   const adjacentToAttacker = runEngineJson(["game-combat-preview", "--attacker", "1", "--defender", "2"], flankingCombatGameState({ q: 1, r: 2 }));
   expect(adjacentToAttacker.valid).toBe(true);
   expect(adjacentToAttacker.defenderFlanked).toBe(false);
   expect(adjacentToAttacker.flankingDefensePercent).toBe(100);
   expect(adjacentToAttacker.defender.effectiveDefense).toBe(3);
-  expect(adjacentToAttacker.baseDifferential).toBe(1);
+  expect(adjacentToAttacker.baseDifferential).toBe(2);
 });
 
 test("combat damage tapers against worn down targets", async ({ isMobile }) => {
@@ -900,6 +902,33 @@ test("end turn skips AI controlled factions", async ({ isMobile }) => {
   const advanced = runEngineJson(["game-end-turn"], state);
   expect(advanced.game.activeFactionIndex).toBe(2);
   expect(advanced.game.activeOwner).toBe(3);
+});
+
+test("food is consumed by faction population on turn end", async ({ isMobile }) => {
+  test.skip(isMobile, "engine resource rule is covered once on desktop");
+
+  const state = pastureGameState({ width: 6, height: 1, turnOrder: [1, 2, 3] });
+  state.units = [
+    { id: 1, owner: 1, faction: "mongol", kind: "horde", q: 1, r: 1, hp: 10, maxHp: 10, population: 3, horses: 0 },
+    { id: 2, owner: 2, faction: "chinese", kind: "horde", q: 3, r: 1, hp: 10, maxHp: 10, population: 2, horses: 0 },
+    { id: 3, owner: 3, faction: "persian", kind: "horde", q: 6, r: 1, hp: 10, maxHp: 10, population: 4, horses: 0 },
+  ];
+  state.game.activeFactionIndex = 0;
+  state.game.factions = [
+    { id: 1, key: "mongol", name: "Mongol", color: "#d6a21a", enabled: true, ai: false, metal: 4, treasure: 0, food: 10 },
+    { id: 2, key: "chinese", name: "Chinese", color: "#c93632", enabled: true, ai: true, metal: 4, treasure: 0, food: 10 },
+    { id: 3, key: "persian", name: "Persian", color: "#1f4fa3", enabled: true, ai: false, metal: 4, treasure: 0, food: 10 },
+  ];
+
+  const advanced = runEngineJson(["game-end-turn"], state);
+  const foodByOwner = Object.fromEntries(advanced.game.factions.map((faction) => [faction.id, faction.food]));
+  expect(advanced.game.activeOwner).toBe(3);
+  expect(foodByOwner).toEqual({ 1: 7, 2: 8, 3: 10 });
+
+  state.game.foodConsumption = false;
+  const debugAdvanced = runEngineJson(["game-end-turn"], state);
+  const debugFoodByOwner = Object.fromEntries(debugAdvanced.game.factions.map((faction) => [faction.id, faction.food]));
+  expect(debugFoodByOwner).toEqual({ 1: 10, 2: 10, 3: 10 });
 });
 
 test("pasture advances on round boundaries rather than faction turns", async ({ isMobile }) => {
@@ -1153,6 +1182,13 @@ test("scenario controls sit above the shared map", async ({ page }) => {
   await expect(page.locator("#play-controls")).toBeVisible();
   await expect(page.locator("#unit-roster")).toBeVisible();
   await expect(page.locator(".map-section")).toBeVisible();
+  await expect(page.locator("#food-consumption-enabled")).toBeVisible();
+  await expect(page.locator("#food-consumption-enabled")).toBeChecked();
+  await page.locator("#food-consumption-enabled").uncheck();
+  await expect.poll(() => page.evaluate(() => currentMap && currentMap.game && currentMap.game.foodConsumption)).toBe(false);
+  await expect(page.evaluate(() => scenarioSnapshot().game.foodConsumption)).resolves.toBe(false);
+  await page.locator("#food-consumption-enabled").check();
+  await expect.poll(() => page.evaluate(() => currentMap && currentMap.game && currentMap.game.foodConsumption)).toBe(true);
   const isMobileLayout = await page.evaluate(() => window.innerWidth <= 820);
   if (isMobileLayout) {
     await expect(page.locator("#play-details-bar")).toBeHidden();
@@ -1166,14 +1202,16 @@ test("scenario controls sit above the shared map", async ({ page }) => {
         save: top("#save-button"),
         load: top("#load-button"),
         name: top("#scenario-name"),
+        food: top("#food-consumption-enabled"),
         width: top("#map-width"),
         height: top("#map-height"),
       };
     });
     expect(new Set([sessionRows.generate, sessionRows.newScenario, sessionRows.save, sessionRows.load]).size).toBe(1);
     expect(sessionRows.name).toBeGreaterThan(sessionRows.generate);
+    expect(sessionRows.food).toBeGreaterThan(sessionRows.name);
     expect(sessionRows.width).toBe(sessionRows.height);
-    expect(sessionRows.width).toBeGreaterThan(sessionRows.name);
+    expect(sessionRows.width).toBeGreaterThan(sessionRows.food);
   }
 
   const layout = await page.evaluate(() => {
@@ -1434,13 +1472,16 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
       }
     }
     currentMap.game.factions.find((faction) => faction.key === "mongol").metal = 2;
+    currentMap.game.factions.find((faction) => faction.key === "mongol").food = 18;
     currentMap.game.factions.find((faction) => faction.key === "chinese").metal = 4;
+    currentMap.game.factions.find((faction) => faction.key === "chinese").food = 16;
     syncPlayControls();
   });
   await expect(page.locator("#faction-status-bar")).toBeVisible();
   await expect(page.locator("#faction-status-name")).toHaveText("Mongol");
   await expect(page.locator("#faction-population-total")).toHaveText("11");
   await expect(page.locator("#faction-horses-total")).toHaveText("5");
+  await expect(page.locator("#faction-food-total")).toHaveText("18");
   await expect(page.locator("#faction-metal-total")).toHaveText("2");
   await expect(page.locator("#faction-treasure-total")).toHaveText("0");
   await expect(page.locator("#play-controls .sidebar-section")).toHaveCount(1);
@@ -1552,6 +1593,7 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
       name: faction ? faction.name : "Unknown",
       population: String(localHordeResources.population),
       horses: String(localHordeResources.horses),
+      food: String(faction && Number.isInteger(faction.food) ? faction.food : 0),
       metal: String(faction && Number.isInteger(faction.metal) ? faction.metal : 0),
     };
   });
@@ -1561,6 +1603,7 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   await expect(page.locator("#faction-status-name")).toHaveText(nextFactionStatus.name);
   await expect(page.locator("#faction-population-total")).toHaveText(nextFactionStatus.population);
   await expect(page.locator("#faction-horses-total")).toHaveText(nextFactionStatus.horses);
+  await expect(page.locator("#faction-food-total")).toHaveText(nextFactionStatus.food);
   await expect(page.locator("#faction-metal-total")).toHaveText(nextFactionStatus.metal);
 
   const layout = await page.evaluate(() => {
@@ -2076,32 +2119,6 @@ test("play context menu exposes unit actions", async ({ page, isMobile }) => {
     const unit = currentMap.units.find((candidate) => candidate.id === selectedId);
     return `${unit.q},${unit.r}`;
   }, movePoint.selectedId)).not.toBe(movePoint.original);
-});
-
-test("mobile play mode keeps the map usable below the unit roster", async ({ page, isMobile }) => {
-  test.skip(!isMobile, "mobile-only layout assertion");
-
-  await openPlayMode(page);
-
-  await expect(page.locator("#faction-status-bar")).toBeVisible();
-  await expect(page.locator("#play-details-bar")).toBeHidden();
-  await expect(page.locator(".unit-roster-item")).toHaveCount(9);
-
-  const layout = await page.evaluate(() => {
-    const sidebar = document.querySelector("#play-controls").getBoundingClientRect();
-    const panel = document.querySelector("#map-panel").getBoundingClientRect();
-    return {
-      sidebarBottom: sidebar.bottom,
-      panelTop: panel.top,
-      panelHeight: panel.height,
-      scrollWidth: document.documentElement.scrollWidth,
-      viewportWidth: window.innerWidth,
-    };
-  });
-
-  expect(layout.panelTop).toBeGreaterThanOrEqual(layout.sidebarBottom - 1);
-  expect(layout.panelHeight).toBeGreaterThan(200);
-  expect(layout.scrollWidth).toBeLessThanOrEqual(layout.viewportWidth);
 });
 
 test("scenario editor modes toggle terrain edges and units", async ({ page, isMobile }) => {

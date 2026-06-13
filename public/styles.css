@@ -554,6 +554,17 @@ body {
   font-size: 13px;
 }
 
+.scenario-toggle-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-start;
+}
+
+.scenario-toggle-field input {
+  width: auto;
+}
+
 .parameters-grid,
 .generation-parameter-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));

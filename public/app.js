@@ -48,6 +48,7 @@ const fitButton = document.querySelector("#fit-button");
 const pastureViewButton = document.querySelector("#pasture-view-button");
 const detailsToggleButton = document.querySelector("#details-toggle-button");
 const scenarioNameInput = document.querySelector("#scenario-name");
+const foodConsumptionEnabledInput = document.querySelector("#food-consumption-enabled");
 const scenarioRegions = Array.from(document.querySelectorAll(".scenario-region"));
 const scenarioToolButtons = Array.from(document.querySelectorAll("[data-scenario-activate]"));
 const scenarioCollapseButtons = Array.from(document.querySelectorAll("[data-scenario-toggle]"));
@@ -79,6 +80,7 @@ const statusActiveFactionName = document.querySelector("#status-active-faction-n
 const factionStatusName = document.querySelector("#faction-status-name");
 const factionPopulationTotal = document.querySelector("#faction-population-total");
 const factionHorsesTotal = document.querySelector("#faction-horses-total");
+const factionFoodTotal = document.querySelector("#faction-food-total");
 const factionMetalTotal = document.querySelector("#faction-metal-total");
 const factionTreasureTotal = document.querySelector("#faction-treasure-total");
 const roundCount = document.querySelector("#round-count");
@@ -278,6 +280,7 @@ const factions = {
     owner: 0,
     metal: 4,
     treasure: 0,
+    food: 20,
     enabled: true,
     ai: false,
   },
@@ -288,6 +291,7 @@ const factions = {
     owner: 2,
     metal: 4,
     treasure: 0,
+    food: 20,
     enabled: true,
     ai: false,
   },
@@ -298,6 +302,7 @@ const factions = {
     owner: 1,
     metal: 4,
     treasure: 0,
+    food: 20,
     enabled: false,
     ai: false,
   },
@@ -308,6 +313,7 @@ const factions = {
     owner: 3,
     metal: 4,
     treasure: 0,
+    food: 20,
     enabled: false,
     ai: true,
   },
@@ -318,6 +324,7 @@ const factions = {
     owner: 4,
     metal: 2,
     treasure: 0,
+    food: 20,
     enabled: false,
     ai: true,
   },
@@ -328,6 +335,7 @@ const factions = {
     owner: -1,
     metal: 0,
     treasure: 0,
+    food: 0,
     enabled: false,
     ai: false,
   },
@@ -1203,6 +1211,18 @@ function scenarioName() {
   return value || "Untitled Scenario";
 }
 
+function foodConsumptionEnabled() {
+  return foodConsumptionEnabledInput ? foodConsumptionEnabledInput.checked : true;
+}
+
+function updateFoodConsumptionSettingFromInput() {
+  if (!currentMap) {
+    return;
+  }
+  currentMap.game = currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {};
+  currentMap.game.foodConsumption = foodConsumptionEnabled();
+}
+
 function selectedScenarioFactionsFromControls() {
   const selected = scenarioFactionRows.map((row) => {
     const key = row.dataset.factionKey || "mongol";
@@ -1220,6 +1240,11 @@ function syncScenarioParameterControls() {
     scenarioNameInput.value = currentMap && typeof currentMap.name === "string" && currentMap.name.trim()
       ? currentMap.name
       : "Untitled Scenario";
+  }
+  if (foodConsumptionEnabledInput) {
+    foodConsumptionEnabledInput.checked = !currentMap
+      || !currentMap.game
+      || currentMap.game.foodConsumption !== false;
   }
   const scenarioFactions = currentMap && Array.isArray(currentMap.factions)
     ? normalizeScenarioFactions(currentMap.factions, currentMap.units)
@@ -1846,6 +1871,7 @@ function normalizeScenarioFaction(faction, fallbackKey = "mongol") {
     color: typeof (faction && faction.color) === "string" ? faction.color : defaults.color,
     metal: Number.isFinite(faction && faction.metal) ? Math.max(0, Math.trunc(faction.metal)) : defaults.metal,
     treasure: Number.isFinite(faction && faction.treasure) ? Math.max(0, Math.trunc(faction.treasure)) : defaults.treasure,
+    food: Number.isFinite(faction && faction.food) ? Math.max(0, Math.trunc(faction.food)) : defaults.food,
     enabled: faction && faction.enabled !== undefined ? Boolean(faction.enabled) : Boolean(defaults.enabled),
     ai: faction && faction.ai !== undefined ? Boolean(faction.ai) : Boolean(defaults.ai),
   };
@@ -2153,6 +2179,7 @@ function activeFactionResources(owner) {
   const totals = {
     population: 0,
     horses: 0,
+    food: Number.isInteger(faction.food) ? faction.food : 0,
     metal: Number.isInteger(faction.metal) ? faction.metal : 0,
     treasure: Number.isInteger(faction.treasure) ? faction.treasure : 0,
   };
@@ -2186,6 +2213,7 @@ function ensureGameMeta() {
     ? currentMap.name
     : "Untitled Scenario";
   currentMap.game = currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {};
+  currentMap.game.foodConsumption = currentMap.game.foodConsumption !== false;
   currentMap.units = Array.isArray(currentMap.units) ? currentMap.units.map(normalizeUnit) : [];
   const priorGameFactions = Array.isArray(currentMap.game.factions) ? currentMap.game.factions : [];
   currentMap.factions = normalizeScenarioFactions(currentMap.factions, currentMap.units).map((faction) => {
@@ -2196,6 +2224,7 @@ function ensureGameMeta() {
         ...faction,
         metal: Number.isFinite(prior.metal) ? prior.metal : faction.metal,
         treasure: Number.isFinite(prior.treasure) ? prior.treasure : faction.treasure,
+        food: Number.isFinite(prior.food) ? prior.food : faction.food,
       }, faction.key)
       : faction;
   });
@@ -2213,6 +2242,7 @@ function ensureGameMeta() {
     color: faction.color,
     metal: faction.metal,
     treasure: faction.treasure,
+    food: faction.food,
     enabled: faction.enabled,
     ai: faction.ai,
   }));
@@ -3185,6 +3215,9 @@ function syncPlayControls() {
   const resources = activeFactionResources(owner);
   factionPopulationTotal.textContent = String(resources.population);
   factionHorsesTotal.textContent = String(resources.horses);
+  if (factionFoodTotal) {
+    factionFoodTotal.textContent = String(resources.food);
+  }
   factionMetalTotal.textContent = String(resources.metal);
   factionTreasureTotal.textContent = String(resources.treasure);
   if (sidebarFactionMetal) {
@@ -4661,7 +4694,9 @@ async function cycleActiveFactionUnit(direction) {
   if (units.length === 0) {
     return false;
   }
-  const selected = selectedUnit();
+  const selected = selectedUnit() || (selectedHexCoord && currentMap && Array.isArray(currentMap.units)
+    ? currentMap.units.find((unit) => unit.q === selectedHexCoord.q && unit.r === selectedHexCoord.r) || null
+    : null);
   const selectedIndex = selected ? units.findIndex((unit) => unit.id === selected.id) : -1;
   const step = direction < 0 ? -1 : 1;
   const nextIndex = selectedIndex < 0
@@ -5463,6 +5498,7 @@ async function generateMap() {
     currentMap.factions = selectedScenarioFactionsFromControls();
     currentMap.units = Array.isArray(currentMap.units) ? currentMap.units : [];
     currentMap.game = currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {};
+    currentMap.game.foodConsumption = foodConsumptionEnabled();
     selectedHexCoord = null;
     terrainUndo = new Map();
     clearUndoHistory();
@@ -5520,7 +5556,7 @@ function createBlankMap(options = {}) {
   selectedHexCoord = null;
   terrainUndo = new Map();
   clearUndoHistory();
-  currentMap.game = {};
+  currentMap.game = { foodConsumption: foodConsumptionEnabled() };
   ensureGameMeta();
   refreshDerivedTopology();
   syncModeControls();
@@ -5954,6 +5990,10 @@ if (addAiGroupButton) {
 }
 if (scenarioNameInput) {
   scenarioNameInput.addEventListener("input", updateScenarioNameFromInput);
+}
+if (foodConsumptionEnabledInput) {
+  foodConsumptionEnabledInput.addEventListener("input", updateFoodConsumptionSettingFromInput);
+  foodConsumptionEnabledInput.addEventListener("change", updateFoodConsumptionSettingFromInput);
 }
 for (const row of scenarioFactionRows) {
   for (const input of row.querySelectorAll("input")) {

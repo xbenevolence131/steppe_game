@@ -109,6 +109,7 @@ struct FactionState {
     std::string color;
     int metal = 0;
     int treasure = 0;
+    int food = 0;
     bool enabled = true;
     bool ai_controlled = false;
 };
@@ -291,6 +292,7 @@ struct GameState {
     int round = 1;
     int active_faction_index = 0;
     int selected_unit_id = 0;
+    bool food_consumption_enabled = true;
     GameModeKind active_mode = GameModeKind::StrategicGame;
     std::vector<OwnerId> turn_order;
     std::vector<ReachableHex> legal_moves;

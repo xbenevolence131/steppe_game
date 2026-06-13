@@ -337,21 +337,21 @@ std::vector<UnitStance> parse_legal_stances_field(const std::string& value, int 
 
 FactionState faction_for_owner(OwnerId owner) {
     if (owner == mongol_owner) {
-        return {mongol_owner, "mongol", "Mongol", "steppe_nomad", "#d6a21a", 4, 0, true, false};
+        return {mongol_owner, "mongol", "Mongol", "steppe_nomad", "#d6a21a", 4, 0, 20, true, false};
     }
     if (owner == chinese_owner) {
-        return {chinese_owner, "chinese", "Chinese", "chinese", "#c93632", 4, 0, true, false};
+        return {chinese_owner, "chinese", "Chinese", "chinese", "#c93632", 4, 0, 20, true, false};
     }
     if (owner == persian_owner) {
-        return {persian_owner, "persian", "Persian", "persian", "#1f4fa3", 4, 0, true, false};
+        return {persian_owner, "persian", "Persian", "persian", "#1f4fa3", 4, 0, 20, true, false};
     }
     if (owner == jurchen_owner) {
-        return {jurchen_owner, "jurchen", "Jurchen", "jurchen", "#1f6f68", 4, 0, true, true};
+        return {jurchen_owner, "jurchen", "Jurchen", "jurchen", "#1f6f68", 4, 0, 20, true, true};
     }
     if (owner == forest_nomad_owner) {
-        return {forest_nomad_owner, "forest_nomad", "Forest Nomads", "forest_nomad", "#2f6b35", 2, 0, true, true};
+        return {forest_nomad_owner, "forest_nomad", "Forest Nomads", "forest_nomad", "#2f6b35", 2, 0, 20, true, true};
     }
-    return {neutral_owner, "neutral", "Neutral", "neutral", "#777777", 0, 0, false, false};
+    return {neutral_owner, "neutral", "Neutral", "neutral", "#777777", 0, 0, 0, false, false};
 }
 
 OwnerId owner_from_faction_key(const std::string& key, OwnerId fallback = neutral_owner) {
@@ -638,6 +638,7 @@ constexpr int full_move_readiness_cost = 8;
 constexpr int max_move_readiness_cost = 8;
 constexpr int attack_readiness_cost = 10;
 constexpr int turn_readiness_recovery = 15;
+constexpr int food_consumption_per_population = 1;
 constexpr int flanked_defense_percent = 75;
 constexpr int defender_retreat_condition_threshold = 50;
 constexpr int feigned_retreat_pursuit_readiness_penalty = 15;
@@ -1309,6 +1310,28 @@ const FactionState* find_faction(const GameState& state, OwnerId owner) {
 int faction_metal(const GameState& state, OwnerId owner) {
     const FactionState* faction = find_faction(state, owner);
     return faction == nullptr ? 0 : faction->metal;
+}
+
+int faction_population(const GameState& state, OwnerId owner) {
+    int population = 0;
+    for (const Unit& unit : state.units) {
+        if (unit.owner == owner && unit.hp > 0) {
+            population += std::max(0, unit.population);
+        }
+    }
+    return population;
+}
+
+void consume_faction_food(GameState& state, OwnerId owner) {
+    if (!state.food_consumption_enabled) {
+        return;
+    }
+    FactionState* faction = find_faction(state, owner);
+    if (faction == nullptr) {
+        return;
+    }
+    const int demand = faction_population(state, owner) * food_consumption_per_population;
+    faction->food = std::max(0, faction->food - demand);
 }
 
 bool faction_ai_controlled(const GameState& state, OwnerId owner) {
@@ -2982,6 +3005,7 @@ void end_turn(GameState& state, std::vector<AiAnimationStep>* animation) {
 
     const int faction_count = static_cast<int>(state.turn_order.size());
     for (int steps = 0; steps < faction_count; ++steps) {
+        consume_faction_food(state, active_faction(state));
         const bool completed_round = advance_to_next_faction(state);
         if (completed_round) {
             apply_pasture_for_round(state);
@@ -3256,6 +3280,7 @@ void print_game_meta_json(const GameState& state, std::ostream& out) {
     out << "\"activeFactionIndex\":" << state.active_faction_index << ",";
     out << "\"activeOwner\":" << active_faction(state) << ",";
     out << "\"selectedUnitId\":" << state.selected_unit_id << ",";
+    out << "\"foodConsumption\":" << (state.food_consumption_enabled ? "true" : "false") << ",";
     out << "\"legalMoves\":";
     print_reachable_array_json(state.legal_moves, out);
     out << ",\"legalAttacks\":";
@@ -3280,6 +3305,7 @@ void print_game_meta_json(const GameState& state, std::ostream& out) {
             << ",\"color\":\"" << escape_json(faction.color) << "\""
             << ",\"metal\":" << faction.metal
             << ",\"treasure\":" << faction.treasure
+            << ",\"food\":" << faction.food
             << ",\"enabled\":" << (faction.enabled ? "true" : "false")
             << ",\"ai\":" << (faction.ai_controlled ? "true" : "false")
             << "}";
@@ -3557,6 +3583,7 @@ GameState parse_game_state_json(const std::string& json) {
     state.round = int_field(game_meta, "round", 1);
     state.active_faction_index = int_field(game_meta, "activeFactionIndex", 0);
     state.selected_unit_id = int_field(game_meta, "selectedUnitId", 0);
+    state.food_consumption_enabled = bool_field(game_meta, "foodConsumption", true);
     state.turn_order = parse_turn_order(game_meta.contains("turnOrder") ? game_meta["turnOrder"] : empty_array);
     if (state.turn_order.empty()) {
         state.turn_order = {mongol_owner, chinese_owner};
@@ -3581,6 +3608,7 @@ GameState parse_game_state_json(const std::string& json) {
             faction.color = string_field(faction_json, "color", faction.color);
             faction.metal = std::max(0, int_field(faction_json, "metal", 0));
             faction.treasure = std::max(0, int_field(faction_json, "treasure", 0));
+            faction.food = std::max(0, int_field(faction_json, "food", faction.food));
             faction.enabled = bool_field(faction_json, "enabled", true);
             faction.ai_controlled = bool_field(faction_json, "ai", false);
             state.factions.push_back(std::move(faction));
