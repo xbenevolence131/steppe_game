@@ -2706,7 +2706,29 @@ function normalizeUnit(unit, index) {
   return normalized;
 }
 
-function applyGamePatch(payload) {
+function normalizeEngineView(view) {
+  const normalized = refreshDerivedTopology(view);
+  normalized.hexes = Array.isArray(normalized.hexes)
+    ? normalized.hexes.map(normalizeMapHex).filter((hex) => Number.isInteger(hex.q) && Number.isInteger(hex.r))
+    : [];
+  normalized.units = Array.isArray(normalized.units) ? normalized.units.map(normalizeUnit) : [];
+  const previousMap = currentMap;
+  try {
+    currentMap = normalized;
+    ensureGameMeta();
+  } finally {
+    currentMap = previousMap;
+  }
+  return normalized;
+}
+
+function replaceProjectionFromEngine(view, reason = "replace") {
+  currentMap = normalizeEngineView(view);
+  syncEngineProjectionMeta(currentMap, reason);
+  return currentMap;
+}
+
+function applyEnginePatch(payload, reason = "patch") {
   if (!currentMap || !payload) {
     return;
   }
@@ -2721,7 +2743,11 @@ function applyGamePatch(payload) {
     currentMap.game = payload.game;
   }
   ensureGameMeta();
-  syncEngineProjectionMeta(currentMap, "patch");
+  syncEngineProjectionMeta(currentMap, reason);
+}
+
+function applyGamePatch(payload) {
+  applyEnginePatch(payload);
 }
 
 function syncEngineProjectionMeta(map, reason) {
@@ -2773,13 +2799,7 @@ function projectionComparableState(map) {
 
 async function resyncEngineProjection(reason) {
   const snapshot = await postAppCommand({ type: "get_state" });
-  currentMap = refreshDerivedTopology(snapshot);
-  currentMap.hexes = Array.isArray(currentMap.hexes)
-    ? currentMap.hexes.map(normalizeMapHex).filter((hex) => Number.isInteger(hex.q) && Number.isInteger(hex.r))
-    : [];
-  currentMap.units = Array.isArray(currentMap.units) ? currentMap.units.map(normalizeUnit) : [];
-  ensureGameMeta();
-  syncEngineProjectionMeta(currentMap, reason);
+  replaceProjectionFromEngine(snapshot, reason);
   syncModeControls();
   drawMap();
   return currentMap;
@@ -2790,13 +2810,7 @@ async function validateEngineProjection(reason) {
     return true;
   }
   const authoritative = await postAppCommand({ type: "get_state" });
-  const normalizedAuthoritative = refreshDerivedTopology(authoritative);
-  normalizedAuthoritative.hexes = Array.isArray(normalizedAuthoritative.hexes)
-    ? normalizedAuthoritative.hexes.map(normalizeMapHex).filter((hex) => Number.isInteger(hex.q) && Number.isInteger(hex.r))
-    : [];
-  normalizedAuthoritative.units = Array.isArray(normalizedAuthoritative.units)
-    ? normalizedAuthoritative.units.map(normalizeUnit)
-    : [];
+  const normalizedAuthoritative = normalizeEngineView(authoritative);
   const localComparable = projectionComparableState(currentMap);
   const authoritativeComparable = projectionComparableState(normalizedAuthoritative);
   if (JSON.stringify(localComparable) === JSON.stringify(authoritativeComparable)) {
@@ -2814,9 +2828,7 @@ async function validateEngineProjection(reason) {
       stateHash: normalizedAuthoritative.game.stateHash,
     },
   });
-  currentMap = normalizedAuthoritative;
-  ensureGameMeta();
-  syncEngineProjectionMeta(currentMap, `resync:${reason}`);
+  replaceProjectionFromEngine(normalizedAuthoritative, `resync:${reason}`);
   syncModeControls();
   drawMap();
   return false;
@@ -2850,24 +2862,6 @@ function applyAiStepHexSnapshot(step) {
     syncHexInspector();
   }
   return changed;
-}
-
-function applyAiStepUnitSnapshot(step) {
-  if (!currentMap || !step || !Array.isArray(step.units) || step.units.length === 0) {
-    return false;
-  }
-  currentMap.units = step.units.map(normalizeUnit);
-  return true;
-}
-
-function applyAiStepSnapshot(step) {
-  const changedHexes = applyAiStepHexSnapshot(step);
-  const changedUnits = applyAiStepUnitSnapshot(step);
-  if (changedHexes || changedUnits) {
-    ensureGameMeta();
-    syncModeControls();
-  }
-  return changedHexes || changedUnits;
 }
 
 function normalizeAnimationCoord(coord) {
@@ -3883,11 +3877,7 @@ async function enterPlayMode() {
     try {
       const scenarioFactions = normalizeScenarioFactions(currentMap.factions, currentMap.units);
       const payload = await postAppCommand({ type: "load_game", state: scenarioSnapshot() });
-      currentMap = payload;
-      currentMap.hexes = Array.isArray(currentMap.hexes)
-        ? currentMap.hexes.map(normalizeMapHex).filter((hex) => Number.isInteger(hex.q) && Number.isInteger(hex.r))
-        : [];
-      currentMap.units = Array.isArray(currentMap.units) ? currentMap.units.map(normalizeUnit) : [];
+      replaceProjectionFromEngine(payload, "load_game");
       currentMap.factions = scenarioFactions;
       terrainUndo = new Map();
       clearUndoHistory();
@@ -4750,6 +4740,46 @@ function drawUnitCounters(units) {
   ctx.restore();
 }
 
+function aiAnimationUnitPositionMap() {
+  const positions = new Map();
+  if (!aiAnimationState || !Array.isArray(aiAnimationState.unitPositions)) {
+    return positions;
+  }
+  for (const position of aiAnimationState.unitPositions) {
+    if (Number.isInteger(position.id) && Number.isInteger(position.q) && Number.isInteger(position.r)) {
+      positions.set(position.id, { q: position.q, r: position.r });
+    }
+  }
+  return positions;
+}
+
+function unitsForMapRender() {
+  if (!currentMap || !Array.isArray(currentMap.units)) {
+    return [];
+  }
+  const positions = aiAnimationUnitPositionMap();
+  if (positions.size === 0) {
+    return currentMap.units;
+  }
+  return currentMap.units.map((unit) => {
+    const position = positions.get(unit.id);
+    return position ? { ...unit, q: position.q, r: position.r } : unit;
+  });
+}
+
+function setAiAnimationUnitPosition(unitId, coord, attackTarget = null) {
+  const positions = aiAnimationUnitPositionMap();
+  if (Number.isInteger(unitId) && coord && Number.isInteger(coord.q) && Number.isInteger(coord.r)) {
+    positions.set(unitId, { q: coord.q, r: coord.r });
+  }
+  aiAnimationState = {
+    unitId,
+    unitCoord: coord && Number.isInteger(coord.q) && Number.isInteger(coord.r) ? { q: coord.q, r: coord.r } : null,
+    attackTarget,
+    unitPositions: Array.from(positions.entries()).map(([id, position]) => ({ id, q: position.q, r: position.r })),
+  };
+}
+
 function drawReachableHexes() {
   if (appMode !== "play" || aiAnimationInProgress) {
     return;
@@ -5222,7 +5252,7 @@ async function deployDetachedHerdAt(coord) {
     to: { q: coord.q, r: coord.r },
   });
   detachHerdPlacement = null;
-  applyGamePatch(payload);
+  applyEnginePatch(payload, "detach_herd");
   syncModeControls();
   drawMap();
   return true;
@@ -5254,7 +5284,7 @@ async function startHordeUnitProduction(context, commandType) {
       type: commandType,
       unitId: context.unit.id,
     });
-    applyGamePatch(payload);
+    applyEnginePatch(payload, commandType);
     syncModeControls();
     drawMap();
     return true;
@@ -5303,13 +5333,14 @@ async function deployCreatedUnitAt(coord) {
     return false;
   }
   selectedHexCoord = { q: coord.q, r: coord.r };
+  const commandType = createUnitPlacement.createCommandType;
   const payload = await postUndoableGameCommand({
-    type: createUnitPlacement.createCommandType,
+    type: commandType,
     unitId: createUnitPlacement.unitId,
     to: { q: coord.q, r: coord.r },
   });
   createUnitPlacement = null;
-  applyGamePatch(payload);
+  applyEnginePatch(payload, commandType);
   syncModeControls();
   drawMap();
   return true;
@@ -5334,7 +5365,7 @@ async function selectUnit(unit) {
     if (requestId !== unitSelectionRequestId) {
       return false;
     }
-    applyGamePatch(payload);
+    applyEnginePatch(payload, "select_unit");
     return true;
   } finally {
     if (requestId === unitSelectionRequestId) {
@@ -5374,7 +5405,7 @@ async function setUnitStance(unit, stance) {
     unitId: unit.id,
     stance,
   });
-  applyGamePatch(payload);
+  applyEnginePatch(payload, "set_unit_stance");
   syncModeControls();
   drawMap();
   return true;
@@ -5393,7 +5424,7 @@ async function moveSelectedUnitTo(coord) {
     unitId: unit.id,
     to: { q: coord.q, r: coord.r },
   });
-  applyGamePatch(payload);
+  applyEnginePatch(payload, "move_unit");
   syncModeControls();
   drawMap();
   return true;
@@ -5411,7 +5442,7 @@ async function attackSelectedUnit(defender) {
     attackerId: attacker.id,
     defenderId: defender.id,
   });
-  applyGamePatch(payload);
+  applyEnginePatch(payload, "attack_unit");
   syncModeControls();
   drawMap();
   return true;
@@ -5420,7 +5451,7 @@ async function attackSelectedUnit(defender) {
 async function animateAiPatch(payload) {
   const steps = normalizeAiAnimation(payload && payload.aiAnimation);
   if (steps.length === 0 || !currentMap || !Array.isArray(currentMap.units)) {
-    applyGamePatch(payload);
+    applyEnginePatch(payload, "ai_patch");
     syncModeControls();
     drawMap();
     return;
@@ -5431,23 +5462,12 @@ async function animateAiPatch(payload) {
   try {
     for (const step of steps) {
       await focusAiAnimationStep(step);
-      const unit = currentMap.units.find((candidate) => candidate.id === step.unitId);
-      aiAnimationState = {
-        unitId: step.unitId,
-        unitCoord: unit ? { q: unit.q, r: unit.r } : step.from,
-        attackTarget: null,
-      };
+      setAiAnimationUnitPosition(step.unitId, step.from);
       drawMap();
       await sleep(260);
 
-      if (unit && (unit.q !== step.to.q || unit.r !== step.to.r)) {
-        unit.q = step.to.q;
-        unit.r = step.to.r;
-        aiAnimationState = {
-          unitId: step.unitId,
-          unitCoord: step.to,
-          attackTarget: null,
-        };
+      if (step.from.q !== step.to.q || step.from.r !== step.to.r) {
+        setAiAnimationUnitPosition(step.unitId, step.to);
         drawMap();
         await sleep(320);
         if (applyAiStepHexSnapshot(step)) {
@@ -5470,61 +5490,29 @@ async function animateAiPatch(payload) {
           attackerMoved: false,
         }));
       for (const event of attackEvents) {
-        aiAnimationState = {
-          unitId: step.unitId,
-          unitCoord: step.to,
-          attackTarget: event.target,
-        };
+        setAiAnimationUnitPosition(step.unitId, step.to, event.target);
         drawMap();
         await sleep(320);
 
         if (event.defenderMoved) {
-          const defender = currentMap.units.find((candidate) => (
-            event.defenderId > 0
-              ? candidate.id === event.defenderId
-              : candidate.q === event.defenderFrom.q && candidate.r === event.defenderFrom.r
-          ));
-          if (defender) {
-            defender.q = event.defenderTo.q;
-            defender.r = event.defenderTo.r;
-          }
-          aiAnimationState = {
-            unitId: event.defenderId,
-            unitCoord: event.defenderTo,
-            attackTarget: null,
-          };
+          setAiAnimationUnitPosition(event.defenderId, event.defenderTo);
           drawMap();
           await sleep(320);
         }
 
         if (event.attackerMoved) {
-          const attacker = currentMap.units.find((candidate) => candidate.id === step.unitId);
-          if (attacker) {
-            attacker.q = event.attackerTo.q;
-            attacker.r = event.attackerTo.r;
-          }
-          aiAnimationState = {
-            unitId: step.unitId,
-            unitCoord: event.attackerTo,
-            attackTarget: null,
-          };
+          setAiAnimationUnitPosition(step.unitId, event.attackerTo);
           drawMap();
           await sleep(320);
         }
       }
 
-      applyAiStepSnapshot(step);
-      const finalUnit = currentMap.units.find((candidate) => candidate.id === step.unitId);
-      const finalCoord = finalUnit ? { q: finalUnit.q, r: finalUnit.r } : step.to;
-      aiAnimationState = {
-        unitId: step.unitId,
-        unitCoord: finalCoord,
-        attackTarget: null,
-      };
+      applyAiStepHexSnapshot(step);
+      setAiAnimationUnitPosition(step.unitId, step.to);
       drawMap();
       await sleep(160);
     }
-    applyGamePatch(payload);
+    applyEnginePatch(payload, "ai_patch");
     syncModeControls();
     drawMap();
   } finally {
@@ -5539,7 +5527,7 @@ async function advanceTurn() {
   hideCombatPreview();
   try {
     const payload = await postUndoableGameCommand({ type: "end_turn" });
-    applyGamePatch(payload);
+    applyEnginePatch(payload, "end_turn");
     syncModeControls();
     drawMap();
     await stepAiTurnsUntilHuman();
@@ -5600,7 +5588,7 @@ async function undoLastAction() {
     try {
       const payload = await postAppCommand({ type: "undo" });
       playUndoDepth = Math.max(0, playUndoDepth - 1);
-      applyGamePatch(payload);
+      applyEnginePatch(payload, "undo");
       syncModeControls();
       drawMap();
       return true;
@@ -5659,7 +5647,7 @@ function drawMap() {
   drawDetachDeploymentHexes();
   drawSelectedHex();
   if (unitsViewEnabled) {
-    drawUnitCounters(currentMap.units);
+    drawUnitCounters(unitsForMapRender());
   }
 
   ctx.restore();
