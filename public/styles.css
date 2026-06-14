@@ -84,11 +84,11 @@ body {
 .scenario-topbar {
   display: none;
   grid-template-columns: 1fr;
-  gap: 8px;
+  gap: 6px;
   border-bottom: 1px solid var(--line);
   background: var(--surface);
-  padding: 8px;
-  max-height: 38vh;
+  padding: 6px;
+  max-height: 156px;
   overflow: auto;
 }
 
@@ -683,6 +683,33 @@ body {
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.ownership-tool-panel {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding-right: 42px;
+}
+
+.ownership-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ownership-select-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ownership-faction-swatch {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid #050505;
+  background: transparent;
 }
 
 .segmented-control {

@@ -46,6 +46,7 @@ const zoomInButton = document.querySelector("#zoom-in-button");
 const zoomOutButton = document.querySelector("#zoom-out-button");
 const fitButton = document.querySelector("#fit-button");
 const pastureViewButton = document.querySelector("#pasture-view-button");
+const territoryViewButton = document.querySelector("#territory-view-button");
 const coordinatesViewButton = document.querySelector("#coordinates-view-button");
 const detailsToggleButton = document.querySelector("#details-toggle-button");
 const scenarioNameInput = document.querySelector("#scenario-name");
@@ -62,6 +63,8 @@ const editorEdgeFeatureSelect = document.querySelector("#editor-edge-feature");
 const edgeFeatureChoices = document.querySelector("#edge-feature-choices");
 const editorUnitTypeSelect = document.querySelector("#editor-unit-type");
 const editorUnitSideSelect = document.querySelector("#editor-unit-side");
+const ownershipFactionSelect = document.querySelector("#ownership-faction-select");
+const ownershipFactionSwatch = document.querySelector("#ownership-faction-swatch");
 const terrainPalette = document.querySelector("#terrain-palette");
 const addAiGroupButton = document.querySelector("#add-ai-group-button");
 const aiGroupsContainer = document.querySelector("#ai-groups");
@@ -136,6 +139,7 @@ let isPanning = false;
 let isPainting = false;
 let lastPointer = { x: 0, y: 0 };
 let selectedTerrain = "lake";
+let selectedOwnershipOwner = -1;
 let scenarioTool = "session";
 let unitTool = "place";
 let editorSelectedUnitId = 0;
@@ -148,7 +152,7 @@ let unitSelectionInProgress = false;
 let collapsedAiGroupIds = new Set();
 let collapsedStrategicAiGroupIds = new Set();
 let strategicAiCollapsed = false;
-let openScenarioRegions = new Set(["session", "terrain", "units", "ai"]);
+let openScenarioRegions = new Set(["session", "terrain", "ownership", "units", "ai"]);
 let paintStrokeKeys = new Set();
 let paintUndoRecorded = false;
 let terrainUndo = new Map();
@@ -167,6 +171,7 @@ let scenarioFileMode = "load";
 let selectedScenarioFile = "";
 let appInitialization = null;
 let pastureViewEnabled = false;
+let territoryViewEnabled = false;
 let coordinateLabelsEnabled = true;
 let unitInspectorStatsVisible = false;
 let scenarioDetailsCollapsed = false;
@@ -641,7 +646,7 @@ function formatMoveCost(scaledCost) {
 
 function normalizeMapHex(hex) {
   const terrain = typeof hex.terrain === "string" ? hex.terrain : "grassland";
-  return {
+  const normalized = {
     q: Number(hex.q),
     r: Number(hex.r),
     terrain,
@@ -651,6 +656,10 @@ function normalizeMapHex(hex) {
       : editorLabelsForTerrain(terrain),
     pasture: normalizePasture(hex.pasture, terrain),
   };
+  if (Number.isInteger(hex.owner)) {
+    normalized.owner = hex.owner;
+  }
+  return normalized;
 }
 
 function normalizeHexName(name) {
@@ -1270,11 +1279,16 @@ function stopPainting() {
 }
 
 function scenarioEditingActive() {
-  return appMode === "scenario" && (scenarioTool === "terrain" || scenarioTool === "units" || scenarioTool === "ai");
+  return appMode === "scenario"
+    && (scenarioTool === "terrain" || scenarioTool === "ownership" || scenarioTool === "units" || scenarioTool === "ai");
 }
 
 function terrainEditingActive() {
   return appMode === "scenario" && scenarioTool === "terrain";
+}
+
+function ownershipEditingActive() {
+  return appMode === "scenario" && scenarioTool === "ownership";
 }
 
 function unitPlaceActive() {
@@ -1371,6 +1385,36 @@ function appendFactionOptions(select, selectedOwner) {
     select.appendChild(option);
   }
   select.value = String(selectedOwner);
+}
+
+function ownershipFactionChoices() {
+  return [
+    { ...factions.neutral, id: factions.neutral.owner, key: "neutral" },
+    ...(currentMap && Array.isArray(currentMap.factions) ? currentMap.factions : defaultScenarioFactions()),
+  ];
+}
+
+function syncOwnershipEditorControls() {
+  if (!ownershipFactionSelect) {
+    return;
+  }
+  const prior = Number.isInteger(selectedOwnershipOwner) ? selectedOwnershipOwner : factions.neutral.owner;
+  ownershipFactionSelect.replaceChildren();
+  for (const faction of ownershipFactionChoices()) {
+    const option = document.createElement("option");
+    option.value = String(faction.id);
+    option.textContent = faction.id === factions.neutral.owner ? "None" : optionLabelForFaction(faction);
+    ownershipFactionSelect.appendChild(option);
+  }
+  const validOwners = new Set(Array.from(ownershipFactionSelect.options).map((option) => Number.parseInt(option.value, 10)));
+  selectedOwnershipOwner = validOwners.has(prior) ? prior : factions.neutral.owner;
+  ownershipFactionSelect.value = String(selectedOwnershipOwner);
+  if (ownershipFactionSwatch) {
+    ownershipFactionSwatch.style.borderColor = territoryOutlineColor(selectedOwnershipOwner);
+    ownershipFactionSwatch.style.background = selectedOwnershipOwner === factions.neutral.owner
+      ? "transparent"
+      : territoryOutlineColor(selectedOwnershipOwner);
+  }
 }
 
 function appendDirectiveOptions(select, selectedType) {
@@ -1832,11 +1876,12 @@ function syncScenarioToolControls() {
   for (const button of terrainPalette.querySelectorAll(".terrain-button")) {
     button.classList.toggle("is-selected", button.dataset.terrain === selectedTerrain);
   }
+  syncOwnershipEditorControls();
   syncAiEditorControls();
 }
 
 function setScenarioTool(tool) {
-  scenarioTool = ["session", "terrain", "units", "ai"].includes(tool) ? tool : "session";
+  scenarioTool = ["session", "terrain", "ownership", "units", "ai"].includes(tool) ? tool : "session";
   openScenarioRegions.add(scenarioTool);
   if (scenarioTool !== "ai") {
     aiPickMode = null;
@@ -1851,7 +1896,7 @@ function setScenarioTool(tool) {
 }
 
 function toggleScenarioRegion(region) {
-  if (!["session", "terrain", "units", "ai"].includes(region)) {
+  if (!["session", "terrain", "ownership", "units", "ai"].includes(region)) {
     return;
   }
   if (openScenarioRegions.has(region)) {
@@ -3397,6 +3442,14 @@ function syncPastureViewButton() {
   pastureViewButton.setAttribute("aria-pressed", String(pastureViewEnabled));
 }
 
+function syncTerritoryViewButton() {
+  if (!territoryViewButton) {
+    return;
+  }
+  territoryViewButton.classList.toggle("is-active", territoryViewEnabled);
+  territoryViewButton.setAttribute("aria-pressed", String(territoryViewEnabled));
+}
+
 function syncCoordinateViewButton() {
   if (!coordinatesViewButton) {
     return;
@@ -3523,6 +3576,7 @@ function syncModeControls() {
   syncDiplomacyScreen();
   syncUndoControls();
   syncPastureViewButton();
+  syncTerritoryViewButton();
   syncCoordinateViewButton();
   syncHexInspector();
 }
@@ -3854,6 +3908,128 @@ function drawCrossings(crossings) {
     ctx.stroke();
   }
 
+  ctx.restore();
+}
+
+function territoryClaimableHex(hex) {
+  return hex && ["grassland", "desert", "hill", "forest", "marsh", "urban"].includes(hex.terrain);
+}
+
+function territoryOwnerForHex(hex) {
+  return Number.isInteger(hex && hex.owner) ? hex.owner : factions.neutral.owner;
+}
+
+function territoryOutlineColor(owner) {
+  if (owner === factions.neutral.owner) {
+    return "#050505";
+  }
+  return factionForOwner(owner).color || "#111111";
+}
+
+function drawTerritoryOutlines() {
+  if ((!territoryViewEnabled && !ownershipEditingActive()) || !currentMap || !Array.isArray(currentMap.hexes)) {
+    return;
+  }
+
+  const visited = new Set();
+  const components = [];
+  const hexByKey = new Map();
+  for (const hex of currentMap.hexes) {
+    hexByKey.set(coordKey(hex), hex);
+  }
+  for (const hex of currentMap.hexes) {
+    if (!territoryClaimableHex(hex)) {
+      continue;
+    }
+    const key = coordKey(hex);
+    if (visited.has(key)) {
+      continue;
+    }
+
+    const owner = territoryOwnerForHex(hex);
+    const queue = [hex];
+    const boundaries = new Map();
+    let queueIndex = 0;
+    visited.add(key);
+
+    while (queueIndex < queue.length) {
+      const current = queue[queueIndex];
+      queueIndex += 1;
+      for (let direction = 0; direction < 6; direction += 1) {
+        const neighborCoord = neighborInDirection(current, direction);
+        const neighbor = inBounds(neighborCoord) ? hexByKey.get(coordKey(neighborCoord)) : null;
+        const sameRegion = territoryClaimableHex(neighbor) && territoryOwnerForHex(neighbor) === owner;
+        if (sameRegion) {
+          const neighborKey = coordKey(neighbor);
+          if (!visited.has(neighborKey)) {
+            visited.add(neighborKey);
+            queue.push(neighbor);
+          }
+          continue;
+        }
+        const edge = canonicalEdge(current, neighborCoord);
+        boundaries.set(edgeKey(edge), { edge, inside: current });
+      }
+    }
+
+    components.push({ owner, boundaries: Array.from(boundaries.values()) });
+  }
+
+  components.sort((first, second) => {
+    if (first.owner === factions.neutral.owner && second.owner !== factions.neutral.owner) {
+      return -1;
+    }
+    if (first.owner !== factions.neutral.owner && second.owner === factions.neutral.owner) {
+      return 1;
+    }
+    return first.owner - second.owner;
+  });
+
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (const component of components) {
+    ctx.strokeStyle = territoryOutlineColor(component.owner);
+    ctx.lineWidth = 1.8 / viewport.scale;
+    for (const segment of component.boundaries) {
+      const boundary = edgeBoundaryPoints(segment.edge);
+      if (!boundary) {
+        continue;
+      }
+      const center = hexCenter(segment.inside);
+      const inset = 6.4 / viewport.scale;
+      const gap = 3.2 / viewport.scale;
+      const midpoint = {
+        x: (boundary[0][0] + boundary[1][0]) / 2,
+        y: (boundary[0][1] + boundary[1][1]) / 2,
+      };
+      const inwardLength = Math.hypot(center.x - midpoint.x, center.y - midpoint.y) || 1;
+      const inward = {
+        x: ((center.x - midpoint.x) / inwardLength) * inset,
+        y: ((center.y - midpoint.y) / inwardLength) * inset,
+      };
+      const dx = boundary[1][0] - boundary[0][0];
+      const dy = boundary[1][1] - boundary[0][1];
+      const edgeLength = Math.hypot(dx, dy) || 1;
+      const trim = Math.min(gap, edgeLength * 0.22);
+      const along = {
+        x: (dx / edgeLength) * trim,
+        y: (dy / edgeLength) * trim,
+      };
+      const start = {
+        x: boundary[0][0] + inward.x + along.x,
+        y: boundary[0][1] + inward.y + along.y,
+      };
+      const end = {
+        x: boundary[1][0] + inward.x - along.x,
+        y: boundary[1][1] + inward.y - along.y,
+      };
+      ctx.beginPath();
+      ctx.moveTo(start.x, start.y);
+      ctx.lineTo(end.x, end.y);
+      ctx.stroke();
+    }
+  }
   ctx.restore();
 }
 
@@ -5126,6 +5302,7 @@ function drawMap() {
   drawRiverEdges(currentMap.edges);
   drawWallGates(currentMap.wall_gates);
   drawCrossings(currentMap.crossings);
+  drawTerritoryOutlines();
   drawMapMarkers(currentMap.river_sources, terrainStyles.river.source, 5);
   drawMapMarkers(currentMap.merge_points, terrainStyles.river.merge, 5);
   drawMapMarkers(currentMap.river_destinations, terrainStyles.river.destination, 5);
@@ -5509,6 +5686,42 @@ function editorLabelsForTerrain(terrain) {
     return [];
   }
   return [];
+}
+
+function paintHexOwnership(hex, owner) {
+  if (!hex || hex.owner === owner) {
+    return false;
+  }
+  hex.owner = owner;
+  return true;
+}
+
+function paintOwnershipAtPointer(event) {
+  if (!ownershipEditingActive() || !currentMap) {
+    return;
+  }
+  const hex = findNearestHex(panelToWorld(event));
+  if (!hex) {
+    return;
+  }
+  const owner = event.shiftKey ? factions.neutral.owner : selectedOwnershipOwner;
+  const key = `owner:${coordKey(hex)}`;
+  if (paintStrokeKeys.has(key)) {
+    return;
+  }
+  paintStrokeKeys.add(key);
+  if (hex.owner === owner) {
+    selectedHexCoord = { q: hex.q, r: hex.r };
+    drawMap();
+    return;
+  }
+  if (!paintUndoRecorded) {
+    recordLocalUndo();
+    paintUndoRecorded = true;
+  }
+  selectedHexCoord = { q: hex.q, r: hex.r };
+  paintHexOwnership(hex, owner);
+  drawMap();
 }
 
 function paintAtPointer(event) {
@@ -6146,6 +6359,15 @@ for (const button of terrainEditModeButtons) {
 for (const button of edgeFeatureButtons) {
   button.addEventListener("click", () => setEditorEdgeFeature(button.dataset.edgeFeature));
 }
+if (ownershipFactionSelect) {
+  ownershipFactionSelect.addEventListener("change", () => {
+    const owner = Number.parseInt(ownershipFactionSelect.value, 10);
+    selectedOwnershipOwner = Number.isInteger(owner) ? owner : factions.neutral.owner;
+    setScenarioTool("ownership");
+    syncOwnershipEditorControls();
+    drawMap();
+  });
+}
 if (addAiGroupButton) {
   addAiGroupButton.addEventListener("click", addAiGroup);
 }
@@ -6239,6 +6461,13 @@ pastureViewButton.addEventListener("click", () => {
   syncPastureViewButton();
   drawMap();
 });
+if (territoryViewButton) {
+  territoryViewButton.addEventListener("click", () => {
+    territoryViewEnabled = !territoryViewEnabled;
+    syncTerritoryViewButton();
+    drawMap();
+  });
+}
 if (coordinatesViewButton) {
   coordinatesViewButton.addEventListener("click", () => {
     coordinateLabelsEnabled = !coordinateLabelsEnabled;
@@ -6313,12 +6542,16 @@ mapPanel.addEventListener("pointerdown", async (event) => {
       return;
     }
   }
-  if (terrainEditingActive() && event.button === 0) {
+  if ((terrainEditingActive() || ownershipEditingActive()) && event.button === 0) {
     event.preventDefault();
     isPainting = true;
     paintStrokeKeys = new Set();
     paintUndoRecorded = false;
-    paintAtPointer(event);
+    if (ownershipEditingActive()) {
+      paintOwnershipAtPointer(event);
+    } else {
+      paintAtPointer(event);
+    }
     mapPanel.setPointerCapture(event.pointerId);
     return;
   }
@@ -6364,7 +6597,11 @@ mapPanel.addEventListener("pointermove", (event) => {
   if (isPainting) {
     hideCombatPreview();
     event.preventDefault();
-    paintAtPointer(event);
+    if (ownershipEditingActive()) {
+      paintOwnershipAtPointer(event);
+    } else {
+      paintAtPointer(event);
+    }
     return;
   }
   if (!isPanning) {

@@ -182,6 +182,29 @@
           </div>
         </article>
 
+        <article class="scenario-region" data-scenario-region="ownership">
+          <button class="scenario-region-rail" type="button" data-scenario-activate="ownership" aria-pressed="false">Ownership</button>
+          <div class="scenario-region-body">
+            <button class="scenario-region-toggle" type="button" data-scenario-toggle="ownership" aria-expanded="true" aria-label="Collapse Ownership">-</button>
+            <div class="scenario-tool-panel ownership-tool-panel" data-scenario-panel="ownership">
+              <label class="ownership-field">
+                <span>Owner</span>
+                <span class="ownership-select-row">
+                  <span id="ownership-faction-swatch" class="ownership-faction-swatch" aria-hidden="true"></span>
+                  <select id="ownership-faction-select" aria-label="Ownership faction">
+                    <option value="-1">None</option>
+                    <option value="0">Mongol</option>
+                    <option value="2">Chinese</option>
+                    <option value="1">Persian</option>
+                    <option value="3">Jurchen</option>
+                    <option value="4">Forest Nomads</option>
+                  </select>
+                </span>
+              </label>
+            </div>
+          </div>
+        </article>
+
         <article class="scenario-region" data-scenario-region="units">
           <button class="scenario-region-rail" type="button" data-scenario-activate="units" aria-pressed="false">Units</button>
           <div class="scenario-region-body">
@@ -290,6 +313,7 @@
             <button id="zoom-in-button" class="secondary icon-button" type="button" aria-label="Zoom in" title="Zoom in">+</button>
             <button id="fit-button" class="secondary fit-button" type="button" aria-label="Fit map" title="Fit map">Fit</button>
             <button id="pasture-view-button" class="secondary view-toggle-button" type="button" aria-pressed="false" title="Toggle pasture view">Pasture</button>
+            <button id="territory-view-button" class="secondary view-toggle-button" type="button" aria-pressed="false" title="Toggle territory view">Territory</button>
             <button id="coordinates-view-button" class="secondary view-toggle-button" type="button" aria-pressed="true" title="Toggle hex coordinates">Coords</button>
             <button id="details-toggle-button" class="secondary details-toggle-button" type="button" aria-expanded="true" title="Hide bottom panel" hidden>Hide Panel</button>
           </div>

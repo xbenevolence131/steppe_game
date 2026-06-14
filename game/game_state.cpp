@@ -1027,6 +1027,31 @@ bool hostile_units(const GameState& state, const Unit& first, const Unit& second
     return first.owner != second.owner && at_war(state, first.owner, second.owner);
 }
 
+bool settled_owner(OwnerId owner) {
+    return owner == chinese_owner || owner == persian_owner || owner == jurchen_owner;
+}
+
+bool settled_unit(const Unit& unit) {
+    return settled_owner(unit.owner);
+}
+
+bool territory_claimable_terrain(Terrain terrain) {
+    switch (terrain) {
+        case Terrain::Grassland:
+        case Terrain::Desert:
+        case Terrain::Hill:
+        case Terrain::Forest:
+        case Terrain::Marsh:
+        case Terrain::Urban:
+            return true;
+        case Terrain::None:
+        case Terrain::Lake:
+        case Terrain::Mountain:
+            return false;
+    }
+    return false;
+}
+
 SettlementKind settlement_kind_from_town(const Town& town) {
     if (contains_label(town.labels, "china_access_town")) {
         return SettlementKind::ChinaAccessTown;
@@ -1068,6 +1093,8 @@ PastureState initial_pasture_for_terrain(Terrain terrain) {
     }
 }
 
+void seed_initial_territory(GameState& state);
+
 GameState game_state_from_generated_map(const GeneratedMap& generated) {
     GameState state;
     state.width = generated.width;
@@ -1103,6 +1130,7 @@ GameState game_state_from_generated_map(const GeneratedMap& generated) {
         settlement.source_labels = town.labels;
         state.settlements.push_back(std::move(settlement));
     }
+    seed_initial_territory(state);
 
     state.rivers = generated.edges;
     state.river_segments = generated.river_segments;
@@ -1278,6 +1306,190 @@ GameHex* find_hex(GameState& state, const Coord& coord) {
         return coord_equal(hex.coord, coord);
     });
     return found == state.hexes.end() ? nullptr : &*found;
+}
+
+OwnerId territory_owner_for_unit(const Unit& unit) {
+    return settled_unit(unit) ? unit.owner : neutral_owner;
+}
+
+void apply_territory_ownership(GameState& state, const Unit& unit, const Coord& coord) {
+    GameHex* hex = find_hex(state, coord);
+    if (hex == nullptr || !territory_claimable_terrain(hex->terrain)) {
+        return;
+    }
+    hex->owner = territory_owner_for_unit(unit);
+}
+
+void apply_territory_ownership(GameState& state, const Unit& unit, const std::vector<Coord>& path) {
+    for (const Coord& coord : path) {
+        apply_territory_ownership(state, unit, coord);
+    }
+}
+
+const Unit* unit_at(const GameState& state, const Coord& coord);
+bool enemy_zoc_at(const GameState& state, const Coord& coord, const Unit& moving_unit);
+
+void seed_initial_territory(GameState& state) {
+    constexpr int initial_territory_radius = 12;
+
+    struct Frontier {
+        Coord coord;
+        OwnerId owner = neutral_owner;
+        int distance = 0;
+    };
+
+    std::vector<Settlement> sources;
+    for (const Settlement& settlement : state.settlements) {
+        if (!settled_owner(settlement.owner)) {
+            continue;
+        }
+        const GameHex* hex = find_hex(state, settlement.coord);
+        if (hex != nullptr && territory_claimable_terrain(hex->terrain)) {
+            sources.push_back(settlement);
+        }
+    }
+    std::sort(sources.begin(), sources.end(), [](const Settlement& first, const Settlement& second) {
+        if (first.owner != second.owner) {
+            return first.owner < second.owner;
+        }
+        return coord_less(first.coord, second.coord);
+    });
+
+    std::map<Coord, int, decltype(coord_less)*> best_distances(coord_less);
+    std::map<Coord, OwnerId, decltype(coord_less)*> owners(coord_less);
+    std::deque<Frontier> queue;
+    for (const Settlement& source : sources) {
+        const auto existing = best_distances.find(source.coord);
+        if (existing != best_distances.end() && existing->second == 0 && owners[source.coord] <= source.owner) {
+            continue;
+        }
+        best_distances[source.coord] = 0;
+        owners[source.coord] = source.owner;
+        queue.push_back({source.coord, source.owner, 0});
+    }
+
+    while (!queue.empty()) {
+        const Frontier current = queue.front();
+        queue.pop_front();
+        const auto current_owner = owners.find(current.coord);
+        const auto current_distance = best_distances.find(current.coord);
+        if (current_owner == owners.end()
+            || current_distance == best_distances.end()
+            || current_owner->second != current.owner
+            || current_distance->second != current.distance) {
+            continue;
+        }
+        if (current.distance >= initial_territory_radius) {
+            continue;
+        }
+
+        for (int direction = 0; direction < 6; ++direction) {
+            const Coord next = neighbor_in_direction(current.coord, direction);
+            if (!in_bounds(state, next)) {
+                continue;
+            }
+            const GameHex* hex = find_hex(state, next);
+            if (hex == nullptr || !territory_claimable_terrain(hex->terrain)) {
+                continue;
+            }
+            const int next_distance = current.distance + 1;
+            const auto existing_distance = best_distances.find(next);
+            const auto existing_owner = owners.find(next);
+            if (existing_distance != best_distances.end()
+                && (existing_distance->second < next_distance
+                    || (existing_distance->second == next_distance
+                        && existing_owner != owners.end()
+                        && existing_owner->second <= current.owner))) {
+                continue;
+            }
+            best_distances[next] = next_distance;
+            owners[next] = current.owner;
+            queue.push_back({next, current.owner, next_distance});
+        }
+    }
+
+    for (GameHex& hex : state.hexes) {
+        const auto found = owners.find(hex.coord);
+        if (found != owners.end()) {
+            hex.owner = found->second;
+        }
+    }
+}
+
+std::vector<Coord> movement_path_to(const GameState& state, const Unit& unit, Coord destination) {
+    std::map<Coord, int, decltype(coord_less)*> best_costs(coord_less);
+    std::map<Coord, Coord, decltype(coord_less)*> previous(coord_less);
+    std::deque<Coord> queue;
+    best_costs[unit.coord] = 0;
+    queue.push_back(unit.coord);
+
+    while (!queue.empty()) {
+        const Coord current = queue.front();
+        queue.pop_front();
+        const int current_cost = best_costs[current];
+        for (int direction = 0; direction < 6; ++direction) {
+            const Coord next = neighbor_in_direction(current, direction);
+            if (!in_bounds(state, next)) {
+                continue;
+            }
+            const Unit* occupant = unit_at(state, next);
+            const bool occupied_by_other = occupant != nullptr && occupant->id != unit.id;
+            if (occupied_by_other && hostile_units(state, unit, *occupant)) {
+                continue;
+            }
+            const GameHex* hex = find_hex(state, next);
+            if (hex == nullptr) {
+                continue;
+            }
+            const bool unbridged_river_crossing = unbridged_river_crossing_between(state, current, next);
+            const bool first_step = current_cost == 0 && coord_equal(current, unit.coord);
+            if (unbridged_river_crossing
+                && (!first_step || unit.moved_this_turn || unit.remaining_scaled_move != unit.scaled_move)) {
+                continue;
+            }
+            int step_cost = movement_cost(state, unit, current, *hex);
+            if (unbridged_river_crossing && terrain_movement_cost(hex->terrain) != blocked_movement_cost()) {
+                step_cost = unit.remaining_scaled_move;
+            }
+            if (step_cost == blocked_movement_cost()) {
+                continue;
+            }
+            const int next_cost = current_cost + step_cost;
+            const bool affordable = next_cost <= unit.remaining_scaled_move;
+            const bool minimum_step = first_step && !unit.moved_this_turn;
+            if (!affordable && !minimum_step) {
+                continue;
+            }
+            const auto existing = best_costs.find(next);
+            if (existing != best_costs.end() && existing->second <= next_cost) {
+                continue;
+            }
+            best_costs[next] = next_cost;
+            previous[next] = current;
+            if (!unbridged_river_crossing
+                && affordable
+                && (!unit.respects_zoc || !enemy_zoc_at(state, next, unit))) {
+                queue.push_back(next);
+            }
+        }
+    }
+
+    if (best_costs.find(destination) == best_costs.end()) {
+        return {};
+    }
+    std::vector<Coord> path;
+    Coord cursor = destination;
+    path.push_back(cursor);
+    while (!coord_equal(cursor, unit.coord)) {
+        const auto found = previous.find(cursor);
+        if (found == previous.end()) {
+            return {};
+        }
+        cursor = found->second;
+        path.push_back(cursor);
+    }
+    std::reverse(path.begin(), path.end());
+    return path;
 }
 
 Unit* find_unit(GameState& state, int unit_id) {
@@ -2036,8 +2248,13 @@ bool move_unit(GameState& state, int unit_id, Coord destination) {
     if (found == reachable.end()) {
         return false;
     }
+    std::vector<Coord> movement_path = movement_path_to(state, *unit, destination);
+    if (movement_path.empty()) {
+        movement_path = {unit->coord, destination};
+    }
     const bool unbridged_river_crossing = unbridged_river_crossing_between(state, unit->coord, destination);
     cancel_horde_production(*unit);
+    apply_territory_ownership(state, *unit, movement_path);
     unit->coord = destination;
     unit->moved_this_turn = true;
     reduce_readiness(
@@ -3334,6 +3551,7 @@ void print_game_state_json(const GameState& state, std::ostream& out) {
             << ",\"r\":" << hex.coord.r
             << ",\"terrain\":\"" << terrain_to_string(hex.terrain) << "\""
             << ",\"name\":\"" << escape_json(hex.name.empty() ? "None" : hex.name) << "\""
+            << ",\"owner\":" << hex.owner
             << ",\"labels\":";
         print_string_array_json(hex.source_labels, out);
         out << ",\"pasture\":";
@@ -3534,6 +3752,7 @@ void print_game_patch_json(
             << ",\"r\":" << hex.coord.r
             << ",\"terrain\":\"" << terrain_to_string(hex.terrain) << "\""
             << ",\"name\":\"" << escape_json(hex.name.empty() ? "None" : hex.name) << "\""
+            << ",\"owner\":" << hex.owner
             << ",\"labels\":";
         print_string_array_json(hex.source_labels, out);
         out << ",\"pasture\":";
@@ -3670,6 +3889,7 @@ GameState parse_game_state_json(const std::string& json) {
     }
     normalize_diplomacy(state);
 
+    bool saw_explicit_hex_owner = false;
     const Json& hex_items = root.contains("hexes") && root["hexes"].is_array() ? root["hexes"] : empty_array;
     for (const Json& hex_json : hex_items) {
         if (!hex_json.is_object()) {
@@ -3701,7 +3921,60 @@ GameState parse_game_state_json(const std::string& json) {
         } else if (hex.terrain == Terrain::Grassland) {
             hex.source_labels = {"base_steppe"};
         }
+        if (hex_json.contains("owner") && hex_json["owner"].is_number_integer()) {
+            hex.owner = hex_json["owner"].get<int>();
+            saw_explicit_hex_owner = true;
+        } else if (has_tag(hex.tags, HexTag::PersianTown)) {
+            hex.owner = persian_owner;
+        } else if (has_tag(hex.tags, HexTag::ChineseTown)) {
+            hex.owner = chinese_owner;
+        }
         state.hexes.push_back(std::move(hex));
+    }
+
+    const Json& town_items = root.contains("towns") && root["towns"].is_array() ? root["towns"] : empty_array;
+    int next_settlement_id = 1;
+    for (const Json& town_json : town_items) {
+        if (!town_json.is_object()) {
+            continue;
+        }
+        Town town;
+        town.coord = coord_from_json(town_json);
+        town.feature = string_field(town_json, "feature", "");
+        town.labels = string_array_field(town_json, "labels");
+        Settlement settlement;
+        settlement.id = next_settlement_id++;
+        settlement.coord = town.coord;
+        settlement.kind = settlement_kind_from_town(town);
+        settlement.owner = owner_from_town(town);
+        settlement.source_feature = town.feature;
+        settlement.source_labels = town.labels;
+        state.settlements.push_back(std::move(settlement));
+    }
+    if (state.settlements.empty()) {
+        for (const GameHex& hex : state.hexes) {
+            Town town;
+            town.coord = hex.coord;
+            town.labels = hex.source_labels;
+            if (has_tag(hex.tags, HexTag::PersianTown)) {
+                town.feature = "persian_town";
+            } else if (has_tag(hex.tags, HexTag::ChineseTown)) {
+                town.feature = "chinese_town";
+            } else {
+                continue;
+            }
+            Settlement settlement;
+            settlement.id = next_settlement_id++;
+            settlement.coord = town.coord;
+            settlement.kind = settlement_kind_from_town(town);
+            settlement.owner = owner_from_town(town);
+            settlement.source_feature = town.feature;
+            settlement.source_labels = town.labels;
+            state.settlements.push_back(std::move(settlement));
+        }
+    }
+    if (!saw_explicit_hex_owner) {
+        seed_initial_territory(state);
     }
 
     const Json& river_edge_items = root.contains("edges") && root["edges"].is_array() ? root["edges"] : empty_array;
