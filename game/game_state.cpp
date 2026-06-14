@@ -2351,6 +2351,7 @@ bool attack_unit(GameState& state, int attacker_id, int defender_id) {
         defender->remaining_scaled_move = 0;
         defender->move_done = true;
         defender->moved_this_turn = true;
+        apply_territory_ownership(state, *attacker, {attacker->coord, preview.attacker_pursuit_to});
         attacker->coord = preview.attacker_pursuit_to;
         cancel_horde_production(*attacker);
         attacker->readiness = preview.attacker.result_readiness;
@@ -2806,6 +2807,13 @@ bool ai_move_toward_target(GameState& state, int unit_id, Coord target) {
     return move_unit(state, unit_id, best->coord);
 }
 
+void populate_ai_animation_step_snapshot(GameState& state, AiAnimationStep& step) {
+    step.hexes = state.hexes;
+    const auto supplied = supplied_hex_coords(state);
+    step.supplied_hexes.assign(supplied.begin(), supplied.end());
+    step.units = state.units;
+}
+
 AiDirective default_hunt_directive() {
     AiDirective directive;
     directive.kind = AiDirectiveKind::Hunt;
@@ -3030,6 +3038,42 @@ const Unit* ai_target_for_directive(const GameState& state, const Unit& unit, co
     return nearest_enemy_unit(state, unit);
 }
 
+bool execute_ai_unit_single_action(
+    GameState& state,
+    int unit_id,
+    const AiDirective& directive,
+    AiAnimationStep* animation_step = nullptr
+) {
+    if (directive.kind == AiDirectiveKind::Inactive) {
+        return false;
+    }
+    if (ai_attack_best_adjacent_enemy(state, unit_id, directive, animation_step)) {
+        return true;
+    }
+
+    const Unit* unit = find_unit(state, unit_id);
+    if (unit == nullptr || unit->move_done || unit->remaining_scaled_move <= 0) {
+        return false;
+    }
+
+    if (directive.kind == AiDirectiveKind::DefendHex
+        && hex_distance(unit->coord, directive.target) > 1) {
+        return ai_move_toward_target(state, unit_id, directive.target);
+    }
+
+    const Unit* target = ai_target_for_directive(state, *unit, directive);
+    if (directive.kind == AiDirectiveKind::DefendHex) {
+        if (target == nullptr || hex_distance(target->coord, directive.target) > 2) {
+            return false;
+        }
+    }
+    if (target == nullptr) {
+        return directive.kind == AiDirectiveKind::CaptureHex
+            && ai_move_toward_target(state, unit_id, directive.target);
+    }
+    return ai_move_toward_target(state, unit_id, target->coord);
+}
+
 void execute_ai_unit_directive(
     GameState& state,
     int unit_id,
@@ -3094,13 +3138,80 @@ void execute_ai_units(
         }
         if (animation != nullptr
             && (!coord_equal(step.from, step.to) || !step.attacks.empty() || !step.attack_events.empty())) {
-            step.hexes = state.hexes;
-            const auto supplied = supplied_hex_coords(state);
-            step.supplied_hexes.assign(supplied.begin(), supplied.end());
-            step.units = state.units;
+            populate_ai_animation_step_snapshot(state, step);
             animation->push_back(std::move(step));
         }
     }
+}
+
+bool step_ai_turn(GameState& state, AiAnimationStep* animation) {
+    const OwnerId owner = active_faction(state);
+    if (!faction_ai_controlled(state, owner)) {
+        return false;
+    }
+
+    refresh_generated_strategic_ai_group(state, owner);
+    std::vector<int> assigned_unit_ids;
+    std::vector<std::pair<std::vector<int>, AiDirective>> batches;
+    for (const AiGroup& group : state.ai_groups) {
+        if (group.owner != owner) {
+            continue;
+        }
+        std::vector<int> group_units = group.unit_ids;
+        std::sort(group_units.begin(), group_units.end());
+        batches.push_back({group_units, group.directive});
+        assigned_unit_ids.insert(assigned_unit_ids.end(), group_units.begin(), group_units.end());
+    }
+
+    std::sort(assigned_unit_ids.begin(), assigned_unit_ids.end());
+    assigned_unit_ids.erase(std::unique(assigned_unit_ids.begin(), assigned_unit_ids.end()), assigned_unit_ids.end());
+    std::vector<int> unassigned_unit_ids;
+    for (const int unit_id : ai_unit_turn_order(state, owner)) {
+        if (!std::binary_search(assigned_unit_ids.begin(), assigned_unit_ids.end(), unit_id)) {
+            unassigned_unit_ids.push_back(unit_id);
+        }
+    }
+    if (!unassigned_unit_ids.empty()) {
+        const Unit* anchor_unit = find_unit(state, unassigned_unit_ids.front());
+        AiDirective directive;
+        if (anchor_unit != nullptr && strategic_directive_for_owner(state, owner, anchor_unit->coord, directive)) {
+            batches.push_back({unassigned_unit_ids, directive});
+        }
+    }
+
+    for (const auto& batch : batches) {
+        for (const int unit_id : batch.first) {
+            const Unit* unit = find_unit(state, unit_id);
+            if (unit == nullptr
+                || unit->owner != owner
+                || !can_attack(unit->kind)
+                || unit->hp <= 0
+                || (unit->move_done && unit->combat_done)) {
+                continue;
+            }
+            AiAnimationStep step;
+            step.unit_id = unit_id;
+            step.from = unit->coord;
+            step.to = unit->coord;
+            if (!execute_ai_unit_single_action(state, unit_id, batch.second, animation == nullptr ? nullptr : &step)) {
+                continue;
+            }
+            const Unit* updated = find_unit(state, unit_id);
+            if (updated != nullptr && step.attack_events.empty()) {
+                step.to = updated->coord;
+            }
+            if (animation != nullptr) {
+                populate_ai_animation_step_snapshot(state, step);
+                *animation = std::move(step);
+            }
+            return true;
+        }
+    }
+
+    state.selected_unit_id = 0;
+    state.legal_moves.clear();
+    state.legal_attacks.clear();
+    return false;
 }
 
 void execute_ai_turn(GameState& state, OwnerId owner, std::vector<AiAnimationStep>* animation = nullptr) {
@@ -3270,7 +3381,7 @@ bool advance_to_next_faction(GameState& state) {
     return false;
 }
 
-void end_turn(GameState& state, std::vector<AiAnimationStep>* animation) {
+void end_turn(GameState& state, std::vector<AiAnimationStep>* /*animation*/) {
     state.selected_unit_id = 0;
     state.legal_moves.clear();
     state.legal_attacks.clear();
@@ -3278,21 +3389,12 @@ void end_turn(GameState& state, std::vector<AiAnimationStep>* animation) {
         state.turn_order = {mongol_owner, chinese_owner};
     }
 
-    const int faction_count = static_cast<int>(state.turn_order.size());
-    for (int steps = 0; steps < faction_count; ++steps) {
-        consume_faction_food(state, active_faction(state));
-        const bool completed_round = advance_to_next_faction(state);
-        if (completed_round) {
-            apply_pasture_for_round(state);
-        }
-        const OwnerId owner = active_faction(state);
-        start_faction_turn(state, owner);
-        if (faction_ai_controlled(state, owner)) {
-            execute_ai_turn(state, owner, animation);
-            continue;
-        }
-        break;
+    consume_faction_food(state, active_faction(state));
+    const bool completed_round = advance_to_next_faction(state);
+    if (completed_round) {
+        apply_pasture_for_round(state);
     }
+    start_faction_turn(state, active_faction(state));
 }
 
 void print_coord_json(const Coord& coord, std::ostream& out) {

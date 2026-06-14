@@ -143,6 +143,17 @@ int main(int argc, char** argv) {
             steppe::game::print_game_patch_json(state, true, std::cout, &animation);
             return EXIT_SUCCESS;
         }
+        if (command == "game-ai-step") {
+            steppe::game::GameState state = steppe::game::parse_game_state_json(read_stdin());
+            steppe::game::AiAnimationStep step;
+            const bool ok = steppe::game::step_ai_turn(state, &step);
+            std::vector<steppe::game::AiAnimationStep> animation;
+            if (ok) {
+                animation.push_back(std::move(step));
+            }
+            steppe::game::print_game_patch_json(state, ok, std::cout, &animation);
+            return ok ? EXIT_SUCCESS : EXIT_FAILURE;
+        }
 
         throw std::runtime_error("unknown command: " + command);
     } catch (const std::exception& ex) {

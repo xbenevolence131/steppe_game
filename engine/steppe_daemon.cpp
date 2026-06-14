@@ -419,12 +419,24 @@ std::string handle_command(const std::string& body) {
         }
         return command_response(game_id, ok, game_patch_json(state, ok, &animation));
     }
-    if (type == "end_turn") {
+    if (type == "step_ai_turn") {
         const steppe::game::GameState before = state;
+        steppe::game::AiAnimationStep step;
+        const bool ok = steppe::game::step_ai_turn(state, &step);
         std::vector<steppe::game::AiAnimationStep> animation;
-        steppe::game::end_turn(state, &animation);
+        if (ok) {
+            animation.push_back(std::move(step));
+        } else {
+            steppe::game::end_turn(state);
+        }
         push_undo_state(game_id, before);
         return command_response(game_id, true, game_patch_json(state, true, &animation));
+    }
+    if (type == "end_turn") {
+        const steppe::game::GameState before = state;
+        steppe::game::end_turn(state);
+        push_undo_state(game_id, before);
+        return command_response(game_id, true, game_patch_json(state, true));
     }
 
     return error_response("unknown command type: " + type);

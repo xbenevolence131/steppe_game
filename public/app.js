@@ -2372,6 +2372,11 @@ function activeFaction() {
   return factionForOwner(owner);
 }
 
+function activeFactionAiControlled() {
+  const faction = activeFaction();
+  return Boolean(faction && faction.ai);
+}
+
 function countUnits(kind, owner = null) {
   return currentMap && Array.isArray(currentMap.units)
     ? currentMap.units.filter((unit) => unit.kind === kind && (owner === null || unit.owner === owner)).length
@@ -2475,16 +2480,6 @@ function ensureGameMeta() {
     ? Math.max(0, Math.min(currentMap.game.activeFactionIndex, maxIndex))
     : 0;
   const activeOwner = currentMap.game.turnOrder[activeFactionIndex] ?? null;
-  const activeFactionRecord = currentMap.game.factions.find((faction) => faction.id === activeOwner);
-  if (activeFactionRecord && activeFactionRecord.ai) {
-    const firstHumanIndex = currentMap.game.turnOrder.findIndex((owner) => {
-      const faction = currentMap.game.factions.find((candidate) => candidate.id === owner);
-      return faction && !faction.ai;
-    });
-    if (firstHumanIndex >= 0) {
-      activeFactionIndex = firstHumanIndex;
-    }
-  }
   currentMap.game.round = currentTurn;
   currentMap.game.activeFactionIndex = activeFactionIndex;
   currentMap.game.activeOwner = currentMap.game.turnOrder[activeFactionIndex] ?? null;
@@ -5435,13 +5430,28 @@ async function animateAiPatch(payload) {
 async function advanceTurn() {
   hideCombatPreview();
   try {
-    await animateAiPatch(await postUndoableGameCommand({ type: "end_turn" }));
+    const payload = await postUndoableGameCommand({ type: "end_turn" });
+    applyGamePatch(payload);
+    syncModeControls();
+    drawMap();
+    await stepAiTurnsUntilHuman();
   } catch (error) {
     aiAnimationState = null;
     aiAnimationInProgress = false;
     window.alert(error.message);
     syncModeControls();
     drawMap();
+  }
+}
+
+async function stepAiTurnsUntilHuman() {
+  let guard = 0;
+  while (appMode === "play" && activeFactionAiControlled() && guard < 128) {
+    guard += 1;
+    await animateAiPatch(await postUndoableGameCommand({ type: "step_ai_turn" }));
+  }
+  if (guard >= 128) {
+    throw new Error("AI turn did not complete after 128 steps.");
   }
 }
 

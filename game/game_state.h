@@ -352,6 +352,7 @@ CreateHorseArchersOptions create_horse_archers_options(const GameState& state, i
 bool create_horse_archers(GameState& state, int unit_id, Coord destination);
 CreateUnitOptions create_mongol_lancers_options(const GameState& state, int unit_id);
 bool create_mongol_lancers(GameState& state, int unit_id, Coord destination);
+bool step_ai_turn(GameState& state, AiAnimationStep* animation = nullptr);
 bool execute_ai_group_turn(GameState& state, int group_id, std::vector<AiAnimationStep>* animation = nullptr);
 void end_turn(GameState& state, std::vector<AiAnimationStep>* animation = nullptr);
 
