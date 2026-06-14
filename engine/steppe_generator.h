@@ -143,10 +143,7 @@ struct GeneratedMap {
     GeneratedMapMetadata metadata;
 };
 
-GenerateArgs parse_generate_args(int argc, char** argv);
 GeneratedMap generate_map(const GenerateArgs& args);
 void print_generated_map_json(const GeneratedMap& map);
-void print_generated_map(const GenerateArgs& args);
-void print_usage();
 
 } // namespace steppe

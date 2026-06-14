@@ -49,15 +49,6 @@ target_link_libraries(steppe_game
         nlohmann_json::nlohmann_json
 )
 
-add_executable(steppe_engine
-    engine/main.cpp
-)
-
-target_link_libraries(steppe_engine
-    PRIVATE
-        steppe_game
-)
-
 add_executable(steppe_daemon
     engine/steppe_daemon.cpp
 )

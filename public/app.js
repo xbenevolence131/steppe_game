@@ -4749,7 +4749,7 @@ function drawUnitCounters(units) {
 }
 
 function drawReachableHexes() {
-  if (appMode !== "play") {
+  if (appMode !== "play" || aiAnimationInProgress) {
     return;
   }
   const moves = legalMoves();
@@ -4935,10 +4935,10 @@ function drawAiTurnAnimationHighlights() {
       }
     });
     ctx.closePath();
-    ctx.fillStyle = "rgba(244, 228, 138, 0.34)";
+    ctx.fillStyle = "rgba(52, 173, 202, 0.16)";
     ctx.fill();
-    ctx.strokeStyle = "#b68f14";
-    ctx.lineWidth = 2.4 / viewport.scale;
+    ctx.strokeStyle = "#34adca";
+    ctx.lineWidth = 3 / viewport.scale;
     ctx.stroke();
   }
   if (aiAnimationState.attackTarget) {
@@ -5522,14 +5522,15 @@ async function animateAiPatch(payload) {
       drawMap();
       await sleep(160);
     }
+    applyGamePatch(payload);
+    syncModeControls();
+    drawMap();
   } finally {
     aiAnimationState = null;
     aiAnimationInProgress = false;
+    syncModeControls();
+    drawMap();
   }
-
-  applyGamePatch(payload);
-  syncModeControls();
-  drawMap();
 }
 
 async function advanceTurn() {

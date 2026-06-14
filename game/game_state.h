@@ -366,7 +366,13 @@ void print_create_unit_options_json(const CreateUnitOptions& options, std::ostre
 void print_create_horse_archers_options_json(const CreateHorseArchersOptions& options, std::ostream& out);
 void print_create_mongol_lancers_options_json(const CreateUnitOptions& options, std::ostream& out);
 void print_ai_animation_json(const std::vector<AiAnimationStep>& animation, std::ostream& out);
-void print_game_patch_json(const GameState& state, bool ok, std::ostream& out, const std::vector<AiAnimationStep>* animation = nullptr);
+void print_game_patch_json(
+    const GameState& state,
+    bool ok,
+    std::ostream& out,
+    const std::vector<AiAnimationStep>* animation = nullptr,
+    const GameState* before = nullptr
+);
 GameState parse_game_state_json(const std::string& json);
 
 } // namespace steppe::game

@@ -2717,6 +2717,9 @@ bool ai_attack_best_adjacent_enemy(
                 break;
             }
         }
+        if (!adjacent_directive_horde) {
+            return false;
+        }
     }
     int best_defender_id = attacks.front().unit_id;
     int best_score = std::numeric_limits<int>::max();
@@ -3204,6 +3207,9 @@ bool step_ai_turn(GameState& state, AiAnimationStep* animation) {
                 populate_ai_animation_step_snapshot(state, step);
                 *animation = std::move(step);
             }
+            state.selected_unit_id = 0;
+            state.legal_moves.clear();
+            state.legal_attacks.clear();
             return true;
         }
     }
@@ -4023,11 +4029,173 @@ void print_ai_animation_json(const std::vector<AiAnimationStep>& animation, std:
     out << "]";
 }
 
+void print_game_events_json(const GameState& state, const GameState* before, std::ostream& out) {
+    out << "[";
+    if (before == nullptr) {
+        out << "]";
+        return;
+    }
+
+    bool first_event = true;
+    const auto event_prefix = [&]() {
+        if (!first_event) {
+            out << ",";
+        }
+        first_event = false;
+    };
+
+    if (before->round != state.round || active_faction(*before) != active_faction(state)) {
+        event_prefix();
+        out << "{\"type\":\"turn_changed\""
+            << ",\"fromRound\":" << before->round
+            << ",\"toRound\":" << state.round
+            << ",\"fromOwner\":" << active_faction(*before)
+            << ",\"toOwner\":" << active_faction(state)
+            << "}";
+    }
+
+    if (before->selected_unit_id != state.selected_unit_id) {
+        event_prefix();
+        out << "{\"type\":\"unit_selected\""
+            << ",\"fromUnitId\":" << before->selected_unit_id
+            << ",\"toUnitId\":" << state.selected_unit_id
+            << "}";
+    }
+
+    std::map<int, Unit> before_units;
+    for (const Unit& unit : before->units) {
+        before_units[unit.id] = unit;
+    }
+    std::set<int> after_unit_ids;
+    for (const Unit& unit : state.units) {
+        after_unit_ids.insert(unit.id);
+        const auto found = before_units.find(unit.id);
+        if (found == before_units.end()) {
+            event_prefix();
+            out << "{\"type\":\"unit_created\",\"unitId\":" << unit.id << ",\"to\":";
+            print_coord_json(unit.coord, out);
+            out << ",\"owner\":" << unit.owner
+                << ",\"kind\":\"" << unit_kind_to_string(unit.kind) << "\""
+                << "}";
+            continue;
+        }
+        const Unit& prior = found->second;
+        if (!coord_equal(prior.coord, unit.coord)) {
+            event_prefix();
+            out << "{\"type\":\"unit_moved\",\"unitId\":" << unit.id << ",\"from\":";
+            print_coord_json(prior.coord, out);
+            out << ",\"to\":";
+            print_coord_json(unit.coord, out);
+            out << "}";
+        }
+        if (prior.owner != unit.owner) {
+            event_prefix();
+            out << "{\"type\":\"unit_owner_changed\",\"unitId\":" << unit.id
+                << ",\"fromOwner\":" << prior.owner
+                << ",\"toOwner\":" << unit.owner
+                << "}";
+        }
+        if (prior.hp != unit.hp
+            || prior.readiness != unit.readiness
+            || prior.remaining_scaled_move != unit.remaining_scaled_move
+            || prior.move_done != unit.move_done
+            || prior.combat_done != unit.combat_done
+            || prior.moved_this_turn != unit.moved_this_turn) {
+            event_prefix();
+            out << "{\"type\":\"unit_status_changed\",\"unitId\":" << unit.id
+                << ",\"fromHp\":" << prior.hp
+                << ",\"toHp\":" << unit.hp
+                << ",\"fromReadiness\":" << prior.readiness
+                << ",\"toReadiness\":" << unit.readiness
+                << ",\"fromRemainingScaledMove\":" << prior.remaining_scaled_move
+                << ",\"toRemainingScaledMove\":" << unit.remaining_scaled_move
+                << "}";
+        }
+    }
+    for (const Unit& unit : before->units) {
+        if (after_unit_ids.find(unit.id) != after_unit_ids.end()) {
+            continue;
+        }
+        event_prefix();
+        out << "{\"type\":\"unit_removed\",\"unitId\":" << unit.id << ",\"from\":";
+        print_coord_json(unit.coord, out);
+        out << ",\"owner\":" << unit.owner
+            << ",\"kind\":\"" << unit_kind_to_string(unit.kind) << "\""
+            << "}";
+    }
+
+    std::map<Coord, GameHex, decltype(coord_less)*> before_hexes(coord_less);
+    for (const GameHex& hex : before->hexes) {
+        before_hexes[hex.coord] = hex;
+    }
+    const auto before_supplied = supplied_hex_coords(*before);
+    const auto after_supplied = supplied_hex_coords(state);
+    for (const GameHex& hex : state.hexes) {
+        const auto found = before_hexes.find(hex.coord);
+        if (found == before_hexes.end()) {
+            continue;
+        }
+        const GameHex& prior = found->second;
+        if (prior.owner != hex.owner) {
+            event_prefix();
+            out << "{\"type\":\"hex_owner_changed\",\"hex\":";
+            print_coord_json(hex.coord, out);
+            out << ",\"fromOwner\":" << prior.owner
+                << ",\"toOwner\":" << hex.owner
+                << "}";
+        }
+        if (prior.supply_source != hex.supply_source) {
+            event_prefix();
+            out << "{\"type\":\"hex_supply_source_changed\",\"hex\":";
+            print_coord_json(hex.coord, out);
+            out << ",\"from\":" << (prior.supply_source ? "true" : "false")
+                << ",\"to\":" << (hex.supply_source ? "true" : "false")
+                << "}";
+        }
+        const bool prior_supplied = before_supplied.find(hex.coord) != before_supplied.end();
+        const bool now_supplied = after_supplied.find(hex.coord) != after_supplied.end();
+        if (prior_supplied != now_supplied) {
+            event_prefix();
+            out << "{\"type\":\"hex_supply_changed\",\"hex\":";
+            print_coord_json(hex.coord, out);
+            out << ",\"from\":" << (prior_supplied ? "true" : "false")
+                << ",\"to\":" << (now_supplied ? "true" : "false")
+                << "}";
+        }
+    }
+
+    std::map<OwnerId, FactionState> before_factions;
+    for (const FactionState& faction : before->factions) {
+        before_factions[faction.id] = faction;
+    }
+    for (const FactionState& faction : state.factions) {
+        const auto found = before_factions.find(faction.id);
+        if (found == before_factions.end()) {
+            continue;
+        }
+        const FactionState& prior = found->second;
+        if (prior.metal != faction.metal || prior.treasure != faction.treasure || prior.food != faction.food) {
+            event_prefix();
+            out << "{\"type\":\"faction_resources_changed\",\"owner\":" << faction.id
+                << ",\"fromMetal\":" << prior.metal
+                << ",\"toMetal\":" << faction.metal
+                << ",\"fromTreasure\":" << prior.treasure
+                << ",\"toTreasure\":" << faction.treasure
+                << ",\"fromFood\":" << prior.food
+                << ",\"toFood\":" << faction.food
+                << "}";
+        }
+    }
+
+    out << "]";
+}
+
 void print_game_patch_json(
     const GameState& state,
     bool ok,
     std::ostream& out,
-    const std::vector<AiAnimationStep>* animation
+    const std::vector<AiAnimationStep>* animation,
+    const GameState* before
 ) {
     out << "{";
     out << "\"ok\":" << (ok ? "true" : "false") << ",";
@@ -4071,6 +4239,8 @@ void print_game_patch_json(
     print_units_json(state.units, out);
     out << ",";
     print_game_meta_json(state, out);
+    out << ",\"events\":";
+    print_game_events_json(state, before, out);
     if (animation != nullptr) {
         out << ",\"aiAnimation\":";
         print_ai_animation_json(*animation, out);

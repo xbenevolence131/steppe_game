@@ -83,10 +83,11 @@ std::string game_state_json(const steppe::game::GameState& state) {
 std::string game_patch_json(
     const steppe::game::GameState& state,
     bool ok,
-    const std::vector<steppe::game::AiAnimationStep>* animation = nullptr
+    const std::vector<steppe::game::AiAnimationStep>* animation = nullptr,
+    const steppe::game::GameState* before = nullptr
 ) {
     std::ostringstream out;
-    steppe::game::print_game_patch_json(state, ok, out, animation);
+    steppe::game::print_game_patch_json(state, ok, out, animation, before);
     return out.str();
 }
 
@@ -304,18 +305,20 @@ std::string handle_command(const std::string& body) {
         if (stack.empty()) {
             return command_response(game_id, false, game_patch_json(state, false));
         }
+        const steppe::game::GameState before = state;
         const int previous_version = state.state_version;
         state = stack.back();
         stack.pop_back();
         state.state_version = std::max(previous_version, state.state_version) + 1;
-        return command_response(game_id, true, game_patch_json(state, true));
+        return command_response(game_id, true, game_patch_json(state, true, nullptr, &before));
     }
     if (type == "select_unit") {
+        const steppe::game::GameState before = state;
         const bool ok = steppe::game::select_unit(state, int_field(command, "unitId", 0));
         if (ok) {
             advance_state_version(state);
         }
-        return command_response(game_id, ok, game_patch_json(state, ok));
+        return command_response(game_id, ok, game_patch_json(state, ok, nullptr, ok ? &before : nullptr));
     }
     if (type == "set_unit_stance") {
         const steppe::game::GameState before = state;
@@ -328,7 +331,7 @@ std::string handle_command(const std::string& body) {
             push_undo_state(game_id, before);
             advance_state_version(state);
         }
-        return command_response(game_id, ok, game_patch_json(state, ok));
+        return command_response(game_id, ok, game_patch_json(state, ok, nullptr, ok ? &before : nullptr));
     }
     if (type == "move_unit") {
         const steppe::game::GameState before = state;
@@ -341,7 +344,7 @@ std::string handle_command(const std::string& body) {
             push_undo_state(game_id, before);
             advance_state_version(state);
         }
-        return command_response(game_id, ok, game_patch_json(state, ok));
+        return command_response(game_id, ok, game_patch_json(state, ok, nullptr, ok ? &before : nullptr));
     }
     if (type == "attack_unit") {
         const steppe::game::GameState before = state;
@@ -354,7 +357,7 @@ std::string handle_command(const std::string& body) {
             push_undo_state(game_id, before);
             advance_state_version(state);
         }
-        return command_response(game_id, ok, game_patch_json(state, ok));
+        return command_response(game_id, ok, game_patch_json(state, ok, nullptr, ok ? &before : nullptr));
     }
     if (type == "combat_preview") {
         const steppe::game::CombatPreview preview = steppe::game::combat_preview(
@@ -384,7 +387,7 @@ std::string handle_command(const std::string& body) {
             push_undo_state(game_id, before);
             advance_state_version(state);
         }
-        return command_response(game_id, ok, game_patch_json(state, ok));
+        return command_response(game_id, ok, game_patch_json(state, ok, nullptr, ok ? &before : nullptr));
     }
     if (type == "create_horse_archers_options") {
         const steppe::game::CreateHorseArchersOptions options = steppe::game::create_horse_archers_options(
@@ -404,7 +407,7 @@ std::string handle_command(const std::string& body) {
             push_undo_state(game_id, before);
             advance_state_version(state);
         }
-        return command_response(game_id, ok, game_patch_json(state, ok));
+        return command_response(game_id, ok, game_patch_json(state, ok, nullptr, ok ? &before : nullptr));
     }
     if (type == "create_mongol_lancers_options") {
         const steppe::game::CreateUnitOptions options = steppe::game::create_mongol_lancers_options(
@@ -424,7 +427,7 @@ std::string handle_command(const std::string& body) {
             push_undo_state(game_id, before);
             advance_state_version(state);
         }
-        return command_response(game_id, ok, game_patch_json(state, ok));
+        return command_response(game_id, ok, game_patch_json(state, ok, nullptr, ok ? &before : nullptr));
     }
     if (type == "execute_ai_group") {
         const steppe::game::GameState before = state;
@@ -438,7 +441,7 @@ std::string handle_command(const std::string& body) {
             push_undo_state(game_id, before);
             advance_state_version(state);
         }
-        return command_response(game_id, ok, game_patch_json(state, ok, &animation));
+        return command_response(game_id, ok, game_patch_json(state, ok, &animation, ok ? &before : nullptr));
     }
     if (type == "step_ai_turn") {
         const steppe::game::GameState before = state;
@@ -452,14 +455,14 @@ std::string handle_command(const std::string& body) {
         }
         push_undo_state(game_id, before);
         advance_state_version(state);
-        return command_response(game_id, true, game_patch_json(state, true, &animation));
+        return command_response(game_id, true, game_patch_json(state, true, &animation, &before));
     }
     if (type == "end_turn") {
         const steppe::game::GameState before = state;
         steppe::game::end_turn(state);
         push_undo_state(game_id, before);
         advance_state_version(state);
-        return command_response(game_id, true, game_patch_json(state, true));
+        return command_response(game_id, true, game_patch_json(state, true, nullptr, &before));
     }
 
     return error_response("unknown command type: " + type);

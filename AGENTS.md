@@ -12,7 +12,7 @@ This is an experimental procedural territory-generation app for a hex-based turn
 
 ## Architecture
 
-- `engine/steppe_generator.cpp` contains the authoritative C++17 generation implementation, exposed through `engine/steppe_generator.h` and built as the `steppe_generator` static library. `engine/main.cpp` is only the CLI wrapper.
+- `engine/steppe_generator.cpp` contains the authoritative C++17 generation implementation, exposed through `engine/steppe_generator.h` and built as the `steppe_generator` static library. There is no gameplay/generation CLI; use the daemon HTTP command path through the proxy for app behavior.
 - The library API exposes typed `GeneratedMap` data through `generate_map(const GenerateArgs&)`; JSON output should serialize that map via `print_generated_map_json` instead of interleaving generation and printing.
 - `game/` contains the first game-facing state model, built as the `steppe_game` static library. It adapts `steppe::GeneratedMap` into `steppe::game::GameState`, stable hex tag bitmasks, settlements, owners, pasture placeholders, and mode-controller interfaces for the same shared strategic map.
 - `data/unit_types.csv` is the authoritative unit-type table. The C++ game layer loads it at startup and uses it for unit HP, attack, defense, readiness damage, readiness, movement, ZOC flags, stance options, and resource counters.
