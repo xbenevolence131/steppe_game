@@ -139,30 +139,6 @@ struct AiGroup {
     bool generated = false;
 };
 
-struct AiAnimationStep {
-    int unit_id = 0;
-    Coord from;
-    Coord to;
-    std::vector<Coord> attacks;
-    struct AttackEvent {
-        Coord target;
-        int defender_id = 0;
-        Coord defender_from;
-        Coord defender_to;
-        bool defender_moved = false;
-        Coord attacker_to;
-        bool attacker_moved = false;
-    };
-    std::vector<AttackEvent> attack_events;
-};
-
-struct DiplomaticRelationship {
-    OwnerId owner = neutral_owner;
-    OwnerId target = neutral_owner;
-    int affinity = 50;
-    std::string status = "war";
-};
-
 struct Unit {
     int id = 0;
     OwnerId owner = neutral_owner;
@@ -190,6 +166,33 @@ struct Unit {
     bool contacted_enemy_this_turn = false;
     bool projects_zoc = false;
     bool respects_zoc = false;
+};
+
+struct AiAnimationStep {
+    int unit_id = 0;
+    Coord from;
+    Coord to;
+    std::vector<GameHex> hexes;
+    std::vector<Coord> supplied_hexes;
+    std::vector<Unit> units;
+    std::vector<Coord> attacks;
+    struct AttackEvent {
+        Coord target;
+        int defender_id = 0;
+        Coord defender_from;
+        Coord defender_to;
+        bool defender_moved = false;
+        Coord attacker_to;
+        bool attacker_moved = false;
+    };
+    std::vector<AttackEvent> attack_events;
+};
+
+struct DiplomaticRelationship {
+    OwnerId owner = neutral_owner;
+    OwnerId target = neutral_owner;
+    int affinity = 50;
+    std::string status = "war";
 };
 
 struct UnitDefaults {

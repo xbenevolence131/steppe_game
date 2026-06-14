@@ -3094,6 +3094,10 @@ void execute_ai_units(
         }
         if (animation != nullptr
             && (!coord_equal(step.from, step.to) || !step.attacks.empty() || !step.attack_events.empty())) {
+            step.hexes = state.hexes;
+            const auto supplied = supplied_hex_coords(state);
+            step.supplied_hexes.assign(supplied.begin(), supplied.end());
+            step.units = state.units;
             animation->push_back(std::move(step));
         }
     }
@@ -3384,6 +3388,28 @@ void print_units_json(const std::vector<Unit>& units, std::ostream& out) {
             out << ",";
         }
         print_unit_json(units[i], out);
+    }
+    out << "]";
+}
+
+void print_animation_hexes_json(
+    const std::vector<GameHex>& hexes,
+    const std::vector<Coord>& supplied_hexes,
+    std::ostream& out
+) {
+    out << "[";
+    for (std::size_t i = 0; i < hexes.size(); ++i) {
+        if (i > 0) {
+            out << ",";
+        }
+        const GameHex& hex = hexes[i];
+        const bool supplied = std::binary_search(supplied_hexes.begin(), supplied_hexes.end(), hex.coord, coord_less);
+        out << "{\"q\":" << hex.coord.q
+            << ",\"r\":" << hex.coord.r
+            << ",\"owner\":" << hex.owner
+            << ",\"supplySource\":" << (hex.supply_source ? "true" : "false")
+            << ",\"supplied\":" << (supplied ? "true" : "false")
+            << "}";
     }
     out << "]";
 }
@@ -3755,6 +3781,10 @@ void print_ai_animation_json(const std::vector<AiAnimationStep>& animation, std:
         print_coord_json(step.from, out);
         out << ",\"to\":";
         print_coord_json(step.to, out);
+        out << ",\"hexes\":";
+        print_animation_hexes_json(step.hexes, step.supplied_hexes, out);
+        out << ",\"units\":";
+        print_units_json(step.units, out);
         out << ",\"attacks\":[";
         for (std::size_t attack_index = 0; attack_index < step.attacks.size(); ++attack_index) {
             if (attack_index > 0) {

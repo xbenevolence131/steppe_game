@@ -2723,11 +2723,78 @@ function applyGamePatch(payload) {
   ensureGameMeta();
 }
 
+function applyAiStepHexSnapshot(step) {
+  if (!currentMap || !Array.isArray(currentMap.hexes) || !step || !Array.isArray(step.hexes) || step.hexes.length === 0) {
+    return false;
+  }
+  const currentHexes = new Map(currentMap.hexes.map((hex) => [coordKey(hex), hex]));
+  let changed = false;
+  for (const update of step.hexes) {
+    const hex = currentHexes.get(coordKey(update));
+    if (!hex) {
+      continue;
+    }
+    if (Number.isInteger(update.owner) && hex.owner !== update.owner) {
+      hex.owner = update.owner;
+      changed = true;
+    }
+    if (typeof update.supplySource === "boolean" && hex.supplySource !== update.supplySource) {
+      hex.supplySource = update.supplySource;
+      changed = true;
+    }
+    if (typeof update.supplied === "boolean" && hex.supplied !== update.supplied) {
+      hex.supplied = update.supplied;
+      changed = true;
+    }
+  }
+  if (changed) {
+    syncHexInspector();
+  }
+  return changed;
+}
+
+function applyAiStepUnitSnapshot(step) {
+  if (!currentMap || !step || !Array.isArray(step.units) || step.units.length === 0) {
+    return false;
+  }
+  currentMap.units = step.units.map(normalizeUnit);
+  return true;
+}
+
+function applyAiStepSnapshot(step) {
+  const changedHexes = applyAiStepHexSnapshot(step);
+  const changedUnits = applyAiStepUnitSnapshot(step);
+  if (changedHexes || changedUnits) {
+    ensureGameMeta();
+    syncModeControls();
+  }
+  return changedHexes || changedUnits;
+}
+
 function normalizeAnimationCoord(coord) {
   if (!coord || !Number.isInteger(coord.q) || !Number.isInteger(coord.r)) {
     return null;
   }
   return { q: coord.q, r: coord.r };
+}
+
+function normalizeAnimationHexState(hex) {
+  if (!hex || !Number.isInteger(hex.q) || !Number.isInteger(hex.r)) {
+    return null;
+  }
+  const normalized = { q: hex.q, r: hex.r };
+  if (Number.isInteger(hex.owner)) {
+    normalized.owner = hex.owner;
+  }
+  if (typeof hex.supplySource === "boolean") {
+    normalized.supplySource = hex.supplySource;
+  } else if (typeof hex.supply_source === "boolean") {
+    normalized.supplySource = hex.supply_source;
+  }
+  if (typeof hex.supplied === "boolean") {
+    normalized.supplied = hex.supplied;
+  }
+  return normalized;
 }
 
 function normalizeAiAttackEvent(event) {
@@ -2765,6 +2832,12 @@ function normalizeAiAnimationStep(step) {
     unitId: step.unitId,
     from,
     to,
+    hexes: Array.isArray(step.hexes)
+      ? step.hexes.map(normalizeAnimationHexState).filter(Boolean)
+      : [],
+    units: Array.isArray(step.units)
+      ? step.units.map(normalizeUnit)
+      : [],
     attacks: Array.isArray(step.attacks)
       ? step.attacks.map(normalizeAnimationCoord).filter(Boolean)
       : [],
@@ -5275,6 +5348,10 @@ async function animateAiPatch(payload) {
         };
         drawMap();
         await sleep(320);
+        if (applyAiStepHexSnapshot(step)) {
+          drawMap();
+          await sleep(180);
+        }
       } else {
         await sleep(160);
       }
@@ -5334,6 +5411,7 @@ async function animateAiPatch(payload) {
         }
       }
 
+      applyAiStepSnapshot(step);
       const finalUnit = currentMap.units.find((candidate) => candidate.id === step.unitId);
       const finalCoord = finalUnit ? { q: finalUnit.q, r: finalUnit.r } : step.to;
       aiAnimationState = {
