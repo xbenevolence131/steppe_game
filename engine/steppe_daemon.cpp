@@ -209,6 +209,10 @@ void push_undo_state(const std::string& game_id, const steppe::game::GameState& 
     }
 }
 
+void advance_state_version(steppe::game::GameState& state) {
+    state.state_version = std::max(0, state.state_version) + 1;
+}
+
 std::string error_response(const std::string& message) {
     return "{\"ok\":false,\"error\":\"" + escape_json(message) + "\"}";
 }
@@ -269,6 +273,7 @@ std::string handle_command(const std::string& body) {
             std::max(1, std::min(80, int_field(command, "height", 10))),
             std::max(1, std::min(3, int_field(command, "factions", 2)))
         );
+        state.state_version = 1;
         games[game_id] = state;
         undo_stacks[game_id].clear();
         return ok_response(game_id, game_state_json(state));
@@ -279,6 +284,7 @@ std::string handle_command(const std::string& body) {
             return error_response("load_game requires command.state");
         }
         steppe::game::GameState state = steppe::game::parse_game_state_json(state_it->dump());
+        state.state_version = 1;
         games[game_id] = state;
         undo_stacks[game_id].clear();
         return ok_response(game_id, game_state_json(state));
@@ -290,17 +296,25 @@ std::string handle_command(const std::string& body) {
     }
 
     steppe::game::GameState& state = found->second;
+    if (type == "get_state") {
+        return ok_response(game_id, game_state_json(state));
+    }
     if (type == "undo") {
         std::vector<steppe::game::GameState>& stack = undo_stacks[game_id];
         if (stack.empty()) {
             return command_response(game_id, false, game_patch_json(state, false));
         }
+        const int previous_version = state.state_version;
         state = stack.back();
         stack.pop_back();
+        state.state_version = std::max(previous_version, state.state_version) + 1;
         return command_response(game_id, true, game_patch_json(state, true));
     }
     if (type == "select_unit") {
         const bool ok = steppe::game::select_unit(state, int_field(command, "unitId", 0));
+        if (ok) {
+            advance_state_version(state);
+        }
         return command_response(game_id, ok, game_patch_json(state, ok));
     }
     if (type == "set_unit_stance") {
@@ -312,6 +326,7 @@ std::string handle_command(const std::string& body) {
         );
         if (ok) {
             push_undo_state(game_id, before);
+            advance_state_version(state);
         }
         return command_response(game_id, ok, game_patch_json(state, ok));
     }
@@ -324,6 +339,7 @@ std::string handle_command(const std::string& body) {
         );
         if (ok) {
             push_undo_state(game_id, before);
+            advance_state_version(state);
         }
         return command_response(game_id, ok, game_patch_json(state, ok));
     }
@@ -336,6 +352,7 @@ std::string handle_command(const std::string& body) {
         );
         if (ok) {
             push_undo_state(game_id, before);
+            advance_state_version(state);
         }
         return command_response(game_id, ok, game_patch_json(state, ok));
     }
@@ -365,6 +382,7 @@ std::string handle_command(const std::string& body) {
         );
         if (ok) {
             push_undo_state(game_id, before);
+            advance_state_version(state);
         }
         return command_response(game_id, ok, game_patch_json(state, ok));
     }
@@ -384,6 +402,7 @@ std::string handle_command(const std::string& body) {
         );
         if (ok) {
             push_undo_state(game_id, before);
+            advance_state_version(state);
         }
         return command_response(game_id, ok, game_patch_json(state, ok));
     }
@@ -403,6 +422,7 @@ std::string handle_command(const std::string& body) {
         );
         if (ok) {
             push_undo_state(game_id, before);
+            advance_state_version(state);
         }
         return command_response(game_id, ok, game_patch_json(state, ok));
     }
@@ -416,6 +436,7 @@ std::string handle_command(const std::string& body) {
         );
         if (ok) {
             push_undo_state(game_id, before);
+            advance_state_version(state);
         }
         return command_response(game_id, ok, game_patch_json(state, ok, &animation));
     }
@@ -430,12 +451,14 @@ std::string handle_command(const std::string& body) {
             steppe::game::end_turn(state);
         }
         push_undo_state(game_id, before);
+        advance_state_version(state);
         return command_response(game_id, true, game_patch_json(state, true, &animation));
     }
     if (type == "end_turn") {
         const steppe::game::GameState before = state;
         steppe::game::end_turn(state);
         push_undo_state(game_id, before);
+        advance_state_version(state);
         return command_response(game_id, true, game_patch_json(state, true));
     }
 

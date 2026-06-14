@@ -139,6 +139,11 @@ const hexPastureRow = document.querySelector("#hex-pasture-row");
 const hexPasture = document.querySelector("#hex-pasture");
 
 let currentMap = null;
+const engineProjection = {
+  version: 0,
+  hash: "",
+  lastSyncReason: "",
+};
 let appMode = "intro";
 let isPanning = false;
 let isPainting = false;
@@ -2716,6 +2721,105 @@ function applyGamePatch(payload) {
     currentMap.game = payload.game;
   }
   ensureGameMeta();
+  syncEngineProjectionMeta(currentMap, "patch");
+}
+
+function syncEngineProjectionMeta(map, reason) {
+  const game = map && map.game && typeof map.game === "object" ? map.game : null;
+  engineProjection.version = Number.isInteger(game && game.stateVersion) ? game.stateVersion : 0;
+  engineProjection.hash = typeof (game && game.stateHash) === "string" ? game.stateHash : "";
+  engineProjection.lastSyncReason = reason;
+}
+
+function projectionComparableState(map) {
+  if (!map || typeof map !== "object") {
+    return null;
+  }
+  const game = map.game && typeof map.game === "object" ? map.game : {};
+  return {
+    width: map.width,
+    height: map.height,
+    hexes: Array.isArray(map.hexes)
+      ? map.hexes.map((hex) => ({
+        q: hex.q,
+        r: hex.r,
+        terrain: hex.terrain,
+        name: normalizeHexName(hex.name),
+        owner: Number.isInteger(hex.owner) ? hex.owner : factions.neutral.owner,
+        supplySource: Boolean(hex.supplySource),
+        supplied: Boolean(hex.supplied),
+        pasture: normalizePasture(hex.pasture, hex.terrain),
+      }))
+      : [],
+    units: Array.isArray(map.units)
+      ? map.units.map(normalizeUnit)
+      : [],
+    game: {
+      stateVersion: Number.isInteger(game.stateVersion) ? game.stateVersion : 0,
+      round: Number.isInteger(game.round) ? game.round : 1,
+      activeFactionIndex: Number.isInteger(game.activeFactionIndex) ? game.activeFactionIndex : 0,
+      activeOwner: Number.isInteger(game.activeOwner) ? game.activeOwner : null,
+      selectedUnitId: Number.isInteger(game.selectedUnitId) ? game.selectedUnitId : 0,
+      foodConsumption: game.foodConsumption !== false,
+      legalMoves: Array.isArray(game.legalMoves) ? game.legalMoves : [],
+      legalAttacks: Array.isArray(game.legalAttacks) ? game.legalAttacks : [],
+      turnOrder: Array.isArray(game.turnOrder) ? game.turnOrder : [],
+      factions: Array.isArray(game.factions) ? game.factions : [],
+      aiGroups: normalizeAiGroups(game.aiGroups),
+      diplomacy: normalizeDiplomacy(game.diplomacy),
+    },
+  };
+}
+
+async function resyncEngineProjection(reason) {
+  const snapshot = await postAppCommand({ type: "get_state" });
+  currentMap = refreshDerivedTopology(snapshot);
+  currentMap.hexes = Array.isArray(currentMap.hexes)
+    ? currentMap.hexes.map(normalizeMapHex).filter((hex) => Number.isInteger(hex.q) && Number.isInteger(hex.r))
+    : [];
+  currentMap.units = Array.isArray(currentMap.units) ? currentMap.units.map(normalizeUnit) : [];
+  ensureGameMeta();
+  syncEngineProjectionMeta(currentMap, reason);
+  syncModeControls();
+  drawMap();
+  return currentMap;
+}
+
+async function validateEngineProjection(reason) {
+  if (appMode !== "play" || !currentMap) {
+    return true;
+  }
+  const authoritative = await postAppCommand({ type: "get_state" });
+  const normalizedAuthoritative = refreshDerivedTopology(authoritative);
+  normalizedAuthoritative.hexes = Array.isArray(normalizedAuthoritative.hexes)
+    ? normalizedAuthoritative.hexes.map(normalizeMapHex).filter((hex) => Number.isInteger(hex.q) && Number.isInteger(hex.r))
+    : [];
+  normalizedAuthoritative.units = Array.isArray(normalizedAuthoritative.units)
+    ? normalizedAuthoritative.units.map(normalizeUnit)
+    : [];
+  const localComparable = projectionComparableState(currentMap);
+  const authoritativeComparable = projectionComparableState(normalizedAuthoritative);
+  if (JSON.stringify(localComparable) === JSON.stringify(authoritativeComparable)) {
+    syncEngineProjectionMeta(currentMap, reason);
+    return true;
+  }
+  console.warn("Engine projection desync; resyncing browser state", {
+    reason,
+    local: currentMap.game && {
+      stateVersion: currentMap.game.stateVersion,
+      stateHash: currentMap.game.stateHash,
+    },
+    authoritative: normalizedAuthoritative.game && {
+      stateVersion: normalizedAuthoritative.game.stateVersion,
+      stateHash: normalizedAuthoritative.game.stateHash,
+    },
+  });
+  currentMap = normalizedAuthoritative;
+  ensureGameMeta();
+  syncEngineProjectionMeta(currentMap, `resync:${reason}`);
+  syncModeControls();
+  drawMap();
+  return false;
 }
 
 function applyAiStepHexSnapshot(step) {
@@ -3786,6 +3890,7 @@ async function enterPlayMode() {
       terrainUndo = new Map();
       clearUndoHistory();
       ensureGameMeta();
+      syncEngineProjectionMeta(currentMap, "load_game");
     } catch (error) {
       window.alert(error.message);
       return;
@@ -5435,6 +5540,7 @@ async function advanceTurn() {
     syncModeControls();
     drawMap();
     await stepAiTurnsUntilHuman();
+    await validateEngineProjection("end_turn");
   } catch (error) {
     aiAnimationState = null;
     aiAnimationInProgress = false;
@@ -6154,6 +6260,7 @@ async function generateMap() {
     terrainUndo = new Map();
     clearUndoHistory();
     ensureGameMeta();
+    syncEngineProjectionMeta(currentMap, "new_game");
     refreshDerivedTopology();
     syncModeControls();
     fitMap();
@@ -6245,6 +6352,7 @@ async function loadScenarioByName(filename) {
   terrainUndo = new Map();
   clearUndoHistory();
   ensureGameMeta();
+  syncEngineProjectionMeta(currentMap, "load_scenario");
   widthInput.value = currentMap.width;
   heightInput.value = currentMap.height;
   syncModeControls();

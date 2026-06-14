@@ -295,6 +295,7 @@ struct GameState {
     int height = 0;
     std::uint32_t seed = 1;
     int round = 1;
+    int state_version = 0;
     int active_faction_index = 0;
     int selected_unit_id = 0;
     bool food_consumption_enabled = true;

@@ -3673,8 +3673,113 @@ void print_diplomacy_json(const std::vector<DiplomaticRelationship>& diplomacy, 
     out << "]";
 }
 
+void hash_append(std::uint64_t& hash, const std::string& value) {
+    for (const unsigned char ch : value) {
+        hash ^= ch;
+        hash *= 1099511628211ull;
+    }
+    hash ^= 0xff;
+    hash *= 1099511628211ull;
+}
+
+void hash_append_int(std::uint64_t& hash, int value) {
+    hash_append(hash, std::to_string(value));
+}
+
+void hash_append_bool(std::uint64_t& hash, bool value) {
+    hash_append(hash, value ? "1" : "0");
+}
+
+std::string game_state_hash(const GameState& state) {
+    std::uint64_t hash = 1469598103934665603ull;
+    hash_append_int(hash, state.width);
+    hash_append_int(hash, state.height);
+    hash_append_int(hash, static_cast<int>(state.seed));
+    hash_append_int(hash, state.round);
+    hash_append_int(hash, state.active_faction_index);
+    hash_append_int(hash, state.selected_unit_id);
+    hash_append_bool(hash, state.food_consumption_enabled);
+    for (const OwnerId owner : state.turn_order) {
+        hash_append_int(hash, owner);
+    }
+    for (const ReachableHex& move : state.legal_moves) {
+        hash_append_int(hash, move.coord.q);
+        hash_append_int(hash, move.coord.r);
+        hash_append_int(hash, move.scaled_cost);
+    }
+    for (const AttackableUnit& attack : state.legal_attacks) {
+        hash_append_int(hash, attack.unit_id);
+        hash_append_int(hash, attack.coord.q);
+        hash_append_int(hash, attack.coord.r);
+    }
+    for (const GameHex& hex : state.hexes) {
+        hash_append_int(hash, hex.coord.q);
+        hash_append_int(hash, hex.coord.r);
+        hash_append(hash, terrain_to_string(hex.terrain));
+        hash_append(hash, hex.name);
+        hash_append_int(hash, hex.owner);
+        hash_append_bool(hash, hex.supply_source);
+        hash_append(hash, decimal_2(hex.pasture.capacity));
+        hash_append(hash, decimal_2(hex.pasture.remaining));
+    }
+    for (const FactionState& faction : state.factions) {
+        hash_append_int(hash, faction.id);
+        hash_append(hash, faction.key);
+        hash_append_int(hash, faction.metal);
+        hash_append_int(hash, faction.treasure);
+        hash_append_int(hash, faction.food);
+        hash_append_bool(hash, faction.enabled);
+        hash_append_bool(hash, faction.ai_controlled);
+    }
+    for (const DiplomaticRelationship& relationship : state.diplomacy) {
+        hash_append_int(hash, relationship.owner);
+        hash_append_int(hash, relationship.target);
+        hash_append_int(hash, relationship.affinity);
+        hash_append(hash, relationship.status);
+    }
+    for (const AiGroup& group : state.ai_groups) {
+        hash_append_int(hash, group.id);
+        hash_append_int(hash, group.owner);
+        hash_append(hash, group.name);
+        hash_append_bool(hash, group.generated);
+        hash_append(hash, ai_directive_kind_to_string(group.directive.kind));
+        hash_append_int(hash, group.directive.target.q);
+        hash_append_int(hash, group.directive.target.r);
+        hash_append_int(hash, group.directive.target_owner);
+        for (const int unit_id : group.unit_ids) {
+            hash_append_int(hash, unit_id);
+        }
+    }
+    for (const Unit& unit : state.units) {
+        hash_append_int(hash, unit.id);
+        hash_append_int(hash, unit.owner);
+        hash_append(hash, unit_kind_to_string(unit.kind));
+        hash_append(hash, unit_stance_to_string(unit.stance));
+        hash_append_int(hash, unit.coord.q);
+        hash_append_int(hash, unit.coord.r);
+        hash_append_int(hash, unit.hp);
+        hash_append_int(hash, unit.readiness);
+        hash_append_int(hash, unit.remaining_scaled_move);
+        hash_append_int(hash, unit.population);
+        hash_append_int(hash, unit.horses);
+        hash_append_int(hash, unit.starvation_turns);
+        hash_append_bool(hash, unit.production_active);
+        hash_append(hash, unit_kind_to_string(unit.production_kind));
+        hash_append_int(hash, unit.production_turns_remaining);
+        hash_append_bool(hash, unit.move_done);
+        hash_append_bool(hash, unit.moved_this_turn);
+        hash_append_bool(hash, unit.combat_done);
+        hash_append_bool(hash, unit.contacted_enemy_this_turn);
+    }
+    std::ostringstream out;
+    out << std::hex << std::setw(16) << std::setfill('0') << hash;
+    return out.str();
+}
+
 void print_game_meta_json(const GameState& state, std::ostream& out) {
     out << "\"game\":{";
+    out << "\"stateVersion\":" << state.state_version << ",";
+    out << "\"stateHash\":\"" << game_state_hash(state) << "\",";
     out << "\"round\":" << state.round << ",";
     out << "\"activeFactionIndex\":" << state.active_faction_index << ",";
     out << "\"activeOwner\":" << active_faction(state) << ",";
@@ -3993,6 +4098,7 @@ GameState parse_game_state_json(const std::string& json) {
     const Json empty_array = Json::array();
     const Json& game_json = root.contains("game") && root["game"].is_object() ? root["game"] : empty_object;
     const Json& game_meta = game_json.empty() ? root : game_json;
+    state.state_version = int_field(game_meta, "stateVersion", int_field(root, "stateVersion", 0));
     state.round = int_field(game_meta, "round", 1);
     state.active_faction_index = int_field(game_meta, "activeFactionIndex", 0);
     state.selected_unit_id = int_field(game_meta, "selectedUnitId", 0);
