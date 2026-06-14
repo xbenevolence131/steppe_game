@@ -14,6 +14,7 @@
 #include <initializer_list>
 #include <limits>
 #include <map>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 
@@ -1116,6 +1117,7 @@ GameState game_state_from_generated_map(const GeneratedMap& generated) {
         } else if (has_tag(game_hex.tags, HexTag::ChineseTown)) {
             game_hex.owner = chinese_owner;
         }
+        game_hex.supply_source = settled_owner(game_hex.owner) && has_tag(game_hex.tags, HexTag::FixedFeatureTown);
         state.hexes.push_back(std::move(game_hex));
     }
 
@@ -1324,6 +1326,57 @@ void apply_territory_ownership(GameState& state, const Unit& unit, const std::ve
     for (const Coord& coord : path) {
         apply_territory_ownership(state, unit, coord);
     }
+}
+
+std::set<Coord, decltype(coord_less)*> supplied_hex_coords(const GameState& state) {
+    std::set<Coord, decltype(coord_less)*> supplied(coord_less);
+    std::set<Coord, decltype(coord_less)*> visited(coord_less);
+
+    for (const GameHex& start : state.hexes) {
+        if (visited.find(start.coord) != visited.end()
+            || start.owner == neutral_owner
+            || !territory_claimable_terrain(start.terrain)) {
+            continue;
+        }
+
+        std::vector<Coord> component;
+        std::deque<Coord> queue;
+        bool has_supply_source = false;
+        visited.insert(start.coord);
+        queue.push_back(start.coord);
+
+        while (!queue.empty()) {
+            const Coord current = queue.front();
+            queue.pop_front();
+            const GameHex* hex = find_hex(state, current);
+            if (hex == nullptr) {
+                continue;
+            }
+            component.push_back(current);
+            has_supply_source = has_supply_source || hex->supply_source;
+
+            for (int direction = 0; direction < 6; ++direction) {
+                const Coord next = neighbor_in_direction(current, direction);
+                if (!in_bounds(state, next) || visited.find(next) != visited.end()) {
+                    continue;
+                }
+                const GameHex* neighbor = find_hex(state, next);
+                if (neighbor == nullptr
+                    || neighbor->owner != start.owner
+                    || !territory_claimable_terrain(neighbor->terrain)) {
+                    continue;
+                }
+                visited.insert(next);
+                queue.push_back(next);
+            }
+        }
+
+        if (has_supply_source) {
+            supplied.insert(component.begin(), component.end());
+        }
+    }
+
+    return supplied;
 }
 
 const Unit* unit_at(const GameState& state, const Coord& coord);
@@ -3542,6 +3595,7 @@ void print_game_state_json(const GameState& state, std::ostream& out) {
     out << "\"width\":" << state.width << ",";
     out << "\"height\":" << state.height << ",";
     out << "\"hexes\":[";
+    const auto supplied_hexes = supplied_hex_coords(state);
     for (std::size_t i = 0; i < state.hexes.size(); ++i) {
         if (i > 0) {
             out << ",";
@@ -3552,6 +3606,8 @@ void print_game_state_json(const GameState& state, std::ostream& out) {
             << ",\"terrain\":\"" << terrain_to_string(hex.terrain) << "\""
             << ",\"name\":\"" << escape_json(hex.name.empty() ? "None" : hex.name) << "\""
             << ",\"owner\":" << hex.owner
+            << ",\"supplySource\":" << (hex.supply_source ? "true" : "false")
+            << ",\"supplied\":" << (supplied_hexes.find(hex.coord) != supplied_hexes.end() ? "true" : "false")
             << ",\"labels\":";
         print_string_array_json(hex.source_labels, out);
         out << ",\"pasture\":";
@@ -3743,6 +3799,7 @@ void print_game_patch_json(
     out << "\"width\":" << state.width << ",";
     out << "\"height\":" << state.height << ",";
     out << "\"hexes\":[";
+    const auto supplied_hexes = supplied_hex_coords(state);
     for (std::size_t i = 0; i < state.hexes.size(); ++i) {
         if (i > 0) {
             out << ",";
@@ -3753,6 +3810,8 @@ void print_game_patch_json(
             << ",\"terrain\":\"" << terrain_to_string(hex.terrain) << "\""
             << ",\"name\":\"" << escape_json(hex.name.empty() ? "None" : hex.name) << "\""
             << ",\"owner\":" << hex.owner
+            << ",\"supplySource\":" << (hex.supply_source ? "true" : "false")
+            << ",\"supplied\":" << (supplied_hexes.find(hex.coord) != supplied_hexes.end() ? "true" : "false")
             << ",\"labels\":";
         print_string_array_json(hex.source_labels, out);
         out << ",\"pasture\":";
@@ -3890,6 +3949,7 @@ GameState parse_game_state_json(const std::string& json) {
     normalize_diplomacy(state);
 
     bool saw_explicit_hex_owner = false;
+    bool saw_explicit_supply_source = false;
     const Json& hex_items = root.contains("hexes") && root["hexes"].is_array() ? root["hexes"] : empty_array;
     for (const Json& hex_json : hex_items) {
         if (!hex_json.is_object()) {
@@ -3928,6 +3988,13 @@ GameState parse_game_state_json(const std::string& json) {
             hex.owner = persian_owner;
         } else if (has_tag(hex.tags, HexTag::ChineseTown)) {
             hex.owner = chinese_owner;
+        }
+        if (hex_json.contains("supplySource") && hex_json["supplySource"].is_boolean()) {
+            hex.supply_source = hex_json["supplySource"].get<bool>();
+            saw_explicit_supply_source = true;
+        } else if (hex_json.contains("supply_source") && hex_json["supply_source"].is_boolean()) {
+            hex.supply_source = hex_json["supply_source"].get<bool>();
+            saw_explicit_supply_source = true;
         }
         state.hexes.push_back(std::move(hex));
     }
@@ -3975,6 +4042,17 @@ GameState parse_game_state_json(const std::string& json) {
     }
     if (!saw_explicit_hex_owner) {
         seed_initial_territory(state);
+    }
+    if (!saw_explicit_supply_source) {
+        for (const Settlement& settlement : state.settlements) {
+            if (!settled_owner(settlement.owner)) {
+                continue;
+            }
+            GameHex* hex = find_hex(state, settlement.coord);
+            if (hex != nullptr && territory_claimable_terrain(hex->terrain)) {
+                hex->supply_source = true;
+            }
+        }
     }
 
     const Json& river_edge_items = root.contains("edges") && root["edges"].is_array() ? root["edges"] : empty_array;

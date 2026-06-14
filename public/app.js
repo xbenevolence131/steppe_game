@@ -45,8 +45,10 @@ const undoButton = document.querySelector("#undo-button");
 const zoomInButton = document.querySelector("#zoom-in-button");
 const zoomOutButton = document.querySelector("#zoom-out-button");
 const fitButton = document.querySelector("#fit-button");
+const mapAiToggleButton = document.querySelector("#map-ai-toggle-button");
 const pastureViewButton = document.querySelector("#pasture-view-button");
 const territoryViewButton = document.querySelector("#territory-view-button");
+const unitsViewButton = document.querySelector("#units-view-button");
 const coordinatesViewButton = document.querySelector("#coordinates-view-button");
 const detailsToggleButton = document.querySelector("#details-toggle-button");
 const scenarioNameInput = document.querySelector("#scenario-name");
@@ -59,6 +61,7 @@ const unitToolButtons = Array.from(document.querySelectorAll(".unit-tool-button"
 const scenarioFactionRows = Array.from(document.querySelectorAll(".scenario-faction-table tbody tr"));
 const terrainEditModeButtons = Array.from(document.querySelectorAll(".terrain-edit-mode-button"));
 const edgeFeatureButtons = Array.from(document.querySelectorAll(".edge-feature-button"));
+const ownershipToolButtons = Array.from(document.querySelectorAll(".ownership-tool-button"));
 const editorEdgeFeatureSelect = document.querySelector("#editor-edge-feature");
 const edgeFeatureChoices = document.querySelector("#edge-feature-choices");
 const editorUnitTypeSelect = document.querySelector("#editor-unit-type");
@@ -70,6 +73,7 @@ const addAiGroupButton = document.querySelector("#add-ai-group-button");
 const aiGroupsContainer = document.querySelector("#ai-groups");
 const strategicAiGroupsContainer = document.querySelector("#strategic-ai-groups");
 const strategicAiToggleButton = document.querySelector("#strategic-ai-toggle-button");
+const strategicAiSelectNoneButton = document.querySelector("#strategic-ai-select-none-button");
 const strategicAiPanelSummary = document.querySelector("#strategic-ai-panel-summary");
 const endTurnButton = document.querySelector("#end-turn-button");
 const controlEndTurnButton = document.querySelector("#control-end-turn-button");
@@ -130,6 +134,7 @@ const hexTerrain = document.querySelector("#hex-terrain");
 const hexDefense = document.querySelector("#hex-defense");
 const hexMoveCost = document.querySelector("#hex-move-cost");
 const hexRoadCost = document.querySelector("#hex-road-cost");
+const hexSupplyState = document.querySelector("#hex-supply-state");
 const hexPastureRow = document.querySelector("#hex-pasture-row");
 const hexPasture = document.querySelector("#hex-pasture");
 
@@ -140,6 +145,7 @@ let isPainting = false;
 let lastPointer = { x: 0, y: 0 };
 let selectedTerrain = "lake";
 let selectedOwnershipOwner = -1;
+let ownershipTool = "owner";
 let scenarioTool = "session";
 let unitTool = "place";
 let editorSelectedUnitId = 0;
@@ -172,6 +178,7 @@ let selectedScenarioFile = "";
 let appInitialization = null;
 let pastureViewEnabled = false;
 let territoryViewEnabled = false;
+let unitsViewEnabled = true;
 let coordinateLabelsEnabled = true;
 let unitInspectorStatsVisible = false;
 let scenarioDetailsCollapsed = false;
@@ -589,6 +596,27 @@ function normalizePasture(rawPasture, terrain) {
   return { capacity, remaining };
 }
 
+function supplyStateLabel(hex) {
+  if (!hex || !territoryClaimableHex(hex)) {
+    return "-";
+  }
+  const owner = territoryOwnerForHex(hex);
+  const archetype = factionArchetypeForOwner(owner);
+  if (owner === factions.neutral.owner || archetype === "steppe_nomad" || archetype === "forest_nomad" || archetype === "neutral") {
+    return "None";
+  }
+  if (hex.supplySource) {
+    return "Source";
+  }
+  if (hex.supplied === true) {
+    return "Supplied";
+  }
+  if (hex.supplied === false) {
+    return "Out";
+  }
+  return "Unknown";
+}
+
 function terrainDefensePercent(terrain) {
   switch (terrain) {
     case "hill":
@@ -658,6 +686,14 @@ function normalizeMapHex(hex) {
   };
   if (Number.isInteger(hex.owner)) {
     normalized.owner = hex.owner;
+  }
+  if (typeof hex.supplySource === "boolean") {
+    normalized.supplySource = hex.supplySource;
+  } else if (typeof hex.supply_source === "boolean") {
+    normalized.supplySource = hex.supply_source;
+  }
+  if (typeof hex.supplied === "boolean") {
+    normalized.supplied = hex.supplied;
   }
   return normalized;
 }
@@ -1398,6 +1434,11 @@ function syncOwnershipEditorControls() {
   if (!ownershipFactionSelect) {
     return;
   }
+  for (const button of ownershipToolButtons) {
+    const active = button.dataset.ownershipTool === ownershipTool;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
   const prior = Number.isInteger(selectedOwnershipOwner) ? selectedOwnershipOwner : factions.neutral.owner;
   ownershipFactionSelect.replaceChildren();
   for (const faction of ownershipFactionChoices()) {
@@ -1414,6 +1455,10 @@ function syncOwnershipEditorControls() {
     ownershipFactionSwatch.style.background = selectedOwnershipOwner === factions.neutral.owner
       ? "transparent"
       : territoryOutlineColor(selectedOwnershipOwner);
+  }
+  const ownershipField = ownershipFactionSelect.closest(".ownership-field");
+  if (ownershipField) {
+    ownershipField.hidden = ownershipTool !== "owner";
   }
 }
 
@@ -1607,14 +1652,14 @@ function strategicAiGroups() {
 
 function activeStrategicAiGroup() {
   const groups = aiGroups();
-  if (groups.length === 0) {
+  if (groups.length === 0 || activeStrategicAiGroupId === 0) {
     activeStrategicAiGroupId = 0;
     return null;
   }
-  let group = groups.find((candidate) => candidate.id === activeStrategicAiGroupId);
+  const group = groups.find((candidate) => candidate.id === activeStrategicAiGroupId);
   if (!group) {
-    group = groups[0];
-    activeStrategicAiGroupId = group.id;
+    activeStrategicAiGroupId = 0;
+    return null;
   }
   return group;
 }
@@ -1627,9 +1672,20 @@ function selectStrategicAiGroup(groupId) {
   }
 }
 
+function clearStrategicAiSelection() {
+  activeStrategicAiGroupId = 0;
+  syncStrategicAiDashboard();
+  if (currentMap) {
+    requestAnimationFrame(drawMap);
+  }
+}
+
 function syncStrategicAiDashboard() {
   if (!strategicAiGroupsContainer) {
     return;
+  }
+  if (strategicAiSelectNoneButton) {
+    strategicAiSelectNoneButton.disabled = activeStrategicAiGroupId === 0;
   }
   strategicAiGroupsContainer.replaceChildren();
   if (appMode !== "play" || !currentMap) {
@@ -1915,6 +1971,15 @@ function setTerrainEditMode(mode) {
 function setEditorEdgeFeature(feature) {
   editorEdgeFeatureSelect.value = ["river", "road", "bridge", "wall", "wall_pass"].includes(feature) ? feature : "river";
   setScenarioTool("terrain");
+}
+
+function setOwnershipTool(tool) {
+  ownershipTool = tool === "source" ? "source" : "owner";
+  setScenarioTool("ownership");
+  syncOwnershipEditorControls();
+  if (currentMap) {
+    requestAnimationFrame(drawMap);
+  }
 }
 
 function setUnitTool(tool) {
@@ -3450,6 +3515,14 @@ function syncTerritoryViewButton() {
   territoryViewButton.setAttribute("aria-pressed", String(territoryViewEnabled));
 }
 
+function syncUnitsViewButton() {
+  if (!unitsViewButton) {
+    return;
+  }
+  unitsViewButton.classList.toggle("is-active", unitsViewEnabled);
+  unitsViewButton.setAttribute("aria-pressed", String(unitsViewEnabled));
+}
+
 function syncCoordinateViewButton() {
   if (!coordinatesViewButton) {
     return;
@@ -3471,7 +3544,10 @@ function syncHexInspector() {
     hexTerrain.textContent = "-";
     hexDefense.textContent = "-";
     hexMoveCost.textContent = "-";
-    hexRoadCost.textContent = "-";
+    if (hexRoadCost) {
+      hexRoadCost.textContent = "-";
+    }
+    hexSupplyState.textContent = "-";
     hexPastureRow.hidden = true;
     hexPasture.textContent = "-";
     return;
@@ -3486,10 +3562,15 @@ function syncHexInspector() {
   hexName.textContent = normalizeHexName(hex.name);
   hexTerrain.textContent = titleCaseToken(hex.terrain);
   hexDefense.textContent = `${terrainDefensePercent(hex.terrain)}%`;
-  hexMoveCost.textContent = formatMoveCost(terrainCost);
-  hexRoadCost.textContent = Number.isFinite(terrainCost)
-    ? `Foot ${formatMoveCost(roadModifiedMovementCostScaled(terrainCost, false))} / Mounted ${formatMoveCost(roadModifiedMovementCostScaled(terrainCost, true))}`
+  hexMoveCost.textContent = Number.isFinite(terrainCost)
+    ? `${formatMoveCost(terrainCost)}; road F ${formatMoveCost(roadModifiedMovementCostScaled(terrainCost, false))} / M ${formatMoveCost(roadModifiedMovementCostScaled(terrainCost, true))}`
     : "Blocked";
+  if (hexRoadCost) {
+    hexRoadCost.textContent = Number.isFinite(terrainCost)
+      ? `Foot ${formatMoveCost(roadModifiedMovementCostScaled(terrainCost, false))} / Mounted ${formatMoveCost(roadModifiedMovementCostScaled(terrainCost, true))}`
+      : "Blocked";
+  }
+  hexSupplyState.textContent = supplyStateLabel(hex);
   hexPastureRow.hidden = pasture.capacity <= 0;
   hexPasture.textContent = pasture.capacity > 0
     ? `${formatPastureValue(pasture.remaining)}/${formatPastureValue(pasture.capacity)}`
@@ -3514,6 +3595,9 @@ function toggleStrategicAiPanel() {
   }
   strategicAiCollapsed = !strategicAiCollapsed;
   syncModeControls();
+  if (currentMap) {
+    requestAnimationFrame(drawMap);
+  }
 }
 
 function toggleScenarioDetailsPanel() {
@@ -3557,6 +3641,15 @@ function syncModeControls() {
     strategicAiToggleButton.setAttribute("aria-expanded", String(!strategicAiCollapsed));
     strategicAiToggleButton.setAttribute("aria-label", strategicAiCollapsed ? "Expand Strategic AI" : "Collapse Strategic AI");
   }
+  if (strategicAiSelectNoneButton) {
+    strategicAiSelectNoneButton.hidden = appMode !== "play";
+    strategicAiSelectNoneButton.disabled = activeStrategicAiGroupId === 0;
+  }
+  if (mapAiToggleButton) {
+    mapAiToggleButton.hidden = appMode !== "play";
+    mapAiToggleButton.classList.toggle("is-active", appMode === "play" && !strategicAiCollapsed);
+    mapAiToggleButton.setAttribute("aria-pressed", String(appMode === "play" && !strategicAiCollapsed));
+  }
   if (diplomacyToggleButton) {
     diplomacyToggleButton.disabled = appMode !== "play" || aiAnimationInProgress;
     diplomacyToggleButton.classList.toggle("is-active", appMode === "play" && playSurfaceMode === "diplomacy");
@@ -3577,6 +3670,7 @@ function syncModeControls() {
   syncUndoControls();
   syncPastureViewButton();
   syncTerritoryViewButton();
+  syncUnitsViewButton();
   syncCoordinateViewButton();
   syncHexInspector();
 }
@@ -4033,6 +4127,36 @@ function drawTerritoryOutlines() {
   ctx.restore();
 }
 
+function drawSupplySourceMarkers() {
+  if ((!territoryViewEnabled && !ownershipEditingActive()) || !currentMap || !Array.isArray(currentMap.hexes)) {
+    return;
+  }
+
+  ctx.save();
+  for (const hex of currentMap.hexes) {
+    if (!hex.supplySource) {
+      continue;
+    }
+    const center = hexCenter(hex);
+    const radius = 4.4 / viewport.scale;
+    ctx.fillStyle = "#fffdf8";
+    ctx.strokeStyle = "#1c1d1b";
+    ctx.lineWidth = 1.4 / viewport.scale;
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, radius * 1.35, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#c93632";
+    ctx.beginPath();
+    ctx.moveTo(center.x, center.y - radius);
+    ctx.lineTo(center.x + radius * 0.86, center.y + radius * 0.5);
+    ctx.lineTo(center.x - radius * 0.86, center.y + radius * 0.5);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 function drawMapMarkers(coords, fillStyle, radius) {
   if (!coords || coords.length === 0) {
     return;
@@ -4365,6 +4489,25 @@ function drawFallbackUnitGlyph(unit, faction, x, y, dividerX, metrics) {
   }
 }
 
+function unitUsesSupply(unit) {
+  if (!unit || !Number.isInteger(unit.owner)) {
+    return false;
+  }
+  const archetype = factionArchetypeForOwner(unit.owner);
+  return archetype === "chinese" || archetype === "persian" || archetype === "jurchen";
+}
+
+function unitOutOfSupply(unit) {
+  if (!unitUsesSupply(unit)) {
+    return false;
+  }
+  const hex = mapHexAt(unit);
+  if (!hex || typeof hex.supplied !== "boolean") {
+    return false;
+  }
+  return hex.owner !== unit.owner || !hex.supplied;
+}
+
 function drawUnitCounters(units) {
   if (!units || units.length === 0) {
     return;
@@ -4388,6 +4531,10 @@ function drawUnitCounters(units) {
     roundedRectPath(x, y, counterWidth, counterHeight, metrics.cornerRadius);
     ctx.fillStyle = strategicMemberIds.has(unit.id) ? "#bfe8bf" : "#fffdf8";
     ctx.fill();
+    if (unitOutOfSupply(unit)) {
+      ctx.fillStyle = "rgba(201, 54, 50, 0.18)";
+      ctx.fill();
+    }
     if (legalAttackForUnit(unit)) {
       ctx.fillStyle = "rgba(201, 54, 50, 0.24)";
       ctx.fill();
@@ -5303,6 +5450,7 @@ function drawMap() {
   drawWallGates(currentMap.wall_gates);
   drawCrossings(currentMap.crossings);
   drawTerritoryOutlines();
+  drawSupplySourceMarkers();
   drawMapMarkers(currentMap.river_sources, terrainStyles.river.source, 5);
   drawMapMarkers(currentMap.merge_points, terrainStyles.river.merge, 5);
   drawMapMarkers(currentMap.river_destinations, terrainStyles.river.destination, 5);
@@ -5313,7 +5461,9 @@ function drawMap() {
   drawAiTurnAnimationHighlights();
   drawDetachDeploymentHexes();
   drawSelectedHex();
-  drawUnitCounters(currentMap.units);
+  if (unitsViewEnabled) {
+    drawUnitCounters(currentMap.units);
+  }
 
   ctx.restore();
 }
@@ -5696,8 +5846,47 @@ function paintHexOwnership(hex, owner) {
   return true;
 }
 
+function paintHexSupplySource(hex, supplySource) {
+  if (!hex || hex.supplySource === supplySource) {
+    return false;
+  }
+  hex.supplySource = supplySource;
+  return true;
+}
+
+function paintSupplySourceAtPointer(event) {
+  if (!ownershipEditingActive() || !currentMap) {
+    return;
+  }
+  const hex = findNearestHex(panelToWorld(event));
+  if (!hex) {
+    return;
+  }
+  const supplySource = !event.shiftKey;
+  const key = `supply:${coordKey(hex)}`;
+  if (paintStrokeKeys.has(key)) {
+    return;
+  }
+  paintStrokeKeys.add(key);
+  selectedHexCoord = { q: hex.q, r: hex.r };
+  if (hex.supplySource === supplySource) {
+    drawMap();
+    return;
+  }
+  if (!paintUndoRecorded) {
+    recordLocalUndo();
+    paintUndoRecorded = true;
+  }
+  paintHexSupplySource(hex, supplySource);
+  drawMap();
+}
+
 function paintOwnershipAtPointer(event) {
   if (!ownershipEditingActive() || !currentMap) {
+    return;
+  }
+  if (ownershipTool === "source") {
+    paintSupplySourceAtPointer(event);
     return;
   }
   const hex = findNearestHex(panelToWorld(event));
@@ -5961,10 +6150,23 @@ async function createDefaultPlayScenario() {
   }
 }
 
+async function loadScenarioByName(filename) {
+  const payload = await scenarioApi(`/api/scenarios/load?name=${encodeURIComponent(filename)}`);
+  currentMap = normalizeLoadedMap(payload.scenario);
+  selectedHexCoord = null;
+  terrainUndo = new Map();
+  clearUndoHistory();
+  ensureGameMeta();
+  widthInput.value = currentMap.width;
+  heightInput.value = currentMap.height;
+  syncModeControls();
+  fitMap();
+}
+
 async function initializeApp() {
   try {
     await loadUnitTypeDefaults();
-    await createDefaultPlayScenario();
+    await loadScenarioByName("main1.json");
   } catch (error) {
     window.alert(error.message);
   }
@@ -6270,16 +6472,7 @@ async function confirmScenarioFileDialog() {
   if (!filename) {
     return;
   }
-  const payload = await scenarioApi(`/api/scenarios/load?name=${encodeURIComponent(filename)}`);
-  currentMap = normalizeLoadedMap(payload.scenario);
-  selectedHexCoord = null;
-  terrainUndo = new Map();
-  clearUndoHistory();
-  ensureGameMeta();
-  widthInput.value = currentMap.width;
-  heightInput.value = currentMap.height;
-  syncModeControls();
-  fitMap();
+  await loadScenarioByName(filename);
   scenarioFileDialog.close();
 }
 
@@ -6358,6 +6551,9 @@ for (const button of terrainEditModeButtons) {
 }
 for (const button of edgeFeatureButtons) {
   button.addEventListener("click", () => setEditorEdgeFeature(button.dataset.edgeFeature));
+}
+for (const button of ownershipToolButtons) {
+  button.addEventListener("click", () => setOwnershipTool(button.dataset.ownershipTool));
 }
 if (ownershipFactionSelect) {
   ownershipFactionSelect.addEventListener("change", () => {
@@ -6439,6 +6635,12 @@ if (nextUnitButton) {
 if (strategicAiToggleButton) {
   strategicAiToggleButton.addEventListener("click", toggleStrategicAiPanel);
 }
+if (strategicAiSelectNoneButton) {
+  strategicAiSelectNoneButton.addEventListener("click", clearStrategicAiSelection);
+}
+if (mapAiToggleButton) {
+  mapAiToggleButton.addEventListener("click", toggleStrategicAiPanel);
+}
 if (diplomacyToggleButton) {
   diplomacyToggleButton.addEventListener("click", toggleDiplomacySurface);
 }
@@ -6465,6 +6667,13 @@ if (territoryViewButton) {
   territoryViewButton.addEventListener("click", () => {
     territoryViewEnabled = !territoryViewEnabled;
     syncTerritoryViewButton();
+    drawMap();
+  });
+}
+if (unitsViewButton) {
+  unitsViewButton.addEventListener("click", () => {
+    unitsViewEnabled = !unitsViewEnabled;
+    syncUnitsViewButton();
     drawMap();
   });
 }

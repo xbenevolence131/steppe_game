@@ -81,6 +81,10 @@ body {
   grid-template-rows: auto auto minmax(0, 1fr);
 }
 
+.app-shell.is-play.strategic-ai-collapsed {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
 .scenario-topbar {
   display: none;
   grid-template-columns: 1fr;
@@ -124,9 +128,7 @@ body {
 }
 
 .app-shell.is-play.strategic-ai-collapsed .strategic-ai-dashboard {
-  max-height: none;
-  overflow: hidden;
-  padding: 4px 8px;
+  display: none;
 }
 
 .faction-status-title {
@@ -311,6 +313,13 @@ body {
   white-space: nowrap;
 }
 
+.strategic-ai-select-none-button {
+  min-width: 92px;
+  min-height: 28px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
 .scenario-region-toggle {
   position: absolute;
   top: 7px;
@@ -351,7 +360,8 @@ body {
 
 .unit-tool-button,
 .terrain-edit-mode-button,
-.edge-feature-button {
+.edge-feature-button,
+.ownership-tool-button {
   border-color: var(--line);
   background: #fffdf8;
   color: var(--text);
@@ -359,7 +369,8 @@ body {
 
 .unit-tool-button.is-active,
 .terrain-edit-mode-button.is-active,
-.edge-feature-button.is-active {
+.edge-feature-button.is-active,
+.ownership-tool-button.is-active {
   border-color: #226064;
   background: var(--accent);
   color: white;
@@ -688,6 +699,7 @@ body {
 .ownership-tool-panel {
   display: flex;
   align-items: center;
+  gap: 10px;
   min-height: 44px;
   padding-right: 42px;
 }
@@ -908,7 +920,7 @@ select {
 }
 
 button:disabled {
-  cursor: wait;
+  cursor: not-allowed;
   opacity: 0.7;
 }
 

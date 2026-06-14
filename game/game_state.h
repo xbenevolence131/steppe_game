@@ -89,6 +89,7 @@ struct GameHex {
     std::string name = "None";
     HexTagMask tags = 0;
     OwnerId owner = neutral_owner;
+    bool supply_source = false;
     PastureState pasture;
     std::vector<std::string> source_labels;
 };

@@ -187,6 +187,10 @@
           <div class="scenario-region-body">
             <button class="scenario-region-toggle" type="button" data-scenario-toggle="ownership" aria-expanded="true" aria-label="Collapse Ownership">-</button>
             <div class="scenario-tool-panel ownership-tool-panel" data-scenario-panel="ownership">
+              <div class="segmented-control" role="group" aria-label="Ownership edit mode">
+                <button class="ownership-tool-button is-active" type="button" data-ownership-tool="owner" aria-pressed="true">Owner</button>
+                <button class="ownership-tool-button" type="button" data-ownership-tool="source" aria-pressed="false">Supply Source</button>
+              </div>
               <label class="ownership-field">
                 <span>Owner</span>
                 <span class="ownership-select-row">
@@ -290,6 +294,7 @@
           <div class="play-ai-region-body">
             <div class="play-ai-panel-header">
               <span id="strategic-ai-panel-summary" class="play-ai-panel-summary">No AI groups</span>
+              <button id="strategic-ai-select-none-button" class="secondary strategic-ai-select-none-button" type="button">Select None</button>
               <button id="strategic-ai-toggle-button" class="strategic-ai-toggle-button" type="button" aria-expanded="true" aria-label="Collapse Strategic AI">-</button>
             </div>
             <div class="play-ai-tool-panel ai-tool-panel">
@@ -312,8 +317,10 @@
             <button id="zoom-out-button" class="secondary icon-button" type="button" aria-label="Zoom out" title="Zoom out">-</button>
             <button id="zoom-in-button" class="secondary icon-button" type="button" aria-label="Zoom in" title="Zoom in">+</button>
             <button id="fit-button" class="secondary fit-button" type="button" aria-label="Fit map" title="Fit map">Fit</button>
+            <button id="map-ai-toggle-button" class="secondary view-toggle-button" type="button" aria-pressed="true" title="Toggle strategic AI panel">AI</button>
             <button id="pasture-view-button" class="secondary view-toggle-button" type="button" aria-pressed="false" title="Toggle pasture view">Pasture</button>
-            <button id="territory-view-button" class="secondary view-toggle-button" type="button" aria-pressed="false" title="Toggle territory view">Territory</button>
+            <button id="territory-view-button" class="secondary view-toggle-button" type="button" aria-pressed="false" title="Toggle supply view">Supply</button>
+            <button id="units-view-button" class="secondary view-toggle-button" type="button" aria-pressed="true" title="Toggle units">Units</button>
             <button id="coordinates-view-button" class="secondary view-toggle-button" type="button" aria-pressed="true" title="Toggle hex coordinates">Coords</button>
             <button id="details-toggle-button" class="secondary details-toggle-button" type="button" aria-expanded="true" title="Hide bottom panel" hidden>Hide Panel</button>
           </div>
@@ -459,8 +466,8 @@
                   <dd id="hex-move-cost">-</dd>
                 </div>
                 <div>
-                  <dt>Road</dt>
-                  <dd id="hex-road-cost">-</dd>
+                  <dt>Supply</dt>
+                  <dd id="hex-supply-state">-</dd>
                 </div>
                 <div id="hex-pasture-row">
                   <dt>Pasture</dt>
