@@ -3868,6 +3868,8 @@ function setAppMode(mode) {
 
 async function enterPlayMode() {
   appMode = "play";
+  strategicAiCollapsed = true;
+  territoryViewEnabled = true;
   isPainting = false;
   paintStrokeKeys = new Set();
   paintUndoRecorded = false;
