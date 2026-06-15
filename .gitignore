@@ -4,6 +4,7 @@ server.log
 server.err
 latest-map.json
 logs/engine-traffic/
+logs/game-trace/
 test-results/
 playwright-report/
 scenarios/*.json

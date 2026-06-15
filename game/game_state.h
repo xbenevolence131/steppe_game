@@ -188,6 +188,30 @@ struct AiAnimationStep {
     std::vector<AttackEvent> attack_events;
 };
 
+struct AiPathCandidateTrace {
+    Coord coord;
+    int scaled_cost = 0;
+    int distance_before = 0;
+    int distance_after = 0;
+    int distance_gain = 0;
+    bool selected = false;
+    std::vector<Coord> path;
+};
+
+struct AiUnitDecisionTrace {
+    int unit_id = 0;
+    OwnerId owner = neutral_owner;
+    int group_id = 0;
+    AiDirective directive;
+    Coord from;
+    Coord target;
+    int target_unit_id = 0;
+    std::string action;
+    std::string reason;
+    std::vector<int> attackable_unit_ids;
+    std::vector<AiPathCandidateTrace> path_candidates;
+};
+
 struct DiplomaticRelationship {
     OwnerId owner = neutral_owner;
     OwnerId target = neutral_owner;
@@ -353,8 +377,17 @@ CreateHorseArchersOptions create_horse_archers_options(const GameState& state, i
 bool create_horse_archers(GameState& state, int unit_id, Coord destination);
 CreateUnitOptions create_mongol_lancers_options(const GameState& state, int unit_id);
 bool create_mongol_lancers(GameState& state, int unit_id, Coord destination);
-bool step_ai_turn(GameState& state, AiAnimationStep* animation = nullptr);
-bool execute_ai_group_turn(GameState& state, int group_id, std::vector<AiAnimationStep>* animation = nullptr);
+bool step_ai_turn(
+    GameState& state,
+    AiAnimationStep* animation = nullptr,
+    std::vector<AiUnitDecisionTrace>* decision_trace = nullptr
+);
+bool execute_ai_group_turn(
+    GameState& state,
+    int group_id,
+    std::vector<AiAnimationStep>* animation = nullptr,
+    std::vector<AiUnitDecisionTrace>* decision_trace = nullptr
+);
 void end_turn(GameState& state, std::vector<AiAnimationStep>* animation = nullptr);
 
 void print_game_state_json(const GameState& state, std::ostream& out);
@@ -366,12 +399,14 @@ void print_create_unit_options_json(const CreateUnitOptions& options, std::ostre
 void print_create_horse_archers_options_json(const CreateHorseArchersOptions& options, std::ostream& out);
 void print_create_mongol_lancers_options_json(const CreateUnitOptions& options, std::ostream& out);
 void print_ai_animation_json(const std::vector<AiAnimationStep>& animation, std::ostream& out);
+void print_ai_decision_trace_json(const std::vector<AiUnitDecisionTrace>& trace, std::ostream& out);
 void print_game_patch_json(
     const GameState& state,
     bool ok,
     std::ostream& out,
     const std::vector<AiAnimationStep>* animation = nullptr,
-    const GameState* before = nullptr
+    const GameState* before = nullptr,
+    const std::vector<AiUnitDecisionTrace>* decision_trace = nullptr
 );
 GameState parse_game_state_json(const std::string& json);
 

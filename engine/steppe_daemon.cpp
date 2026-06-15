@@ -84,10 +84,11 @@ std::string game_patch_json(
     const steppe::game::GameState& state,
     bool ok,
     const std::vector<steppe::game::AiAnimationStep>* animation = nullptr,
-    const steppe::game::GameState* before = nullptr
+    const steppe::game::GameState* before = nullptr,
+    const std::vector<steppe::game::AiUnitDecisionTrace>* decision_trace = nullptr
 ) {
     std::ostringstream out;
-    steppe::game::print_game_patch_json(state, ok, out, animation, before);
+    steppe::game::print_game_patch_json(state, ok, out, animation, before, decision_trace);
     return out.str();
 }
 
@@ -432,21 +433,24 @@ std::string handle_command(const std::string& body) {
     if (type == "execute_ai_group") {
         const steppe::game::GameState before = state;
         std::vector<steppe::game::AiAnimationStep> animation;
+        std::vector<steppe::game::AiUnitDecisionTrace> decision_trace;
         const bool ok = steppe::game::execute_ai_group_turn(
             state,
             int_field(command, "groupId", 0),
-            &animation
+            &animation,
+            &decision_trace
         );
         if (ok) {
             push_undo_state(game_id, before);
             advance_state_version(state);
         }
-        return command_response(game_id, ok, game_patch_json(state, ok, &animation, ok ? &before : nullptr));
+        return command_response(game_id, ok, game_patch_json(state, ok, &animation, ok ? &before : nullptr, &decision_trace));
     }
     if (type == "step_ai_turn") {
         const steppe::game::GameState before = state;
         steppe::game::AiAnimationStep step;
-        const bool ok = steppe::game::step_ai_turn(state, &step);
+        std::vector<steppe::game::AiUnitDecisionTrace> decision_trace;
+        const bool ok = steppe::game::step_ai_turn(state, &step, &decision_trace);
         std::vector<steppe::game::AiAnimationStep> animation;
         if (ok) {
             animation.push_back(std::move(step));
@@ -455,7 +459,7 @@ std::string handle_command(const std::string& body) {
         }
         push_undo_state(game_id, before);
         advance_state_version(state);
-        return command_response(game_id, true, game_patch_json(state, true, &animation, &before));
+        return command_response(game_id, true, game_patch_json(state, true, &animation, &before, &decision_trace));
     }
     if (type == "end_turn") {
         const steppe::game::GameState before = state;

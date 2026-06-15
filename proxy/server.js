@@ -9,6 +9,8 @@ const latestMapPath = path.join(rootDir, "latest-map.json");
 const scenariosDir = path.join(rootDir, "scenarios");
 const trafficLogDir = path.join(rootDir, "logs", "engine-traffic");
 const latestTrafficLogPath = path.join(trafficLogDir, "latest.jsonl");
+const gameTraceLogDir = path.join(rootDir, "logs", "game-trace");
+const latestGameTraceLogPath = path.join(gameTraceLogDir, "latest.jsonl");
 const port = Number(process.env.PORT || 3000);
 const daemonPort = Number(process.env.STEPPE_DAEMON_PORT || 4001);
 const daemonUrl = `http://127.0.0.1:${daemonPort}`;
@@ -17,6 +19,8 @@ let daemonProcess = null;
 let trafficSequence = 0;
 const trafficSessionName = new Date().toISOString().replace(/[:.]/g, "-");
 const sessionTrafficLogPath = path.join(trafficLogDir, `${trafficSessionName}.jsonl`);
+const sessionGameTraceLogPath = path.join(gameTraceLogDir, `${trafficSessionName}.jsonl`);
+const gameTraceStates = new Map();
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -43,6 +47,11 @@ function initializeTrafficLogs() {
   fs.writeFileSync(latestTrafficLogPath, "", "utf8");
 }
 
+function initializeGameTraceLogs() {
+  fs.mkdirSync(gameTraceLogDir, { recursive: true });
+  fs.writeFileSync(latestGameTraceLogPath, "", "utf8");
+}
+
 function ensureScenariosDir() {
   fs.mkdirSync(scenariosDir, { recursive: true });
 }
@@ -55,6 +64,282 @@ function appendTrafficLog(entry) {
   } catch (error) {
     console.error(`Could not write engine traffic log: ${error.message}`);
   }
+}
+
+function appendGameTraceLog(entry) {
+  const line = `${JSON.stringify(entry)}\n`;
+  try {
+    fs.appendFileSync(latestGameTraceLogPath, line, "utf8");
+    fs.appendFileSync(sessionGameTraceLogPath, line, "utf8");
+  } catch (error) {
+    console.error(`Could not write game trace log: ${error.message}`);
+  }
+}
+
+function coordSummary(coord) {
+  return coord && Number.isInteger(coord.q) && Number.isInteger(coord.r)
+    ? { q: coord.q, r: coord.r }
+    : null;
+}
+
+function unitSummary(unit) {
+  if (!unit || !Number.isInteger(unit.id)) {
+    return null;
+  }
+  return {
+    id: unit.id,
+    owner: unit.owner,
+    faction: unit.faction,
+    kind: unit.kind,
+    name: unit.name,
+    q: unit.q,
+    r: unit.r,
+    hp: unit.hp,
+    maxHp: unit.maxHp,
+    readiness: unit.readiness,
+    remainingScaledMove: unit.remainingScaledMove,
+    moveDone: unit.moveDone,
+    combatDone: unit.combatDone,
+    movedThisTurn: unit.movedThisTurn,
+    population: unit.population,
+    horses: unit.horses,
+  };
+}
+
+function summarizeGameView(view) {
+  if (!view || !view.game) {
+    return null;
+  }
+  const game = view.game;
+  return {
+    round: game.round,
+    activeFactionIndex: game.activeFactionIndex,
+    activeOwner: game.activeOwner,
+    stateVersion: game.stateVersion,
+    turnOrder: Array.isArray(game.turnOrder) ? game.turnOrder.slice() : [],
+    factions: Array.isArray(game.factions)
+      ? game.factions.map((faction) => ({
+        id: faction.id,
+        key: faction.key,
+        enabled: faction.enabled,
+        ai: faction.ai,
+        metal: faction.metal,
+        treasure: faction.treasure,
+        food: faction.food,
+      }))
+      : [],
+    aiGroups: Array.isArray(game.aiGroups)
+      ? game.aiGroups.map((group) => ({
+        id: group.id,
+        owner: group.owner,
+        name: group.name,
+        generated: Boolean(group.generated),
+        unitIds: Array.isArray(group.unitIds) ? group.unitIds.slice() : [],
+        directive: group.directive,
+      }))
+      : [],
+    units: Array.isArray(view.units) ? view.units.map(unitSummary).filter(Boolean) : [],
+  };
+}
+
+function summarizeCommand(command) {
+  const type = command && command.type;
+  if (!type) {
+    return { type: "" };
+  }
+  if (type === "load_game") {
+    const state = command.state || {};
+    return {
+      type,
+      width: state.width,
+      height: state.height,
+      units: Array.isArray(state.units) ? state.units.length : 0,
+      hexes: Array.isArray(state.hexes) ? state.hexes.length : 0,
+      aiGroups: Array.isArray(state.game?.aiGroups) ? state.game.aiGroups.length : 0,
+      round: state.game?.round,
+      activeOwner: state.game?.activeOwner,
+    };
+  }
+  if (type === "generate_map") {
+    return { ...command };
+  }
+  const summary = { type };
+  for (const key of ["unitId", "attackerId", "defenderId", "groupId", "stance", "horses"]) {
+    if (command[key] !== undefined) {
+      summary[key] = command[key];
+    }
+  }
+  if (command.to) {
+    summary.to = coordSummary(command.to);
+  }
+  return summary;
+}
+
+function indexById(items) {
+  const result = new Map();
+  for (const item of items || []) {
+    if (item && Number.isInteger(item.id)) {
+      result.set(item.id, item);
+    }
+  }
+  return result;
+}
+
+function unitChanged(prior, current) {
+  return prior.q !== current.q
+    || prior.r !== current.r
+    || prior.owner !== current.owner
+    || prior.hp !== current.hp
+    || prior.readiness !== current.readiness
+    || prior.remainingScaledMove !== current.remainingScaledMove
+    || prior.moveDone !== current.moveDone
+    || prior.combatDone !== current.combatDone
+    || prior.movedThisTurn !== current.movedThisTurn
+    || prior.population !== current.population
+    || prior.horses !== current.horses;
+}
+
+function computeStatePatch(before, after) {
+  if (!before || !after) {
+    return [];
+  }
+  const patch = [];
+  if (before.round !== after.round
+    || before.activeOwner !== after.activeOwner
+    || before.activeFactionIndex !== after.activeFactionIndex) {
+    patch.push({
+      type: "turn",
+      before: {
+        round: before.round,
+        activeOwner: before.activeOwner,
+        activeFactionIndex: before.activeFactionIndex,
+      },
+      after: {
+        round: after.round,
+        activeOwner: after.activeOwner,
+        activeFactionIndex: after.activeFactionIndex,
+      },
+    });
+  }
+
+  const beforeUnits = indexById(before.units);
+  const afterUnits = indexById(after.units);
+  for (const unit of after.units) {
+    const prior = beforeUnits.get(unit.id);
+    if (!prior) {
+      patch.push({ type: "unit_created", unit });
+      continue;
+    }
+    if (unitChanged(prior, unit)) {
+      patch.push({ type: "unit_changed", unitId: unit.id, before: prior, after: unit });
+    }
+  }
+  for (const unit of before.units) {
+    if (!afterUnits.has(unit.id)) {
+      patch.push({ type: "unit_removed", unit });
+    }
+  }
+
+  const beforeFactions = indexById(before.factions);
+  for (const faction of after.factions) {
+    const prior = beforeFactions.get(faction.id);
+    if (!prior) {
+      patch.push({ type: "faction_created", faction });
+      continue;
+    }
+    if (prior.enabled !== faction.enabled
+      || prior.ai !== faction.ai
+      || prior.metal !== faction.metal
+      || prior.treasure !== faction.treasure
+      || prior.food !== faction.food) {
+      patch.push({ type: "faction_changed", owner: faction.id, before: prior, after: faction });
+    }
+  }
+  return patch;
+}
+
+function summarizeAiAnimation(animation) {
+  return Array.isArray(animation)
+    ? animation.map((step) => ({
+      unitId: step.unitId,
+      from: coordSummary(step.from),
+      to: coordSummary(step.to),
+      attacks: Array.isArray(step.attacks) ? step.attacks.map(coordSummary).filter(Boolean) : [],
+      attackEvents: Array.isArray(step.attackEvents)
+        ? step.attackEvents.map((event) => ({
+          target: coordSummary(event.target),
+          defenderId: event.defenderId,
+          defenderFrom: coordSummary(event.defenderFrom),
+          defenderTo: coordSummary(event.defenderTo),
+          defenderMoved: Boolean(event.defenderMoved),
+          attackerTo: coordSummary(event.attackerTo),
+          attackerMoved: Boolean(event.attackerMoved),
+        }))
+        : [],
+    }))
+    : [];
+}
+
+function appendCommandGameTrace({ sequence, timestamp, durationMs, envelope, responseStatus, responseOk, payload, error }) {
+  const gameId = envelope.gameId || "local-dev";
+  const before = gameTraceStates.get(gameId) || null;
+  const view = payload && payload.view;
+  const after = summarizeGameView(view);
+  const entry = {
+    schema: "steppe-game-trace.v1",
+    sequence,
+    timestamp,
+    durationMs,
+    gameId,
+    command: summarizeCommand(envelope.command || {}),
+    response: {
+      status: responseStatus,
+      ok: responseOk,
+      engineOk: payload ? payload.ok : undefined,
+      error: error || (payload && payload.error) || undefined,
+    },
+    turn: {
+      before: before
+        ? {
+          round: before.round,
+          activeOwner: before.activeOwner,
+          activeFactionIndex: before.activeFactionIndex,
+          stateVersion: before.stateVersion,
+        }
+        : null,
+      after: after
+        ? {
+          round: after.round,
+          activeOwner: after.activeOwner,
+          activeFactionIndex: after.activeFactionIndex,
+          stateVersion: after.stateVersion,
+        }
+        : null,
+    },
+    events: Array.isArray(view?.events) ? view.events : [],
+    statePatch: computeStatePatch(before, after),
+    ai: {
+      animation: summarizeAiAnimation(view?.aiAnimation),
+      decisions: Array.isArray(view?.aiDecisionTrace) ? view.aiDecisionTrace : [],
+    },
+  };
+  appendGameTraceLog(entry);
+  if (after) {
+    gameTraceStates.set(gameId, after);
+  }
+}
+
+function payloadForClient(payload) {
+  if (!payload || !payload.view || !Array.isArray(payload.view.aiDecisionTrace)) {
+    return payload;
+  }
+  return {
+    ...payload,
+    view: {
+      ...payload.view,
+      aiDecisionTrace: undefined,
+    },
+  };
 }
 
 function sendJson(res, statusCode, payload) {
@@ -337,6 +622,15 @@ async function daemonCommand(command, gameId = "local-dev") {
         rawBody: payload === null ? responseText : undefined,
       },
     });
+    appendCommandGameTrace({
+      sequence,
+      timestamp: new Date(startedAt).toISOString(),
+      durationMs: Date.now() - startedAt,
+      envelope,
+      responseStatus: response.status,
+      responseOk: response.ok,
+      payload,
+    });
     logged = true;
 
     if (payload === null) {
@@ -359,6 +653,14 @@ async function daemonCommand(command, gameId = "local-dev") {
           url: `${daemonUrl}/command`,
           body: envelope,
         },
+        error: error.message,
+      });
+      appendCommandGameTrace({
+        sequence,
+        timestamp: new Date(startedAt).toISOString(),
+        durationMs: Date.now() - startedAt,
+        envelope,
+        responseOk: false,
         error: error.message,
       });
     }
@@ -413,7 +715,7 @@ async function handleCommand(req, res) {
   try {
     const payload = await readRequestJson(req);
     const result = await daemonCommand(payload.command || {}, payload.gameId || "local-dev");
-    sendJson(res, result.ok ? 200 : 400, result);
+    sendJson(res, result.ok ? 200 : 400, payloadForClient(result));
   } catch (error) {
     sendJson(res, 500, { error: error.message });
   }
@@ -586,6 +888,20 @@ function handleLatestTrafficLog(req, res) {
   });
 }
 
+function handleLatestGameTraceLog(req, res) {
+  fs.readFile(latestGameTraceLogPath, "utf8", (error, content) => {
+    if (error) {
+      sendJson(res, 404, { error: "latest game trace log not found" });
+      return;
+    }
+    res.writeHead(200, {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Content-Length": Buffer.byteLength(content),
+    });
+    res.end(content);
+  });
+}
+
 function serveStatic(req, res) {
   const requestPath = new URL(req.url, `http://${req.headers.host}`).pathname;
   const relativePath = requestPath === "/" ? "index.html" : requestPath.slice(1);
@@ -667,6 +983,10 @@ const server = http.createServer((req, res) => {
     handleLatestTrafficLog(req, res);
     return;
   }
+  if (req.method === "GET" && requestUrl.pathname === "/api/debug/game-trace/latest") {
+    handleLatestGameTraceLog(req, res);
+    return;
+  }
 
   if (req.method === "GET" || req.method === "HEAD") {
     serveStatic(req, res);
@@ -684,6 +1004,7 @@ process.on("exit", () => {
 });
 
 initializeTrafficLogs();
+initializeGameTraceLogs();
 ensureScenariosDir();
 
 server.listen(port, async () => {
@@ -691,9 +1012,11 @@ server.listen(port, async () => {
     await ensureDaemon();
     console.log(`Steppe proxy listening at http://localhost:${port}; daemon at ${daemonUrl}`);
     console.log(`Engine traffic log: ${latestTrafficLogPath}`);
+    console.log(`Game trace log: ${latestGameTraceLogPath}`);
   } catch (error) {
     console.error(error.message);
     console.log(`Steppe proxy listening at http://localhost:${port}; daemon unavailable`);
     console.log(`Engine traffic log: ${latestTrafficLogPath}`);
+    console.log(`Game trace log: ${latestGameTraceLogPath}`);
   }
 });

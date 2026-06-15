@@ -2439,6 +2439,40 @@ function ensureGameMeta() {
   currentMap.game = currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {};
   currentMap.game.foodConsumption = currentMap.game.foodConsumption !== false;
   currentMap.units = Array.isArray(currentMap.units) ? currentMap.units.map(normalizeUnit) : [];
+
+  const engineAuthoredGame = Number.isInteger(currentMap.game.stateVersion)
+    && Array.isArray(currentMap.game.factions);
+  if (engineAuthoredGame) {
+    currentMap.factions = currentMap.game.factions.map((faction) => normalizeScenarioFaction(faction, faction.key));
+    currentMap.game.factions = currentMap.factions.map((faction) => ({
+      id: faction.id,
+      key: faction.key,
+      name: faction.name,
+      color: faction.color,
+      metal: faction.metal,
+      treasure: faction.treasure,
+      food: faction.food,
+      enabled: faction.enabled,
+      ai: faction.ai,
+    }));
+    if (!Array.isArray(currentMap.game.turnOrder) || currentMap.game.turnOrder.length === 0) {
+      currentMap.game.turnOrder = currentMap.factions
+        .filter((faction) => faction.enabled)
+        .map((faction) => faction.id);
+    }
+    currentTurn = Number.isInteger(currentMap.game.round) ? currentMap.game.round : 1;
+    const maxIndex = Math.max(0, currentMap.game.turnOrder.length - 1);
+    activeFactionIndex = Number.isInteger(currentMap.game.activeFactionIndex)
+      ? Math.max(0, Math.min(currentMap.game.activeFactionIndex, maxIndex))
+      : 0;
+    if (!Number.isInteger(currentMap.game.activeOwner)) {
+      currentMap.game.activeOwner = currentMap.game.turnOrder[activeFactionIndex] ?? null;
+    }
+    currentMap.game.aiGroups = normalizeAiGroups(currentMap.game.aiGroups);
+    currentMap.game.diplomacy = normalizeDiplomacy(currentMap.game.diplomacy);
+    return;
+  }
+
   const priorGameFactions = Array.isArray(currentMap.game.factions) ? currentMap.game.factions : [];
   currentMap.factions = normalizeScenarioFactions(currentMap.factions, currentMap.units).map((faction) => {
     const prior = priorGameFactions.find((candidate) => candidate.id === faction.id);
@@ -2712,6 +2746,11 @@ function normalizeEngineView(view) {
     ? normalized.hexes.map(normalizeMapHex).filter((hex) => Number.isInteger(hex.q) && Number.isInteger(hex.r))
     : [];
   normalized.units = Array.isArray(normalized.units) ? normalized.units.map(normalizeUnit) : [];
+  if (normalized.game
+    && Array.isArray(normalized.game.factions)
+    && (!Array.isArray(normalized.factions) || normalized.factions.length === 0)) {
+    normalized.factions = normalized.game.factions.map((faction) => normalizeScenarioFaction(faction, faction.key));
+  }
   const previousMap = currentMap;
   try {
     currentMap = normalized;
@@ -2741,6 +2780,9 @@ function applyEnginePatch(payload, reason = "patch") {
   }
   if (payload.game && typeof payload.game === "object") {
     currentMap.game = payload.game;
+    if (Array.isArray(payload.game.factions)) {
+      currentMap.factions = payload.game.factions.map((faction) => normalizeScenarioFaction(faction, faction.key));
+    }
   }
   ensureGameMeta();
   syncEngineProjectionMeta(currentMap, reason);
@@ -3875,10 +3917,8 @@ async function enterPlayMode() {
   }
   if (currentMap) {
     try {
-      const scenarioFactions = normalizeScenarioFactions(currentMap.factions, currentMap.units);
       const payload = await postAppCommand({ type: "load_game", state: scenarioSnapshot() });
       replaceProjectionFromEngine(payload, "load_game");
-      currentMap.factions = scenarioFactions;
       terrainUndo = new Map();
       clearUndoHistory();
       ensureGameMeta();

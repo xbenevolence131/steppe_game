@@ -2779,35 +2779,84 @@ bool ai_attack_best_adjacent_enemy(
     return attack_unit(state, attacker_id, best_defender_id);
 }
 
-bool ai_move_toward_target(GameState& state, int unit_id, Coord target) {
+std::vector<AiPathCandidateTrace> ranked_ai_path_candidates(const GameState& state, const Unit& unit, Coord target) {
+    std::vector<AiPathCandidateTrace> candidates;
+    const int current_distance = hex_distance(unit.coord, target);
+    const std::vector<ReachableHex> reachable = reachable_hexes(state, unit.id);
+    for (const ReachableHex& reachable_hex : reachable) {
+        AiPathCandidateTrace candidate;
+        candidate.coord = reachable_hex.coord;
+        candidate.scaled_cost = reachable_hex.scaled_cost;
+        candidate.distance_before = current_distance;
+        candidate.distance_after = hex_distance(reachable_hex.coord, target);
+        candidate.distance_gain = current_distance - candidate.distance_after;
+        candidate.path = movement_path_to(state, unit, reachable_hex.coord);
+        candidates.push_back(std::move(candidate));
+    }
+    std::sort(candidates.begin(), candidates.end(), [](const AiPathCandidateTrace& first, const AiPathCandidateTrace& second) {
+        if (first.distance_after != second.distance_after) {
+            return first.distance_after < second.distance_after;
+        }
+        if (first.scaled_cost != second.scaled_cost) {
+            return first.scaled_cost < second.scaled_cost;
+        }
+        return coord_less(first.coord, second.coord);
+    });
+    if (!candidates.empty() && candidates.front().distance_after < current_distance) {
+        candidates.front().selected = true;
+    }
+    return candidates;
+}
+
+void copy_top_ai_path_candidates(
+    const std::vector<AiPathCandidateTrace>& candidates,
+    AiUnitDecisionTrace* trace,
+    std::size_t limit = 5
+) {
+    if (trace == nullptr) {
+        return;
+    }
+    trace->path_candidates.clear();
+    const std::size_t count = std::min(limit, candidates.size());
+    trace->path_candidates.insert(trace->path_candidates.end(), candidates.begin(), candidates.begin() + count);
+}
+
+bool ai_move_toward_target(GameState& state, int unit_id, Coord target, AiUnitDecisionTrace* trace = nullptr) {
     const Unit* unit = find_unit(state, unit_id);
     if (unit == nullptr || unit->move_done || unit->remaining_scaled_move <= 0) {
+        if (trace != nullptr) {
+            trace->action = "idle";
+            trace->reason = unit == nullptr ? "unit_not_found" : "no_movement_available";
+        }
         return false;
     }
     const int current_distance = hex_distance(unit->coord, target);
-    const std::vector<ReachableHex> reachable = reachable_hexes(state, unit_id);
-    if (reachable.empty()) {
+    std::vector<AiPathCandidateTrace> candidates = ranked_ai_path_candidates(state, *unit, target);
+    copy_top_ai_path_candidates(candidates, trace);
+    if (candidates.empty()) {
+        if (trace != nullptr) {
+            trace->action = "idle";
+            trace->reason = "no_reachable_hexes";
+        }
         return false;
     }
 
-    const ReachableHex* best = nullptr;
-    int best_distance = current_distance;
-    for (const ReachableHex& candidate : reachable) {
-        const int distance = hex_distance(candidate.coord, target);
-        if (best == nullptr
-            || distance < best_distance
-            || (distance == best_distance && candidate.scaled_cost < best->scaled_cost)
-            || (distance == best_distance
-                && candidate.scaled_cost == best->scaled_cost
-                && coord_less(candidate.coord, best->coord))) {
-            best = &candidate;
-            best_distance = distance;
+    const auto selected = std::find_if(candidates.begin(), candidates.end(), [](const AiPathCandidateTrace& candidate) {
+        return candidate.selected;
+    });
+    if (selected == candidates.end()) {
+        if (trace != nullptr) {
+            trace->action = "idle";
+            trace->reason = "no_distance_improvement";
         }
-    }
-    if (best == nullptr || best_distance >= current_distance) {
         return false;
     }
-    return move_unit(state, unit_id, best->coord);
+    const bool moved = move_unit(state, unit_id, selected->coord);
+    if (trace != nullptr) {
+        trace->action = moved ? "move" : "idle";
+        trace->reason = moved ? "distance_improved" : "move_rejected";
+    }
+    return moved;
 }
 
 void populate_ai_animation_step_snapshot(GameState& state, AiAnimationStep& step) {
@@ -3045,58 +3094,140 @@ bool execute_ai_unit_single_action(
     GameState& state,
     int unit_id,
     const AiDirective& directive,
-    AiAnimationStep* animation_step = nullptr
+    AiAnimationStep* animation_step = nullptr,
+    AiUnitDecisionTrace* decision_trace = nullptr
 ) {
+    if (decision_trace != nullptr) {
+        decision_trace->unit_id = unit_id;
+        decision_trace->directive = directive;
+        if (const Unit* unit = find_unit(state, unit_id)) {
+            decision_trace->owner = unit->owner;
+            decision_trace->from = unit->coord;
+        }
+        const std::vector<AttackableUnit> attacks = attackable_units(state, unit_id);
+        for (const AttackableUnit& attack : attacks) {
+            decision_trace->attackable_unit_ids.push_back(attack.unit_id);
+        }
+    }
     if (directive.kind == AiDirectiveKind::Inactive) {
+        if (decision_trace != nullptr) {
+            decision_trace->action = "idle";
+            decision_trace->reason = "inactive_directive";
+        }
         return false;
     }
     if (ai_attack_best_adjacent_enemy(state, unit_id, directive, animation_step)) {
+        if (decision_trace != nullptr) {
+            decision_trace->action = "attack";
+            decision_trace->reason = "adjacent_enemy";
+            if (animation_step != nullptr && !animation_step->attack_events.empty()) {
+                const AiAnimationStep::AttackEvent& event = animation_step->attack_events.front();
+                decision_trace->target = event.target;
+                decision_trace->target_unit_id = event.defender_id;
+            }
+        }
         return true;
     }
 
     const Unit* unit = find_unit(state, unit_id);
     if (unit == nullptr || unit->move_done || unit->remaining_scaled_move <= 0) {
+        if (decision_trace != nullptr) {
+            decision_trace->action = "idle";
+            decision_trace->reason = unit == nullptr ? "unit_not_found" : "no_movement_available";
+        }
         return false;
     }
 
     if (directive.kind == AiDirectiveKind::DefendHex
         && hex_distance(unit->coord, directive.target) > 1) {
-        return ai_move_toward_target(state, unit_id, directive.target);
+        if (decision_trace != nullptr) {
+            decision_trace->target = directive.target;
+            decision_trace->reason = "defend_target";
+        }
+        return ai_move_toward_target(state, unit_id, directive.target, decision_trace);
     }
 
     const Unit* target = ai_target_for_directive(state, *unit, directive);
     if (directive.kind == AiDirectiveKind::DefendHex) {
         if (target == nullptr || hex_distance(target->coord, directive.target) > 2) {
+            if (decision_trace != nullptr) {
+                decision_trace->target = directive.target;
+                decision_trace->action = "idle";
+                decision_trace->reason = target == nullptr ? "no_defense_threat" : "threat_outside_defense_radius";
+            }
             return false;
         }
     }
     if (target == nullptr) {
+        if (decision_trace != nullptr) {
+            decision_trace->target = directive.target;
+            decision_trace->reason = directive.kind == AiDirectiveKind::CaptureHex ? "capture_target" : "no_target";
+        }
         return directive.kind == AiDirectiveKind::CaptureHex
-            && ai_move_toward_target(state, unit_id, directive.target);
+            && ai_move_toward_target(state, unit_id, directive.target, decision_trace);
     }
-    return ai_move_toward_target(state, unit_id, target->coord);
+    if (decision_trace != nullptr) {
+        decision_trace->target = target->coord;
+        decision_trace->target_unit_id = target->id;
+        decision_trace->reason = "target_unit";
+    }
+    return ai_move_toward_target(state, unit_id, target->coord, decision_trace);
 }
 
 void execute_ai_unit_directive(
     GameState& state,
     int unit_id,
     const AiDirective& directive,
-    AiAnimationStep* animation_step = nullptr
+    AiAnimationStep* animation_step = nullptr,
+    AiUnitDecisionTrace* decision_trace = nullptr
 ) {
+    if (decision_trace != nullptr) {
+        decision_trace->unit_id = unit_id;
+        decision_trace->directive = directive;
+        if (const Unit* unit = find_unit(state, unit_id)) {
+            decision_trace->owner = unit->owner;
+            decision_trace->from = unit->coord;
+        }
+        const std::vector<AttackableUnit> attacks = attackable_units(state, unit_id);
+        for (const AttackableUnit& attack : attacks) {
+            decision_trace->attackable_unit_ids.push_back(attack.unit_id);
+        }
+    }
     if (directive.kind == AiDirectiveKind::Inactive) {
+        if (decision_trace != nullptr) {
+            decision_trace->action = "idle";
+            decision_trace->reason = "inactive_directive";
+        }
         return;
     }
     if (ai_attack_best_adjacent_enemy(state, unit_id, directive, animation_step)) {
+        if (decision_trace != nullptr) {
+            decision_trace->action = "attack";
+            decision_trace->reason = "adjacent_enemy";
+            if (animation_step != nullptr && !animation_step->attack_events.empty()) {
+                const AiAnimationStep::AttackEvent& event = animation_step->attack_events.front();
+                decision_trace->target = event.target;
+                decision_trace->target_unit_id = event.defender_id;
+            }
+        }
         return;
     }
     const Unit* unit = find_unit(state, unit_id);
     if (unit == nullptr) {
+        if (decision_trace != nullptr) {
+            decision_trace->action = "idle";
+            decision_trace->reason = "unit_not_found";
+        }
         return;
     }
 
     if (directive.kind == AiDirectiveKind::DefendHex
         && hex_distance(unit->coord, directive.target) > 1) {
-        ai_move_toward_target(state, unit_id, directive.target);
+        if (decision_trace != nullptr) {
+            decision_trace->target = directive.target;
+            decision_trace->reason = "defend_target";
+        }
+        ai_move_toward_target(state, unit_id, directive.target, decision_trace);
         ai_attack_best_adjacent_enemy(state, unit_id, directive, animation_step);
         return;
     }
@@ -3104,17 +3235,31 @@ void execute_ai_unit_directive(
     const Unit* target = ai_target_for_directive(state, *unit, directive);
     if (directive.kind == AiDirectiveKind::DefendHex) {
         if (target == nullptr || hex_distance(target->coord, directive.target) > 2) {
+            if (decision_trace != nullptr) {
+                decision_trace->target = directive.target;
+                decision_trace->action = "idle";
+                decision_trace->reason = target == nullptr ? "no_defense_threat" : "threat_outside_defense_radius";
+            }
             return;
         }
     }
     if (target == nullptr) {
+        if (decision_trace != nullptr) {
+            decision_trace->target = directive.target;
+            decision_trace->reason = directive.kind == AiDirectiveKind::CaptureHex ? "capture_target" : "no_target";
+        }
         if (directive.kind == AiDirectiveKind::CaptureHex) {
-            ai_move_toward_target(state, unit_id, directive.target);
+            ai_move_toward_target(state, unit_id, directive.target, decision_trace);
             ai_attack_best_adjacent_enemy(state, unit_id, directive, animation_step);
         }
         return;
     }
-    if (ai_move_toward_target(state, unit_id, target->coord)) {
+    if (decision_trace != nullptr) {
+        decision_trace->target = target->coord;
+        decision_trace->target_unit_id = target->id;
+        decision_trace->reason = "target_unit";
+    }
+    if (ai_move_toward_target(state, unit_id, target->coord, decision_trace)) {
         ai_attack_best_adjacent_enemy(state, unit_id, directive, animation_step);
     }
 }
@@ -3123,18 +3268,44 @@ void execute_ai_units(
     GameState& state,
     const std::vector<int>& unit_ids,
     const AiDirective& directive,
-    std::vector<AiAnimationStep>* animation = nullptr
+    std::vector<AiAnimationStep>* animation = nullptr,
+    std::vector<AiUnitDecisionTrace>* decision_trace = nullptr,
+    int group_id = 0
 ) {
     for (const int unit_id : unit_ids) {
         const Unit* unit = find_unit(state, unit_id);
         if (unit == nullptr || !can_attack(unit->kind) || unit->hp <= 0) {
+            if (decision_trace != nullptr) {
+                AiUnitDecisionTrace trace;
+                trace.unit_id = unit_id;
+                trace.group_id = group_id;
+                trace.directive = directive;
+                trace.action = "skip";
+                trace.reason = unit == nullptr ? "unit_not_found" : (!can_attack(unit->kind) ? "non_combat_unit" : "unit_destroyed");
+                if (unit != nullptr) {
+                    trace.owner = unit->owner;
+                    trace.from = unit->coord;
+                }
+                decision_trace->push_back(std::move(trace));
+            }
             continue;
         }
         AiAnimationStep step;
         step.unit_id = unit_id;
         step.from = unit->coord;
         step.to = unit->coord;
-        execute_ai_unit_directive(state, unit_id, directive, animation == nullptr ? nullptr : &step);
+        AiUnitDecisionTrace trace;
+        trace.group_id = group_id;
+        execute_ai_unit_directive(
+            state,
+            unit_id,
+            directive,
+            animation == nullptr ? nullptr : &step,
+            decision_trace == nullptr ? nullptr : &trace
+        );
+        if (decision_trace != nullptr) {
+            decision_trace->push_back(std::move(trace));
+        }
         const Unit* updated = find_unit(state, unit_id);
         if (updated != nullptr && step.attack_events.empty()) {
             step.to = updated->coord;
@@ -3147,22 +3318,35 @@ void execute_ai_units(
     }
 }
 
-bool step_ai_turn(GameState& state, AiAnimationStep* animation) {
+struct AiExecutionBatch {
+    std::vector<int> unit_ids;
+    AiDirective directive;
+    int group_id = 0;
+};
+
+bool step_ai_turn(GameState& state, AiAnimationStep* animation, std::vector<AiUnitDecisionTrace>* decision_trace) {
     const OwnerId owner = active_faction(state);
     if (!faction_ai_controlled(state, owner)) {
+        if (decision_trace != nullptr) {
+            AiUnitDecisionTrace trace;
+            trace.owner = owner;
+            trace.action = "skip";
+            trace.reason = "active_faction_not_ai";
+            decision_trace->push_back(std::move(trace));
+        }
         return false;
     }
 
     refresh_generated_strategic_ai_group(state, owner);
     std::vector<int> assigned_unit_ids;
-    std::vector<std::pair<std::vector<int>, AiDirective>> batches;
+    std::vector<AiExecutionBatch> batches;
     for (const AiGroup& group : state.ai_groups) {
         if (group.owner != owner) {
             continue;
         }
         std::vector<int> group_units = group.unit_ids;
         std::sort(group_units.begin(), group_units.end());
-        batches.push_back({group_units, group.directive});
+        batches.push_back({group_units, group.directive, group.id});
         assigned_unit_ids.insert(assigned_unit_ids.end(), group_units.begin(), group_units.end());
     }
 
@@ -3178,25 +3362,60 @@ bool step_ai_turn(GameState& state, AiAnimationStep* animation) {
         const Unit* anchor_unit = find_unit(state, unassigned_unit_ids.front());
         AiDirective directive;
         if (anchor_unit != nullptr && strategic_directive_for_owner(state, owner, anchor_unit->coord, directive)) {
-            batches.push_back({unassigned_unit_ids, directive});
+            batches.push_back({unassigned_unit_ids, directive, 0});
         }
     }
 
-    for (const auto& batch : batches) {
-        for (const int unit_id : batch.first) {
+    for (const AiExecutionBatch& batch : batches) {
+        for (const int unit_id : batch.unit_ids) {
             const Unit* unit = find_unit(state, unit_id);
             if (unit == nullptr
                 || unit->owner != owner
                 || !can_attack(unit->kind)
                 || unit->hp <= 0
                 || (unit->move_done && unit->combat_done)) {
+                if (decision_trace != nullptr) {
+                    AiUnitDecisionTrace trace;
+                    trace.unit_id = unit_id;
+                    trace.owner = unit == nullptr ? owner : unit->owner;
+                    trace.group_id = batch.group_id;
+                    trace.directive = batch.directive;
+                    trace.action = "skip";
+                    if (unit == nullptr) {
+                        trace.reason = "unit_not_found";
+                    } else if (unit->owner != owner) {
+                        trace.reason = "wrong_owner";
+                    } else if (!can_attack(unit->kind)) {
+                        trace.reason = "non_combat_unit";
+                    } else if (unit->hp <= 0) {
+                        trace.reason = "unit_destroyed";
+                    } else {
+                        trace.reason = "unit_done";
+                    }
+                    if (unit != nullptr) {
+                        trace.from = unit->coord;
+                    }
+                    decision_trace->push_back(std::move(trace));
+                }
                 continue;
             }
             AiAnimationStep step;
             step.unit_id = unit_id;
             step.from = unit->coord;
             step.to = unit->coord;
-            if (!execute_ai_unit_single_action(state, unit_id, batch.second, animation == nullptr ? nullptr : &step)) {
+            AiUnitDecisionTrace trace;
+            trace.group_id = batch.group_id;
+            const bool acted = execute_ai_unit_single_action(
+                state,
+                unit_id,
+                batch.directive,
+                animation == nullptr ? nullptr : &step,
+                decision_trace == nullptr ? nullptr : &trace
+            );
+            if (decision_trace != nullptr) {
+                decision_trace->push_back(std::move(trace));
+            }
+            if (!acted) {
                 continue;
             }
             const Unit* updated = find_unit(state, unit_id);
@@ -3229,7 +3448,7 @@ void execute_ai_turn(GameState& state, OwnerId owner, std::vector<AiAnimationSte
         }
         std::vector<int> group_units = group.unit_ids;
         std::sort(group_units.begin(), group_units.end());
-        execute_ai_units(state, group_units, group.directive, animation);
+        execute_ai_units(state, group_units, group.directive, animation, nullptr, group.id);
         assigned_unit_ids.insert(assigned_unit_ids.end(), group_units.begin(), group_units.end());
     }
 
@@ -3262,7 +3481,12 @@ int turn_order_index_for_owner(const GameState& state, OwnerId owner) {
     return -1;
 }
 
-bool execute_ai_group_turn(GameState& state, int group_id, std::vector<AiAnimationStep>* animation) {
+bool execute_ai_group_turn(
+    GameState& state,
+    int group_id,
+    std::vector<AiAnimationStep>* animation,
+    std::vector<AiUnitDecisionTrace>* decision_trace
+) {
     const auto found = std::find_if(state.ai_groups.begin(), state.ai_groups.end(), [&](const AiGroup& group) {
         return group.id == group_id;
     });
@@ -3279,7 +3503,7 @@ bool execute_ai_group_turn(GameState& state, int group_id, std::vector<AiAnimati
     state.active_faction_index = owner_turn_index;
     std::vector<int> group_units = found->unit_ids;
     std::sort(group_units.begin(), group_units.end());
-    execute_ai_units(state, group_units, found->directive, animation);
+    execute_ai_units(state, group_units, found->directive, animation, decision_trace, found->id);
     state.active_faction_index = previous_turn_index;
     state.selected_unit_id = 0;
     state.legal_moves.clear();
@@ -4029,6 +4253,73 @@ void print_ai_animation_json(const std::vector<AiAnimationStep>& animation, std:
     out << "]";
 }
 
+void print_ai_directive_json(const AiDirective& directive, std::ostream& out) {
+    out << "{\"type\":\"" << ai_directive_kind_to_string(directive.kind) << "\"";
+    if (directive.kind == AiDirectiveKind::DefendHex || directive.kind == AiDirectiveKind::CaptureHex) {
+        out << ",\"target\":";
+        print_coord_json(directive.target, out);
+    }
+    if (directive.kind == AiDirectiveKind::HuntHorde) {
+        const FactionState faction = faction_for_owner(directive.target_owner);
+        out << ",\"faction\":\"" << escape_json(faction.key) << "\""
+            << ",\"owner\":" << directive.target_owner;
+    }
+    out << "}";
+}
+
+void print_ai_decision_trace_json(const std::vector<AiUnitDecisionTrace>& trace, std::ostream& out) {
+    out << "[";
+    for (std::size_t i = 0; i < trace.size(); ++i) {
+        if (i > 0) {
+            out << ",";
+        }
+        const AiUnitDecisionTrace& decision = trace[i];
+        out << "{\"unitId\":" << decision.unit_id
+            << ",\"owner\":" << decision.owner
+            << ",\"groupId\":" << decision.group_id
+            << ",\"directive\":";
+        print_ai_directive_json(decision.directive, out);
+        out << ",\"from\":";
+        print_coord_json(decision.from, out);
+        out << ",\"target\":";
+        print_coord_json(decision.target, out);
+        out << ",\"targetUnitId\":" << decision.target_unit_id
+            << ",\"action\":\"" << escape_json(decision.action) << "\""
+            << ",\"reason\":\"" << escape_json(decision.reason) << "\""
+            << ",\"attackableUnitIds\":[";
+        for (std::size_t attack_index = 0; attack_index < decision.attackable_unit_ids.size(); ++attack_index) {
+            if (attack_index > 0) {
+                out << ",";
+            }
+            out << decision.attackable_unit_ids[attack_index];
+        }
+        out << "],\"pathCandidates\":[";
+        for (std::size_t candidate_index = 0; candidate_index < decision.path_candidates.size(); ++candidate_index) {
+            if (candidate_index > 0) {
+                out << ",";
+            }
+            const AiPathCandidateTrace& candidate = decision.path_candidates[candidate_index];
+            out << "{\"coord\":";
+            print_coord_json(candidate.coord, out);
+            out << ",\"scaledCost\":" << candidate.scaled_cost
+                << ",\"distanceBefore\":" << candidate.distance_before
+                << ",\"distanceAfter\":" << candidate.distance_after
+                << ",\"distanceGain\":" << candidate.distance_gain
+                << ",\"selected\":" << (candidate.selected ? "true" : "false")
+                << ",\"path\":[";
+            for (std::size_t path_index = 0; path_index < candidate.path.size(); ++path_index) {
+                if (path_index > 0) {
+                    out << ",";
+                }
+                print_coord_json(candidate.path[path_index], out);
+            }
+            out << "]}";
+        }
+        out << "]}";
+    }
+    out << "]";
+}
+
 void print_game_events_json(const GameState& state, const GameState* before, std::ostream& out) {
     out << "[";
     if (before == nullptr) {
@@ -4195,7 +4486,8 @@ void print_game_patch_json(
     bool ok,
     std::ostream& out,
     const std::vector<AiAnimationStep>* animation,
-    const GameState* before
+    const GameState* before,
+    const std::vector<AiUnitDecisionTrace>* decision_trace
 ) {
     out << "{";
     out << "\"ok\":" << (ok ? "true" : "false") << ",";
@@ -4244,6 +4536,10 @@ void print_game_patch_json(
     if (animation != nullptr) {
         out << ",\"aiAnimation\":";
         print_ai_animation_json(*animation, out);
+    }
+    if (decision_trace != nullptr) {
+        out << ",\"aiDecisionTrace\":";
+        print_ai_decision_trace_json(*decision_trace, out);
     }
     out << "}\n";
 }
