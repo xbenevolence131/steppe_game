@@ -1,6 +1,6 @@
 kind,hp,attack,defense,readiness_damage,readiness,move,projects_zoc,respects_zoc,default_stance,legal_stances,population,horses
 herd,1,0,1,0,100,3,false,false,default,default,0,0
-horse_archer,10,5,3,25,100,4,true,false,feigned_retreat,feigned_retreat;defensive,0,0
+horse_archer,10,5,3,20,100,4,true,false,feigned_retreat,feigned_retreat;defensive,0,0
 chinese_cavalry,10,7,4,10,100,3,true,true,default,default,0,0
 mongol_lancer,10,7,4,10,100,4,true,false,default,default,0,0
 chinese_militia,10,3,3,10,100,2,true,true,default,default,0,0

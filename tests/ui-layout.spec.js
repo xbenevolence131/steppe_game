@@ -600,19 +600,19 @@ test("combat uses unit stats terrain defense and retaliation", async ({ isMobile
   expect(preview.retreatImpact).toBe("No retreat");
   expect(preview.attacker.damageDealt).toBe(2);
   expect(preview.attacker.damageTaken).toBe(0);
-  expect(preview.attacker.readinessDamageDealt).toBe(25);
+  expect(preview.attacker.readinessDamageDealt).toBe(20);
   expect(preview.attacker.readinessDamageTaken).toBe(10);
   expect(preview.attacker.resultHp).toBe(10);
   expect(preview.attacker.resultReadiness).toBe(90);
   expect(preview.attacker.readiness).toBe(100);
   expect(preview.attacker.readinessPercent).toBe(100);
-  expect(preview.attacker.baseReadinessDamage).toBe(25);
+  expect(preview.attacker.baseReadinessDamage).toBe(20);
   expect(preview.defender.effectiveDefense).toBe(3);
   expect(preview.defender.readinessDamageDealt).toBe(0);
-  expect(preview.defender.readinessDamageTaken).toBe(25);
+  expect(preview.defender.readinessDamageTaken).toBe(20);
   expect(preview.defender.damageTaken).toBe(2);
   expect(preview.defender.resultHp).toBe(8);
-  expect(preview.defender.resultReadiness).toBe(75);
+  expect(preview.defender.resultReadiness).toBe(80);
 
   const grass = runEngineJson(["game-attack", "--attacker", "1", "--defender", "2"], combatGameState("grassland"));
   const grassAttacker = grass.units.find((unit) => unit.id === 1);
@@ -624,11 +624,11 @@ test("combat uses unit stats terrain defense and retaliation", async ({ isMobile
   expect(grassAttacker.combatDone).toBe(true);
   expect(grassAttacker.readiness).toBe(90);
   expect(grassDefender.hp).toBe(8);
-  expect(grassDefender.readiness).toBe(75);
+  expect(grassDefender.readiness).toBe(80);
 
   const recovered = runEngineJson(["game-end-turn"], grass);
   const recoveredDefender = recovered.units.find((unit) => unit.id === 2);
-  expect(recoveredDefender.readiness).toBe(75);
+  expect(recoveredDefender.readiness).toBe(80);
 
   const hill = runEngineJson(["game-attack", "--attacker", "1", "--defender", "2"], combatGameState("hill"));
   const hillPreview = runEngineJson(["game-combat-preview", "--attacker", "1", "--defender", "2"], combatGameState("hill"));
@@ -813,15 +813,15 @@ test("combat damage tapers against worn down targets", async ({ isMobile }) => {
   expect(blockedPreview.retreatOption).toBe("defender");
   expect(blockedPreview.retreatBlocked).toBe(true);
   expect(blockedPreview.blockedRetreatReadinessPenalty).toBe(15);
-  expect(blockedPreview.defender.readinessDamageTaken).toBe(25);
-  expect(blockedPreview.defender.resultReadiness).toBe(15);
+  expect(blockedPreview.defender.readinessDamageTaken).toBe(20);
+  expect(blockedPreview.defender.resultReadiness).toBe(20);
   expect(blockedPreview.retreatImpact).toBe("Defender retreat blocked");
 
   const blockedResolved = runEngineJson(["game-attack", "--attacker", "1", "--defender", "2"], blockedRetreatCombatGameState());
   const blockedDefender = blockedResolved.units.find((unit) => unit.id === 2);
   expect(blockedResolved.ok).toBe(true);
   expect(blockedDefender.hp).toBe(2);
-  expect(blockedDefender.readiness).toBe(15);
+  expect(blockedDefender.readiness).toBe(20);
   expect({ q: blockedDefender.q, r: blockedDefender.r }).toEqual({ q: 2, r: 1 });
 });
 
@@ -831,12 +831,12 @@ test("movement spends readiness in proportion to movement cost", async ({ isMobi
   const moved = runEngineJson(["game-move", "--unit", "1", "--q", "4", "--r", "2"], corridorGameState());
   const unit = moved.units.find((candidate) => candidate.id === 1);
   expect(moved.ok).toBe(true);
-  expect(unit.readiness).toBe(96);
+  expect(unit.readiness).toBe(97);
 
   const fullMove = runEngineJson(["game-move", "--unit", "1", "--q", "5", "--r", "1"], openMovementGameState());
   const fullMoveUnit = fullMove.units.find((candidate) => candidate.id === 1);
   expect(fullMove.ok).toBe(true);
-  expect(fullMoveUnit.readiness).toBe(92);
+  expect(fullMoveUnit.readiness).toBe(95);
 });
 
 test("movement uses road costs and allows one expensive terrain step", async ({ isMobile }) => {
@@ -910,7 +910,7 @@ test("unbridged river crossings require full movement and spend readiness", asyn
   expect(bridgedMoved.crossings).toHaveLength(1);
   expect(bridgedMovedUnit.remainingScaledMove).toBe(8);
   expect(bridgedMovedUnit.moveDone).toBe(false);
-  expect(bridgedMovedUnit.readiness).toBe(96);
+  expect(bridgedMovedUnit.readiness).toBe(97);
 });
 
 test("unbridged rivers block attacks while bridges allow them", async ({ isMobile }) => {
@@ -950,6 +950,8 @@ test("retreat cannot cross river edges even at bridges", async ({ isMobile }) =>
   expect(preview.retreatOption).toBe("defender");
   expect(preview.retreatBlocked).toBe(true);
   expect(preview.defenderRetreatTo).toEqual({ q: 0, r: 0 });
+  expect(preview.defender.readinessDamageTaken).toBe(23);
+  expect(preview.defender.resultReadiness).toBe(17);
 
   const resolved = runEngineJson(
     ["game-attack", "--attacker", "1", "--defender", "2"],
@@ -958,7 +960,7 @@ test("retreat cannot cross river edges even at bridges", async ({ isMobile }) =>
   const defender = resolved.units.find((candidate) => candidate.id === 2);
   expect(resolved.ok).toBe(true);
   expect({ q: defender.q, r: defender.r }).toEqual({ q: 2, r: 1 });
-  expect(defender.readiness).toBe(15);
+  expect(defender.readiness).toBe(17);
 });
 
 test("readiness recovers only after quiet non-contact turns", async ({ isMobile }) => {
