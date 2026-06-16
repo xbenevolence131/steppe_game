@@ -878,6 +878,45 @@ std::vector<OwnerId> parse_turn_order(const Json& array_json) {
     return owners;
 }
 
+AiDirective ai_directive_from_json(const Json& directive_json) {
+    AiDirective directive;
+    directive.kind = ai_directive_kind_from_string(string_field(directive_json, "type", "hunt"));
+    if (directive_json.contains("target") && directive_json["target"].is_object()) {
+        directive.target = coord_from_json(directive_json["target"]);
+    }
+    directive.target_owner = int_field(
+        directive_json,
+        "owner",
+        owner_from_faction_key(string_field(directive_json, "faction", ""), neutral_owner)
+    );
+    return directive;
+}
+
+std::vector<AiGroup> ai_groups_from_json(const Json& ai_group_items) {
+    std::vector<AiGroup> groups;
+    if (!ai_group_items.is_array()) {
+        return groups;
+    }
+    for (const Json& group_json : ai_group_items) {
+        if (!group_json.is_object()) {
+            continue;
+        }
+        AiGroup group;
+        group.id = int_field(group_json, "id", 0);
+        group.owner = int_field(group_json, "owner", neutral_owner);
+        group.name = string_field(group_json, "name", "");
+        group.generated = bool_field(group_json, "generated", false);
+        group.unit_ids = int_array_field(group_json, "unitIds");
+        const Json empty_object = Json::object();
+        const Json& directive_json = group_json.contains("directive") && group_json["directive"].is_object()
+            ? group_json["directive"]
+            : empty_object;
+        group.directive = ai_directive_from_json(directive_json);
+        groups.push_back(std::move(group));
+    }
+    return groups;
+}
+
 int diplomacy_key(OwnerId owner, OwnerId target) {
     return owner * 1000 + target;
 }
@@ -1788,6 +1827,14 @@ int scaled_damage_for_remaining(int base_damage, int current, int maximum) {
     return std::max(1, (base_damage * current + maximum - 1) / maximum);
 }
 
+int minimum_retreat_readiness_damage(int base_damage) {
+    return base_damage <= 0 ? 0 : std::max(1, (base_damage + 1) / 2);
+}
+
+int ordinary_retreat_readiness_cost(int base_damage, int readiness_damage) {
+    return std::max(0, minimum_retreat_readiness_damage(base_damage) - readiness_damage);
+}
+
 std::string readiness_impact_text(int readiness_ratio_percent) {
     if (readiness_ratio_percent >= 115) {
         return "Attacker readiness improves CRT";
@@ -1956,6 +2003,31 @@ bool find_ordinary_retreat_hex(const GameState& state, const Unit& retreating, c
     });
     retreat_to = candidates.front().coord;
     return true;
+}
+
+bool ordinary_retreat_blocked_by_river(const GameState& state, const Unit& retreating, const Unit& opposing) {
+    const int current_distance = hex_distance(retreating.coord, opposing.coord);
+    for (int direction = 0; direction < 6; ++direction) {
+        const Coord candidate = neighbor_in_direction(retreating.coord, direction);
+        if (!in_bounds(state, candidate) || occupied_by_other_unit(state, candidate, retreating.id)) {
+            continue;
+        }
+        if (!river_edge_between(state, retreating.coord, candidate)) {
+            continue;
+        }
+        const GameHex* hex = find_hex(state, candidate);
+        if (hex == nullptr || movement_cost(state, retreating, retreating.coord, *hex) == blocked_movement_cost()) {
+            continue;
+        }
+        if (retreating.respects_zoc && enemy_zoc_at(state, candidate, retreating)) {
+            continue;
+        }
+        const int distance = hex_distance(candidate, opposing.coord);
+        if (distance >= current_distance) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool find_feigned_retreat_hex(const GameState& state, const Unit& attacker, const Unit& defender, Coord& retreat_to) {
@@ -2212,8 +2284,16 @@ CombatPreview combat_preview(const GameState& state, int attacker_id, int defend
 
     const int defender_hp_damage = scaled_damage_for_remaining(outcome.defender_damage, defender->hp, defender->max_hp);
     const int attacker_hp_damage = scaled_damage_for_remaining(outcome.attacker_damage, attacker->hp, attacker->max_hp);
-    const int defender_readiness_damage = scaled_damage_for_remaining(attacker->readiness_damage, clamped_readiness(*defender), defender->max_readiness);
-    const int attacker_readiness_damage = scaled_damage_for_remaining(attack_readiness_cost, clamped_readiness(*attacker), attacker->max_readiness);
+    const int defender_readiness_damage = scaled_damage_for_remaining(
+        attacker->readiness_damage,
+        clamped_readiness(*defender),
+        defender->max_readiness
+    );
+    const int attacker_readiness_damage = scaled_damage_for_remaining(
+        attack_readiness_cost,
+        clamped_readiness(*attacker),
+        attacker->max_readiness
+    );
 
     preview.attacker.damage_dealt = defender_hp_damage;
     preview.defender.damage_taken = defender_hp_damage;
@@ -2246,12 +2326,29 @@ CombatPreview combat_preview(const GameState& state, int attacker_id, int defend
     if (preview.retreat_option == "defender" && !preview.defender.destroyed) {
         if (find_ordinary_retreat_hex(state, *defender, *attacker, preview.defender_retreat_to)) {
             preview.retreat_impact = "Defender retreats";
+            const int retreat_readiness_cost = ordinary_retreat_readiness_cost(
+                attacker->readiness_damage,
+                preview.defender.readiness_damage_taken
+            );
+            preview.defender.readiness_damage_taken += retreat_readiness_cost;
+            preview.defender.result_readiness = std::max(
+                0,
+                preview.defender.result_readiness - retreat_readiness_cost
+            );
         } else {
             preview.retreat_blocked = true;
             preview.blocked_retreat_readiness_penalty = blocked_retreat_readiness_penalty;
             preview.retreat_impact = "Defender retreat blocked";
             preview.defender.readiness_damage_taken += blocked_retreat_readiness_penalty;
             preview.defender.result_readiness = std::max(0, preview.defender.result_readiness - blocked_retreat_readiness_penalty);
+            if (!ordinary_retreat_blocked_by_river(state, *defender, *attacker)) {
+                const int capped_damage = std::min(
+                    preview.defender.readiness_damage_taken,
+                    std::max(0, clamped_readiness(*defender) / 2)
+                );
+                preview.defender.readiness_damage_taken = capped_damage;
+                preview.defender.result_readiness = std::max(0, clamped_readiness(*defender) - capped_damage);
+            }
         }
     }
     return preview;
@@ -2790,6 +2887,7 @@ std::vector<AiPathCandidateTrace> ranked_ai_path_candidates(const GameState& sta
         candidate.distance_before = current_distance;
         candidate.distance_after = hex_distance(reachable_hex.coord, target);
         candidate.distance_gain = current_distance - candidate.distance_after;
+        candidate.score = candidate.distance_gain * 100 - candidate.distance_after * 10 - candidate.scaled_cost;
         candidate.path = movement_path_to(state, unit, reachable_hex.coord);
         candidates.push_back(std::move(candidate));
     }
@@ -2803,6 +2901,75 @@ std::vector<AiPathCandidateTrace> ranked_ai_path_candidates(const GameState& sta
         return coord_less(first.coord, second.coord);
     });
     if (!candidates.empty() && candidates.front().distance_after < current_distance) {
+        candidates.front().selected = true;
+    }
+    return candidates;
+}
+
+int settled_defense_position_score(const GameState& state, const Unit& unit, Coord coord, Coord target) {
+    const int objective_distance = hex_distance(coord, target);
+    const Unit* threat = nearest_enemy_unit_from_coord(state, unit.owner, target);
+    const int threat_distance = threat == nullptr ? 8 : hex_distance(coord, threat->coord);
+    const GameHex* hex = find_hex(state, coord);
+    int score = 1000
+        - objective_distance * 140
+        + std::max(0, 6 - objective_distance) * 25
+        + (terrain_defense_percent_at(state, coord) - 100) * (is_cavalry_unit(unit.kind) ? 1 : 3)
+        + readiness_percent(unit);
+    if (coord_equal(coord, target)) {
+        score += 360;
+    } else if (objective_distance == 1) {
+        score += 130;
+    }
+    if (hex != nullptr && hex->terrain == Terrain::Urban) {
+        score += 160;
+    }
+    if (hex != nullptr && hex->owner == unit.owner) {
+        score += 45;
+    }
+    if (threat != nullptr) {
+        score += std::max(0, 7 - threat_distance) * (is_cavalry_unit(unit.kind) ? 35 : 20);
+        if (threat_distance == 1 && unit.readiness < 55) {
+            score -= 140;
+        }
+    }
+    return score;
+}
+
+std::vector<AiPathCandidateTrace> ranked_settled_defense_candidates(
+    const GameState& state,
+    const Unit& unit,
+    Coord target
+) {
+    std::vector<AiPathCandidateTrace> candidates;
+    const int current_distance = hex_distance(unit.coord, target);
+    const std::vector<ReachableHex> reachable = reachable_hexes(state, unit.id);
+    for (const ReachableHex& reachable_hex : reachable) {
+        AiPathCandidateTrace candidate;
+        candidate.coord = reachable_hex.coord;
+        candidate.scaled_cost = reachable_hex.scaled_cost;
+        candidate.distance_before = current_distance;
+        candidate.distance_after = hex_distance(reachable_hex.coord, target);
+        candidate.distance_gain = current_distance - candidate.distance_after;
+        candidate.score = settled_defense_position_score(state, unit, reachable_hex.coord, target)
+            - reachable_hex.scaled_cost;
+        candidate.path = movement_path_to(state, unit, reachable_hex.coord);
+        candidates.push_back(std::move(candidate));
+    }
+    std::sort(candidates.begin(), candidates.end(), [](const AiPathCandidateTrace& first, const AiPathCandidateTrace& second) {
+        if (first.score != second.score) {
+            return first.score > second.score;
+        }
+        if (first.distance_after != second.distance_after) {
+            return first.distance_after < second.distance_after;
+        }
+        if (first.scaled_cost != second.scaled_cost) {
+            return first.scaled_cost < second.scaled_cost;
+        }
+        return coord_less(first.coord, second.coord);
+    });
+    const int current_score = settled_defense_position_score(state, unit, unit.coord, target);
+    if (!candidates.empty() && candidates.front().score > current_score) {
         candidates.front().selected = true;
     }
     return candidates;
@@ -2859,6 +3026,47 @@ bool ai_move_toward_target(GameState& state, int unit_id, Coord target, AiUnitDe
     return moved;
 }
 
+bool ai_move_to_settled_defense_position(
+    GameState& state,
+    int unit_id,
+    Coord target,
+    AiUnitDecisionTrace* trace = nullptr
+) {
+    const Unit* unit = find_unit(state, unit_id);
+    if (unit == nullptr || unit->move_done || unit->remaining_scaled_move <= 0) {
+        if (trace != nullptr) {
+            trace->action = "idle";
+            trace->reason = unit == nullptr ? "unit_not_found" : "no_movement_available";
+        }
+        return false;
+    }
+    std::vector<AiPathCandidateTrace> candidates = ranked_settled_defense_candidates(state, *unit, target);
+    copy_top_ai_path_candidates(candidates, trace);
+    if (candidates.empty()) {
+        if (trace != nullptr) {
+            trace->action = "idle";
+            trace->reason = "no_reachable_hexes";
+        }
+        return false;
+    }
+    const auto selected = std::find_if(candidates.begin(), candidates.end(), [](const AiPathCandidateTrace& candidate) {
+        return candidate.selected;
+    });
+    if (selected == candidates.end()) {
+        if (trace != nullptr) {
+            trace->action = "idle";
+            trace->reason = "hold_defensive_position";
+        }
+        return false;
+    }
+    const bool moved = move_unit(state, unit_id, selected->coord);
+    if (trace != nullptr) {
+        trace->action = moved ? "move" : "idle";
+        trace->reason = moved ? "settled_defense_position" : "move_rejected";
+    }
+    return moved;
+}
+
 void populate_ai_animation_step_snapshot(GameState& state, AiAnimationStep& step) {
     step.hexes = state.hexes;
     const auto supplied = supplied_hex_coords(state);
@@ -2897,18 +3105,107 @@ bool first_ai_anchor_coord(const GameState& state, OwnerId owner, Coord& anchor)
 
 bool nearest_owned_settlement_threat(const GameState& state, OwnerId owner, Coord origin, Coord& target) {
     bool found = false;
-    int best_score = std::numeric_limits<int>::max();
+    int best_score = std::numeric_limits<int>::min();
     for (const Settlement& settlement : state.settlements) {
         if (settlement.owner != owner) {
             continue;
         }
         const Unit* threat = nearest_enemy_unit_from_coord(state, owner, settlement.coord);
-        if (threat == nullptr || hex_distance(threat->coord, settlement.coord) > 3) {
+        if (threat == nullptr) {
             continue;
         }
-        const int score = hex_distance(origin, settlement.coord);
-        if (!found || score < best_score || (score == best_score && coord_less(settlement.coord, target))) {
+        const int threat_distance = hex_distance(threat->coord, settlement.coord);
+        if (threat_distance > 5) {
+            continue;
+        }
+        const int score = (6 - threat_distance) * 120
+            + threat->attack * 12
+            + threat->readiness
+            - hex_distance(origin, settlement.coord) * 8;
+        if (!found || score > best_score || (score == best_score && coord_less(settlement.coord, target))) {
             target = settlement.coord;
+            best_score = score;
+            found = true;
+        }
+    }
+    return found;
+}
+
+bool settled_archetype(const std::string& archetype) {
+    return archetype == "chinese" || archetype == "persian" || archetype == "jurchen";
+}
+
+bool passable_ai_objective_hex(const GameState& state, Coord coord) {
+    const GameHex* hex = find_hex(state, coord);
+    return hex != nullptr && terrain_movement_cost(hex->terrain) != blocked_movement_cost();
+}
+
+int nearest_owned_settlement_distance(const GameState& state, OwnerId owner, Coord coord) {
+    int best = std::numeric_limits<int>::max();
+    for (const Settlement& settlement : state.settlements) {
+        if (settlement.owner == owner) {
+            best = std::min(best, hex_distance(coord, settlement.coord));
+        }
+    }
+    return best;
+}
+
+bool wall_gate_hold_coord(const GameState& state, OwnerId owner, const WallGate& gate, Coord& target) {
+    std::vector<Coord> candidates;
+    if (passable_ai_objective_hex(state, gate.edge.a)) {
+        candidates.push_back(gate.edge.a);
+    }
+    if (passable_ai_objective_hex(state, gate.edge.b)) {
+        candidates.push_back(gate.edge.b);
+    }
+    if (candidates.empty()) {
+        return false;
+    }
+    bool found = false;
+    int best_score = std::numeric_limits<int>::min();
+    for (const Coord& coord : candidates) {
+        const GameHex* hex = find_hex(state, coord);
+        const int owned_settlement_distance = nearest_owned_settlement_distance(state, owner, coord);
+        if (owned_settlement_distance == std::numeric_limits<int>::max() || owned_settlement_distance > 8) {
+            continue;
+        }
+        const int score = (hex != nullptr && hex->owner == owner ? 80 : 0)
+            - owned_settlement_distance * 12
+            + terrain_defense_percent_at(state, coord);
+        if (!found || score > best_score || (score == best_score && coord_less(coord, target))) {
+            target = coord;
+            best_score = score;
+            found = true;
+        }
+    }
+    return found;
+}
+
+bool best_threatened_wall_gate(const GameState& state, OwnerId owner, Coord origin, Coord& target) {
+    bool found = false;
+    int best_score = std::numeric_limits<int>::min();
+    for (const WallGate& gate : state.wall_gates) {
+        Coord gate_coord;
+        if (!wall_gate_hold_coord(state, owner, gate, gate_coord)) {
+            continue;
+        }
+        const Unit* threat = nearest_enemy_unit_from_coord(state, owner, gate_coord);
+        if (threat == nullptr) {
+            continue;
+        }
+        const int threat_distance = hex_distance(threat->coord, gate_coord);
+        if (threat_distance > 5) {
+            continue;
+        }
+        const int settlement_distance = nearest_owned_settlement_distance(state, owner, gate_coord);
+        const int score = 250
+            + (6 - threat_distance) * 140
+            + threat->attack * 12
+            + threat->readiness
+            - settlement_distance * 10
+            - hex_distance(origin, gate_coord) * 6;
+        if (!found || score > best_score || (score == best_score && coord_less(gate_coord, target))) {
+            target = gate_coord;
             best_score = score;
             found = true;
         }
@@ -2963,8 +3260,13 @@ bool strategic_directive_for_owner(const GameState& state, OwnerId owner, Coord 
         return false;
     }
 
-    if (archetype == "chinese" || archetype == "persian" || archetype == "jurchen") {
+    if (settled_archetype(archetype)) {
         Coord target;
+        if (best_threatened_wall_gate(state, owner, origin, target)) {
+            directive.kind = AiDirectiveKind::DefendHex;
+            directive.target = target;
+            return true;
+        }
         if (nearest_owned_settlement_threat(state, owner, origin, target)) {
             directive.kind = AiDirectiveKind::DefendHex;
             directive.target = target;
@@ -3138,6 +3440,26 @@ bool execute_ai_unit_single_action(
         return false;
     }
 
+    const bool settled_ai = settled_archetype(faction_archetype(state, unit->owner));
+    if (settled_ai
+        && directive.kind == AiDirectiveKind::DefendHex
+        && readiness_percent(*unit) < 55
+        && hex_distance(unit->coord, directive.target) <= 1) {
+        if (decision_trace != nullptr) {
+            decision_trace->target = directive.target;
+            decision_trace->action = "idle";
+            decision_trace->reason = "recover_readiness_on_defense";
+        }
+        return false;
+    }
+    if (settled_ai && directive.kind == AiDirectiveKind::DefendHex) {
+        if (decision_trace != nullptr) {
+            decision_trace->target = directive.target;
+            decision_trace->reason = "settled_defense";
+        }
+        return ai_move_to_settled_defense_position(state, unit_id, directive.target, decision_trace);
+    }
+
     if (directive.kind == AiDirectiveKind::DefendHex
         && hex_distance(unit->coord, directive.target) > 1) {
         if (decision_trace != nullptr) {
@@ -3218,6 +3540,28 @@ void execute_ai_unit_directive(
             decision_trace->action = "idle";
             decision_trace->reason = "unit_not_found";
         }
+        return;
+    }
+
+    const bool settled_ai = settled_archetype(faction_archetype(state, unit->owner));
+    if (settled_ai
+        && directive.kind == AiDirectiveKind::DefendHex
+        && readiness_percent(*unit) < 55
+        && hex_distance(unit->coord, directive.target) <= 1) {
+        if (decision_trace != nullptr) {
+            decision_trace->target = directive.target;
+            decision_trace->action = "idle";
+            decision_trace->reason = "recover_readiness_on_defense";
+        }
+        return;
+    }
+    if (settled_ai && directive.kind == AiDirectiveKind::DefendHex) {
+        if (decision_trace != nullptr) {
+            decision_trace->target = directive.target;
+            decision_trace->reason = "settled_defense";
+        }
+        ai_move_to_settled_defense_position(state, unit_id, directive.target, decision_trace);
+        ai_attack_best_adjacent_enemy(state, unit_id, directive, animation_step);
         return;
     }
 
@@ -3508,6 +3852,45 @@ bool execute_ai_group_turn(
     state.selected_unit_id = 0;
     state.legal_moves.clear();
     state.legal_attacks.clear();
+    return true;
+}
+
+bool replace_ai_groups_json(GameState& state, const std::string& ai_groups_json) {
+    Json parsed;
+    try {
+        parsed = Json::parse(ai_groups_json);
+    } catch (const Json::parse_error&) {
+        return false;
+    }
+    if (!parsed.is_array()) {
+        return false;
+    }
+
+    std::vector<AiGroup> groups = ai_groups_from_json(parsed);
+    std::set<int> used_ids;
+    for (AiGroup& group : groups) {
+        if (group.id == 0 || used_ids.find(group.id) != used_ids.end()) {
+            return false;
+        }
+        used_ids.insert(group.id);
+
+        std::vector<int> valid_unit_ids;
+        std::set<int> seen_unit_ids;
+        for (const int unit_id : group.unit_ids) {
+            if (seen_unit_ids.find(unit_id) != seen_unit_ids.end()) {
+                continue;
+            }
+            const Unit* unit = find_unit(state, unit_id);
+            if (unit == nullptr || unit->owner != group.owner) {
+                continue;
+            }
+            seen_unit_ids.insert(unit_id);
+            valid_unit_ids.push_back(unit_id);
+        }
+        group.unit_ids = std::move(valid_unit_ids);
+    }
+
+    state.ai_groups = std::move(groups);
     return true;
 }
 
@@ -4305,6 +4688,7 @@ void print_ai_decision_trace_json(const std::vector<AiUnitDecisionTrace>& trace,
                 << ",\"distanceBefore\":" << candidate.distance_before
                 << ",\"distanceAfter\":" << candidate.distance_after
                 << ",\"distanceGain\":" << candidate.distance_gain
+                << ",\"score\":" << candidate.score
                 << ",\"selected\":" << (candidate.selected ? "true" : "false")
                 << ",\"path\":[";
             for (std::size_t path_index = 0; path_index < candidate.path.size(); ++path_index) {
@@ -4603,30 +4987,7 @@ GameState parse_game_state_json(const std::string& json) {
     const Json& ai_group_items = game_json.contains("aiGroups") && game_json["aiGroups"].is_array()
         ? game_json["aiGroups"]
         : empty_array;
-    for (const Json& group_json : ai_group_items) {
-        if (!group_json.is_object()) {
-            continue;
-        }
-        AiGroup group;
-        group.id = int_field(group_json, "id", 0);
-        group.owner = int_field(group_json, "owner", neutral_owner);
-        group.name = string_field(group_json, "name", "");
-        group.generated = bool_field(group_json, "generated", false);
-        group.unit_ids = int_array_field(group_json, "unitIds");
-        const Json& directive_json = group_json.contains("directive") && group_json["directive"].is_object()
-            ? group_json["directive"]
-            : empty_object;
-        group.directive.kind = ai_directive_kind_from_string(string_field(directive_json, "type", "hunt"));
-        if (directive_json.contains("target") && directive_json["target"].is_object()) {
-            group.directive.target = coord_from_json(directive_json["target"]);
-        }
-        group.directive.target_owner = int_field(
-            directive_json,
-            "owner",
-            owner_from_faction_key(string_field(directive_json, "faction", ""), neutral_owner)
-        );
-        state.ai_groups.push_back(std::move(group));
-    }
+    state.ai_groups = ai_groups_from_json(ai_group_items);
 
     const Json& diplomacy_items = game_json.contains("diplomacy") && game_json["diplomacy"].is_array()
         ? game_json["diplomacy"]

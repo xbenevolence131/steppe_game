@@ -169,6 +169,9 @@ let paintUndoRecorded = false;
 let terrainUndo = new Map();
 let localUndoStack = [];
 let playUndoDepth = 0;
+let playModeEngineSync = Promise.resolve();
+let scenarioEditorEngineSync = Promise.resolve();
+let scenarioEditorSyncVersion = 0;
 let currentTurn = 1;
 let activeFactionIndex = 0;
 let activeContextMenu = null;
@@ -1367,6 +1370,7 @@ function updateFoodConsumptionSettingFromInput() {
   }
   currentMap.game = currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {};
   currentMap.game.foodConsumption = foodConsumptionEnabled();
+  void syncScenarioEditorToEngine();
 }
 
 function selectedScenarioFactionsFromControls() {
@@ -1495,6 +1499,9 @@ function mutateAiGroup(groupId, mutator, options = {}) {
   }
   if (currentMap) {
     requestAnimationFrame(drawMap);
+  }
+  if (options.syncEngine !== false) {
+    void syncAiGroupsToEngine();
   }
 }
 
@@ -2052,6 +2059,7 @@ function addAiGroup() {
   openScenarioRegions.add("ai");
   syncModeControls();
   drawMap();
+  void syncAiGroupsToEngine();
 }
 
 function updateScenarioNameFromInput() {
@@ -2072,10 +2080,27 @@ function updateScenarioFactionsFromControls() {
       firstEnabled.checked = true;
     }
   }
-  currentMap.factions = selectedScenarioFactionsFromControls();
+  const selectedFactions = selectedScenarioFactionsFromControls();
+  currentMap.factions = selectedFactions;
+  currentMap.game = currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {};
+  currentMap.game.factions = selectedFactions.map((faction) => ({
+    id: faction.id,
+    key: faction.key,
+    name: faction.name,
+    color: faction.color,
+    metal: faction.metal,
+    treasure: faction.treasure,
+    food: faction.food,
+    enabled: faction.enabled,
+    ai: faction.ai,
+  }));
+  currentMap.game.turnOrder = selectedFactions
+    .filter((faction) => faction.enabled)
+    .map((faction) => faction.id);
   ensureGameMeta();
   syncModeControls();
   drawMap();
+  void syncScenarioEditorToEngine();
 }
 
 function normalizeScenarioFaction(faction, fallbackKey = "mongol") {
@@ -2572,6 +2597,7 @@ function restoreLocalUndo(snapshot) {
     : 0;
   syncModeControls();
   drawMap();
+  void syncScenarioEditorToEngine();
 }
 
 function normalizeUnitDefault(defaults) {
@@ -2778,6 +2804,21 @@ function applyEnginePatch(payload, reason = "patch") {
   if (Array.isArray(payload.units)) {
     currentMap.units = payload.units.map(normalizeUnit);
   }
+  if (Array.isArray(payload.edges)) {
+    currentMap.edges = payload.edges;
+  }
+  if (Array.isArray(payload.roads)) {
+    currentMap.roads = payload.roads;
+  }
+  if (Array.isArray(payload.walls)) {
+    currentMap.walls = payload.walls;
+  }
+  if (Array.isArray(payload.wall_gates)) {
+    currentMap.wall_gates = payload.wall_gates;
+  }
+  if (Array.isArray(payload.crossings)) {
+    currentMap.crossings = payload.crossings;
+  }
   if (payload.game && typeof payload.game === "object") {
     currentMap.game = payload.game;
     if (Array.isArray(payload.game.factions)) {
@@ -2797,6 +2838,41 @@ function syncEngineProjectionMeta(map, reason) {
   engineProjection.version = Number.isInteger(game && game.stateVersion) ? game.stateVersion : 0;
   engineProjection.hash = typeof (game && game.stateHash) === "string" ? game.stateHash : "";
   engineProjection.lastSyncReason = reason;
+}
+
+function hasEngineProjection() {
+  return engineProjection.version > 0 && engineProjection.hash.length > 0;
+}
+
+function syncScenarioEditorToEngine() {
+  if (!currentMap) {
+    return Promise.resolve(false);
+  }
+  scenarioEditorSyncVersion += 1;
+  const syncVersion = scenarioEditorSyncVersion;
+  const snapshot = scenarioSnapshot();
+  const commandType = hasEngineProjection() ? "set_editor_state" : "load_game";
+  scenarioEditorEngineSync = scenarioEditorEngineSync
+    .catch(() => false)
+    .then(async () => {
+      const command = { type: commandType, state: snapshot };
+      const payload = await postAppCommand(command);
+      if (syncVersion === scenarioEditorSyncVersion) {
+        replaceProjectionFromEngine(payload, command.type);
+        syncModeControls();
+        drawMap();
+      }
+      return true;
+    })
+    .catch((error) => {
+      window.alert(error.message);
+      return false;
+    });
+  return scenarioEditorEngineSync;
+}
+
+function syncAiGroupsToEngine() {
+  return syncScenarioEditorToEngine();
 }
 
 function projectionComparableState(map) {
@@ -3009,6 +3085,7 @@ async function postAppCommand(command, gameId = "local-dev") {
 }
 
 async function postUndoableGameCommand(command) {
+  await playModeEngineSync;
   const payload = await postAppCommand(command);
   recordPlayUndo();
   return payload;
@@ -3454,6 +3531,7 @@ function mutateEditorInspectorUnit(mutator) {
   ensureGameMeta();
   syncModeControls();
   drawMap();
+  void syncScenarioEditorToEngine();
 }
 
 function updateEditorUnitName() {
@@ -3903,32 +3981,36 @@ function setAppMode(mode) {
 }
 
 async function enterPlayMode() {
-  appMode = "play";
-  strategicAiCollapsed = true;
-  territoryViewEnabled = true;
-  isPainting = false;
-  paintStrokeKeys = new Set();
-  paintUndoRecorded = false;
-  editorSelectedUnitId = 0;
-  aiPickMode = null;
-  syncModeControls();
-  if (appInitialization) {
-    await appInitialization;
-  }
-  if (currentMap) {
-    try {
-      const payload = await postAppCommand({ type: "load_game", state: scenarioSnapshot() });
-      replaceProjectionFromEngine(payload, "load_game");
-      terrainUndo = new Map();
-      clearUndoHistory();
-      ensureGameMeta();
-      syncEngineProjectionMeta(currentMap, "load_game");
-    } catch (error) {
-      window.alert(error.message);
-      return;
+  const sync = (async () => {
+    appMode = "play";
+    strategicAiCollapsed = true;
+    territoryViewEnabled = true;
+    isPainting = false;
+    paintStrokeKeys = new Set();
+    paintUndoRecorded = false;
+    editorSelectedUnitId = 0;
+    aiPickMode = null;
+    syncModeControls();
+    if (appInitialization) {
+      await appInitialization;
     }
-  }
-  setAppMode("play");
+    if (currentMap) {
+      try {
+        const payload = await postAppCommand({ type: "load_game", state: scenarioSnapshot() });
+        replaceProjectionFromEngine(payload, "load_game");
+        terrainUndo = new Map();
+        clearUndoHistory();
+        ensureGameMeta();
+        syncEngineProjectionMeta(currentMap, "load_game");
+      } catch (error) {
+        window.alert(error.message);
+        return;
+      }
+    }
+    setAppMode("play");
+  })();
+  playModeEngineSync = sync.catch(() => false);
+  return sync;
 }
 
 function enterScenarioMode() {
@@ -5159,6 +5241,11 @@ async function showContextMenu(event) {
     return false;
   }
 
+  await playModeEngineSync;
+  if (requestId !== contextMenuRequestId || appMode !== "play" || !currentMap) {
+    return false;
+  }
+
   const context = contextForPointer(event);
   if (requestId !== contextMenuRequestId) {
     return false;
@@ -5398,6 +5485,20 @@ async function selectUnit(unit) {
   syncModeControls();
   drawMap();
   try {
+    await playModeEngineSync;
+    if (requestId !== unitSelectionRequestId) {
+      return false;
+    }
+    const syncedUnit = currentMap && Array.isArray(currentMap.units)
+      ? currentMap.units.find((candidate) => candidate.id === unit.id)
+      : null;
+    if (!syncedUnit) {
+      return false;
+    }
+    unit = syncedUnit;
+    selectedHexCoord = { q: unit.q, r: unit.r };
+    syncModeControls();
+    drawMap();
     const payload = await postAppCommand({
       type: "select_unit",
       unitId: unit.id,
@@ -5976,6 +6077,7 @@ function handleUnitEditClick(event) {
     ensureGameMeta();
     syncModeControls();
     drawMap();
+    void syncScenarioEditorToEngine();
     return;
   }
   if (hex) {
@@ -6007,6 +6109,7 @@ function handleAiMemberPickClick(event) {
   ensureGameMeta();
   syncModeControls();
   drawMap();
+  void syncAiGroupsToEngine();
 }
 
 function handleAiTargetPickClick(event) {
@@ -6024,6 +6127,7 @@ function handleAiTargetPickClick(event) {
   ensureGameMeta();
   syncModeControls();
   drawMap();
+  void syncAiGroupsToEngine();
 }
 
 function toggleHexTerrain(hex, terrain) {
@@ -6104,6 +6208,7 @@ function paintSupplySourceAtPointer(event) {
   }
   paintHexSupplySource(hex, supplySource);
   drawMap();
+  void syncScenarioEditorToEngine();
 }
 
 function paintOwnershipAtPointer(event) {
@@ -6136,6 +6241,7 @@ function paintOwnershipAtPointer(event) {
   selectedHexCoord = { q: hex.q, r: hex.r };
   paintHexOwnership(hex, owner);
   drawMap();
+  void syncScenarioEditorToEngine();
 }
 
 function paintAtPointer(event) {
@@ -6175,6 +6281,7 @@ function paintAtPointer(event) {
     }
     refreshDerivedTopology();
     drawMap();
+    void syncScenarioEditorToEngine();
     return;
   }
 
@@ -6197,6 +6304,7 @@ function paintAtPointer(event) {
   toggleHexTerrain(hex, terrain);
   refreshDerivedTopology();
   drawMap();
+  void syncScenarioEditorToEngine();
 }
 
 function placeEditorUnitAtPointer(event) {
@@ -6221,6 +6329,7 @@ function placeEditorUnitAtPointer(event) {
   }
   syncModeControls();
   drawMap();
+  void syncScenarioEditorToEngine();
 }
 
 async function generateMap() {
@@ -6295,6 +6404,7 @@ async function generateMap() {
     refreshDerivedTopology();
     syncModeControls();
     fitMap();
+    void syncScenarioEditorToEngine();
   } catch (error) {
     window.alert(error.message);
   } finally {
@@ -6350,6 +6460,7 @@ function createBlankMap(options = {}) {
   refreshDerivedTopology();
   syncModeControls();
   fitMap();
+  void syncScenarioEditorToEngine();
 }
 
 async function createDefaultPlayScenario() {

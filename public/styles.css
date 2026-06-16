@@ -82,7 +82,7 @@ body {
 }
 
 .app-shell.is-play.strategic-ai-collapsed {
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .scenario-topbar {
@@ -128,7 +128,7 @@ body {
 }
 
 .app-shell.is-play.strategic-ai-collapsed .strategic-ai-dashboard {
-  display: none;
+  display: grid;
 }
 
 .faction-status-title {

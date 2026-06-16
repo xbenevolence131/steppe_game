@@ -301,6 +301,24 @@ std::string handle_command(const std::string& body) {
     if (type == "get_state") {
         return ok_response(game_id, game_state_json(state));
     }
+    if (type == "set_editor_state") {
+        const auto state_it = command.find("state");
+        if (state_it == command.end() || !state_it->is_object()) {
+            return error_response("set_editor_state requires command.state");
+        }
+        const steppe::game::GameState before = state;
+        steppe::game::GameState edited;
+        try {
+            edited = steppe::game::parse_game_state_json(state_it->dump());
+        } catch (const std::exception& ex) {
+            return error_response(std::string("invalid editor state: ") + ex.what());
+        }
+        edited.state_version = state.state_version;
+        state = std::move(edited);
+        push_undo_state(game_id, before);
+        advance_state_version(state);
+        return ok_response(game_id, game_state_json(state));
+    }
     if (type == "undo") {
         std::vector<steppe::game::GameState>& stack = undo_stacks[game_id];
         if (stack.empty()) {
@@ -424,6 +442,19 @@ std::string handle_command(const std::string& body) {
             int_field(command, "unitId", 0),
             coord_field(command, "to")
         );
+        if (ok) {
+            push_undo_state(game_id, before);
+            advance_state_version(state);
+        }
+        return command_response(game_id, ok, game_patch_json(state, ok, nullptr, ok ? &before : nullptr));
+    }
+    if (type == "set_ai_groups") {
+        const auto groups_it = command.find("aiGroups");
+        if (groups_it == command.end() || !groups_it->is_array()) {
+            return error_response("set_ai_groups requires command.aiGroups");
+        }
+        const steppe::game::GameState before = state;
+        const bool ok = steppe::game::replace_ai_groups_json(state, groups_it->dump());
         if (ok) {
             push_undo_state(game_id, before);
             advance_state_version(state);

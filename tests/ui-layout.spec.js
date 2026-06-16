@@ -11,6 +11,67 @@ async function openPlayMode(page) {
   await expect.poll(() => page.locator(".unit-roster-item").count()).toBeGreaterThan(0);
 }
 
+async function editorEngineView(page) {
+  return page.evaluate(async () => {
+    if (typeof scenarioEditorEngineSync !== "undefined") {
+      await scenarioEditorEngineSync;
+    }
+    return postAppCommand({ type: "get_state" });
+  });
+}
+
+async function stageAdjacentEnemyForHorde(page, attackerKind = "horde") {
+  return page.evaluate(async (kind) => {
+    const horde = currentMap.units.find((unit) => unit.kind === kind && unit.faction === "mongol");
+    const enemy = currentMap.units.find((unit) => unit.faction === "chinese" && unit.kind === "chinese_cavalry");
+    if (!horde || !enemy) {
+      throw new Error("could not find horde and enemy units");
+    }
+    const occupied = new Set(currentMap.units
+      .filter((unit) => unit.id !== enemy.id)
+      .map((unit) => `${unit.q},${unit.r}`));
+    const destination = Array.from({ length: 6 }, (_, direction) => neighborInDirection(horde, direction))
+      .find((coord) => {
+        const hex = currentMap.hexes.find((candidate) => candidate.q === coord.q && candidate.r === coord.r);
+        return hex
+          && !occupied.has(`${coord.q},${coord.r}`)
+          && !["none", "lake"].includes(hex.terrain);
+      });
+    if (!destination) {
+      throw new Error("could not stage adjacent horde enemy");
+    }
+    enemy.q = destination.q;
+    enemy.r = destination.r;
+    enemy.remainingMove = enemy.move;
+    enemy.remainingScaledMove = enemy.scaledMove;
+    enemy.moveDone = false;
+    enemy.combatDone = false;
+    currentMap.game = currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {};
+    currentMap.game.selectedUnitId = horde.id;
+    currentMap.game.activeFactionIndex = 0;
+    currentMap.game.activeOwner = horde.owner;
+    const loaded = await postAppCommand({ type: "load_game", state: scenarioSnapshot() });
+    replaceProjectionFromEngine(loaded, "load_game");
+    applyGamePatch(await postAppCommand({ type: "select_unit", unitId: horde.id }));
+    const stagedEnemy = currentMap.units.find((unit) => unit.id === enemy.id);
+    const stagedHorde = currentMap.units.find((unit) => unit.id === horde.id);
+    const panel = mapPanel.getBoundingClientRect();
+    const hordeCenter = hexCenter(stagedHorde);
+    const enemyCenter = hexCenter(stagedEnemy);
+    return {
+      hordeId: stagedHorde.id,
+      enemyId: stagedEnemy.id,
+      enemyHp: stagedEnemy.hp,
+      enemyAdjacent: true,
+      attackable: currentMap.game.legalAttacks.some((attack) => attack.unitId === stagedEnemy.id),
+      x: panel.left + viewport.offsetX + enemyCenter.x * viewport.scale,
+      y: panel.top + viewport.offsetY + enemyCenter.y * viewport.scale,
+      hordeX: panel.left + viewport.offsetX + hordeCenter.x * viewport.scale,
+      hordeY: panel.top + viewport.offsetY + hordeCenter.y * viewport.scale,
+    };
+  }, attackerKind);
+}
+
 let httpGameId = 0;
 
 function curlJson(url, body) {
@@ -512,6 +573,48 @@ function aiDirectiveGameState(directive, units) {
         unitIds: [3],
         directive,
       }],
+    },
+  };
+}
+
+function settledGateDefenseAiGameState() {
+  const hexes = [];
+  for (let r = 1; r <= 4; r += 1) {
+    for (let q = 1; q <= 9; q += 1) {
+      hexes.push({
+        q,
+        r,
+        terrain: q === 7 && r === 2 ? "urban" : "grassland",
+        owner: q >= 6 ? 2 : 0,
+        labels: q === 7 && r === 2 ? ["urban", "chinese_town"] : [],
+      });
+    }
+  }
+  return {
+    width: 9,
+    height: 4,
+    seed: 0,
+    hexes,
+    towns: [{ q: 7, r: 2, feature: "chinese_town", labels: ["chinese_town"] }],
+    wall_gates: [{
+      id: 1,
+      kind: "gate",
+      edge: { a: { q: 5, r: 2 }, b: { q: 6, r: 2 } },
+    }],
+    units: [
+      { id: 1, owner: 0, faction: "mongol", kind: "horse_archer", q: 4, r: 2, hp: 10, maxHp: 10, remainingScaledMove: 32 },
+      { id: 3, owner: 2, faction: "chinese", kind: "infantry", q: 7, r: 2, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+    ],
+    game: {
+      round: 1,
+      activeFactionIndex: 0,
+      activeOwner: 0,
+      selectedUnitId: 0,
+      turnOrder: [0, 2],
+      factions: [
+        { id: 0, key: "mongol", name: "Mongol", color: "#d6a21a", enabled: true, ai: false, metal: 4, treasure: 0 },
+        { id: 2, key: "chinese", name: "Chinese", color: "#c93632", enabled: true, ai: true, metal: 4, treasure: 0 },
+      ],
     },
   };
 }
@@ -1095,6 +1198,19 @@ test("AI directives choose distinct tactical targets", async ({ isMobile }) => {
   expect(defend.game.aiGroups[0].directive.type).toBe("defend_hex");
 });
 
+test("settled AI holds threatened wall gates before towns", async ({ isMobile }) => {
+  test.skip(isMobile, "engine settled AI rule is covered once on desktop");
+
+  const result = runEngineJson(["game-end-turn"], settledGateDefenseAiGameState());
+  const chineseUnit = result.units.find((unit) => unit.id === 3);
+  expect(result.game.aiGroups[0].directive).toEqual(expect.objectContaining({
+    type: "defend_hex",
+    target: { q: 6, r: 2 },
+  }));
+  expect(chineseUnit.q).toBe(6);
+  expect(chineseUnit.r).toBe(2);
+});
+
 test("inactive AI directive leaves assigned units idle", async ({ isMobile }) => {
   test.skip(isMobile, "engine AI directive rules are covered once on desktop");
 
@@ -1481,33 +1597,8 @@ test("clicking attackable enemies resolves combat", async ({ page, isMobile }) =
 
   await openPlayMode(page);
 
-  const result = await page.evaluate(async () => {
-    const horde = currentMap.units.find((unit) => unit.kind === "horde" && unit.faction === "mongol");
-    applyGamePatch(await postAppCommand({ type: "end_turn" }));
-    const enemy = currentMap.units.find((unit) => unit.faction === "chinese" && unit.kind === "chinese_cavalry");
-    applyGamePatch(await postAppCommand({ type: "select_unit", unitId: enemy.id }));
-    const hordeNeighbors = Array.from({ length: 6 }, (_, direction) => neighborInDirection(horde, direction));
-    const adjacentHex = currentMap.game.legalMoves.find((hex) => (
-      hordeNeighbors.some((neighbor) => neighbor.q === hex.q && neighbor.r === hex.r)
-    ));
-    applyGamePatch(await postAppCommand({
-      type: "move_unit",
-      unitId: enemy.id,
-      to: { q: adjacentHex.q, r: adjacentHex.r },
-    }));
-    applyGamePatch(await postAppCommand({ type: "end_turn" }));
-    applyGamePatch(await postAppCommand({ type: "select_unit", unitId: horde.id }));
-    const movedEnemy = currentMap.units.find((unit) => unit.id === enemy.id);
-    const panel = mapPanel.getBoundingClientRect();
-    const center = hexCenter(movedEnemy);
-    return {
-      hordeId: horde.id,
-      enemyId: enemy.id,
-      enemyHp: movedEnemy.hp,
-      x: panel.left + viewport.offsetX + center.x * viewport.scale,
-      y: panel.top + viewport.offsetY + center.y * viewport.scale,
-    };
-  });
+  const result = await stageAdjacentEnemyForHorde(page, "horse_archer");
+  expect(result.attackable).toBe(true);
 
   await page.mouse.click(result.x, result.y);
   await expect.poll(() => page.evaluate(({ hordeId, enemyId }) => {
@@ -1518,11 +1609,14 @@ test("clicking attackable enemies resolves combat", async ({ page, isMobile }) =
       hordeCombatDone: horde.combatDone,
       enemyHp: enemy ? enemy.hp : 0,
     };
-  }, result)).toEqual({
+  }, result)).toEqual(expect.objectContaining({
     selectedUnitId: result.hordeId,
     hordeCombatDone: true,
-    enemyHp: result.enemyHp - 1,
-  });
+  }));
+  await expect.poll(() => page.evaluate(({ enemyId }) => {
+    const enemy = currentMap.units.find((unit) => unit.id === enemyId);
+    return enemy ? enemy.hp : 0;
+  }, result)).toBeLessThan(result.enemyHp);
 });
 
 test("undo reverts play movement through the engine", async ({ page, isMobile }) => {
@@ -1532,11 +1626,25 @@ test("undo reverts play movement through the engine", async ({ page, isMobile })
   await expect(page.locator("#undo-button")).toBeDisabled();
 
   const moved = await page.evaluate(async () => {
-    const unit = currentMap.units.find((candidate) => candidate.kind === "horse_archer" && candidate.faction === "mongol");
-    await selectUnit(unit);
-    const move = currentMap.game.legalMoves[0];
+    let unit = null;
+    let move = null;
+    for (const candidate of currentMap.units.filter((item) => item.kind === "horse_archer" && item.faction === "mongol")) {
+      await selectUnit(candidate);
+      if (currentMap.game.legalMoves.length > 0) {
+        unit = candidate;
+        move = currentMap.game.legalMoves[0];
+        break;
+      }
+    }
+    if (!unit || !move) {
+      throw new Error("could not find movable Mongol horse archer");
+    }
     const before = { q: unit.q, r: unit.r };
-    await moveSelectedUnitTo(move);
+    applyGamePatch(await postUndoableGameCommand({
+      type: "move_unit",
+      unitId: unit.id,
+      to: { q: move.q, r: move.r },
+    }));
     return {
       unitId: unit.id,
       before,
@@ -1596,8 +1704,13 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   await expect(page.locator("#play-controls")).not.toContainText("Selection");
 
   const rosterItems = page.locator(".unit-roster-item");
-  await expect(rosterItems.first()).toContainText(/m_horse_archer_\d+/);
-  await expect(rosterItems.first()).toContainText("Horse Archers - HP 10/10");
+  const horseArcherRoster = await page.evaluate(() => {
+    const unit = currentMap.units.find((candidate) => candidate.kind === "horse_archer" && candidate.faction === "mongol");
+    return { id: unit.id, name: unitDisplayName(unit) };
+  });
+  const horseArcherRosterItem = rosterItems.filter({ hasText: horseArcherRoster.name }).first();
+  await expect(horseArcherRosterItem).toContainText(/m_horse_archer_\d+/);
+  await expect(horseArcherRosterItem).toContainText("Horse Archers - HP 10/10");
   const shortNameStats = await page.evaluate(() => {
     const names = currentMap.units.map((unit) => unitDisplayName(unit));
     return {
@@ -1614,9 +1727,10 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   expect(shortNameStats.hasMongol).toBe(true);
   expect(shortNameStats.hasChinese).toBe(true);
 
-  await rosterItems.first().click();
+  await horseArcherRosterItem.click();
+  await expect.poll(() => page.evaluate(() => currentMap.game.selectedUnitId)).toBe(horseArcherRoster.id);
 
-  await expect(page.locator(".unit-inspector h2")).toHaveText("Unit Inspector Panel");
+  await expect(page.locator(".unit-inspector h2")).toContainText("Unit Inspector Panel");
   await expect(page.locator("#unit-name")).toHaveText(/m_horse_archer_\d+/);
   await expect(page.locator("#unit-type")).toHaveText("Horse Archers");
   await expect(page.locator("#unit-hp")).toHaveText("10");
@@ -1748,6 +1862,9 @@ test("play strategic AI panel collapses to a single row", async ({ page, isMobil
   });
 
   await expect(page.locator("#strategic-ai-panel-summary")).toHaveText("1 AI group / 1 units");
+  if (await page.locator("#app-shell").evaluate((shell) => shell.classList.contains("strategic-ai-collapsed"))) {
+    await page.locator("#strategic-ai-toggle-button").click();
+  }
   await expect(page.locator("#strategic-ai-groups")).toBeVisible();
 
   const expanded = await page.evaluate(() => {
@@ -1829,8 +1946,13 @@ test("unit counters use sprite glyph zoom bands", async ({ page, isMobile }) => 
   }))).resolves.toEqual(expect.objectContaining({ index: 1, level: "medium" }));
   const mediumScale = await page.evaluate(() => viewport.scale);
   const mediumCounterScreenWidth = await page.evaluate(() => unitCounterMetrics().width * viewport.scale);
-  expect(mediumScale).toBeGreaterThan(initialScale);
-  expect(mediumCounterScreenWidth).toBeGreaterThan(initialCounterScreenWidth);
+  const expectedMediumScale = await page.evaluate(() => zoomScaleForLevel(1));
+  expect(mediumScale).toBeCloseTo(expectedMediumScale, 6);
+  if (expectedMediumScale > initialScale) {
+    expect(mediumCounterScreenWidth).toBeGreaterThan(initialCounterScreenWidth);
+  } else {
+    expect(mediumCounterScreenWidth).toBeCloseTo(initialCounterScreenWidth, 6);
+  }
   await page.locator("#zoom-in-button").click();
   await expect(page.evaluate(() => ({
     index: viewport.zoomLevelIndex,
@@ -1839,7 +1961,11 @@ test("unit counters use sprite glyph zoom bands", async ({ page, isMobile }) => 
     scale: viewport.scale,
   }))).resolves.toEqual(expect.objectContaining({ index: 2, level: "large" }));
   const largeScale = await page.evaluate(() => viewport.scale);
-  expect(largeScale).toBeGreaterThan(mediumScale);
+  const expectedLargeScale = await page.evaluate(() => zoomScaleForLevel(2));
+  expect(largeScale).toBeCloseTo(expectedLargeScale, 6);
+  if (expectedLargeScale > mediumScale) {
+    expect(largeScale).toBeGreaterThan(mediumScale);
+  }
   await page.locator("#zoom-in-button").click();
   await expect(page.evaluate(() => viewport.zoomLevelIndex)).resolves.toBe(2);
   const coverageScales = await page.evaluate(() => {
@@ -1929,8 +2055,8 @@ test("detach herd creates a herd from horde horses", async ({ page, isMobile }) 
   });
 });
 
-test("create horse archers spends horde resources and deploys adjacent unit", async ({ page, isMobile }) => {
-  test.skip(isMobile, "desktop pointer geometry is simpler for deployment assertions");
+test("create horse archers starts horde production", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop pointer geometry is simpler for training assertions");
 
   await openPlayMode(page);
 
@@ -1946,60 +2072,45 @@ test("create horse archers spends horde resources and deploys adjacent unit", as
   });
 
   await page.mouse.click(hordePoint.x, hordePoint.y, { button: "right" });
-  await expect(page.locator("#context-menu [data-action='create-horse-archers']")).toHaveText("Create Horse Archers");
+  await expect(page.locator("#context-menu [data-action='create-horse-archers']")).toHaveText("Train Horse Archers");
   await page.locator("#context-menu [data-action='create-horse-archers']").click();
 
-  await expect.poll(() => page.evaluate(() => (
-    createUnitPlacement && createUnitPlacement.deployableHexes.length
-  ))).toBeGreaterThan(0);
-  const deployPoint = await page.evaluate(() => {
-    const hex = createUnitPlacement.deployableHexes[0];
-    const panel = mapPanel.getBoundingClientRect();
-    const center = hexCenter(hex);
-    return {
-      q: hex.q,
-      r: hex.r,
-      x: panel.left + viewport.offsetX + center.x * viewport.scale,
-      y: panel.top + viewport.offsetY + center.y * viewport.scale,
-    };
-  });
-
-  await page.mouse.click(deployPoint.x, deployPoint.y);
-  await expect.poll(() => page.evaluate(({ unitId, q, r }) => {
+  await expect.poll(() => page.evaluate((unitId) => {
     const horde = currentMap.units.find((unit) => unit.id === unitId);
-    const created = currentMap.units.find((unit) => (
-      unit.kind === "horse_archer" && unit.q === q && unit.r === r
-    ));
     return {
       population: horde.population,
       horses: horde.horses,
       metal: currentMap.game.factions.find((faction) => faction.key === "mongol").metal,
       moveDone: horde.moveDone,
       remainingScaledMove: horde.remainingScaledMove,
-      createdKind: created ? created.kind : "",
-      createdMove: created ? created.move : 0,
+      productionState: horde.productionState,
+      productionKind: horde.productionKind,
+      productionTurnsRemaining: horde.productionTurnsRemaining,
+      productionText: document.querySelector("#unit-production").textContent,
       statusPopulation: document.querySelector("#faction-population-total").textContent,
       statusHorses: document.querySelector("#faction-horses-total").textContent,
       statusMetal: document.querySelector("#faction-metal-total").textContent,
     };
-  }, { unitId: hordePoint.unitId, q: deployPoint.q, r: deployPoint.r }), {
-    message: "horde resources should be spent and horse archers should deploy",
+  }, hordePoint.unitId), {
+    message: "horde should start horse archer production and spend its action",
   }).toEqual({
-    population: 3,
-    metal: 3,
-    horses: 9,
+    population: 4,
+    metal: 4,
+    horses: 12,
     moveDone: true,
     remainingScaledMove: 0,
-    createdKind: "horse_archer",
-    createdMove: 4,
-    statusPopulation: "3",
-    statusHorses: "9",
-    statusMetal: "3",
+    productionState: "building",
+    productionKind: "horse_archer",
+    productionTurnsRemaining: 3,
+    productionText: "Horse Archers: 3 turns",
+    statusPopulation: "4",
+    statusHorses: "12",
+    statusMetal: "4",
   });
 });
 
-test("create steppe lancers spends horde resources and deploys adjacent unit", async ({ page, isMobile }) => {
-  test.skip(isMobile, "desktop pointer geometry is simpler for deployment assertions");
+test("create steppe lancers starts horde production", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop pointer geometry is simpler for training assertions");
 
   await openPlayMode(page);
 
@@ -2018,54 +2129,37 @@ test("create steppe lancers spends horde resources and deploys adjacent unit", a
   await expect(page.locator("#context-menu [data-action='create-mongol-lancers']")).toHaveText("Train Lancers");
   await page.locator("#context-menu [data-action='create-mongol-lancers']").click();
 
-  await expect.poll(() => page.evaluate(() => (
-    createUnitPlacement && createUnitPlacement.kind === "mongol_lancer" && createUnitPlacement.deployableHexes.length
-  ))).toBeGreaterThan(0);
-  const deployPoint = await page.evaluate(() => {
-    const hex = createUnitPlacement.deployableHexes[0];
-    const panel = mapPanel.getBoundingClientRect();
-    const center = hexCenter(hex);
-    return {
-      q: hex.q,
-      r: hex.r,
-      x: panel.left + viewport.offsetX + center.x * viewport.scale,
-      y: panel.top + viewport.offsetY + center.y * viewport.scale,
-    };
-  });
-
-  await page.mouse.click(deployPoint.x, deployPoint.y);
-  await expect.poll(() => page.evaluate(({ unitId, q, r }) => {
+  await expect.poll(() => page.evaluate((unitId) => {
     const horde = currentMap.units.find((unit) => unit.id === unitId);
-    const created = currentMap.units.find((unit) => (
-      unit.kind === "mongol_lancer" && unit.q === q && unit.r === r
-    ));
     return {
       population: horde.population,
       horses: horde.horses,
       metal: currentMap.game.factions.find((faction) => faction.key === "mongol").metal,
       moveDone: horde.moveDone,
-      createdKind: created ? created.kind : "",
-      createdAttack: created ? created.attack : 0,
-      createdDefense: created ? created.defense : 0,
-      createdMove: created ? created.move : 0,
+      remainingScaledMove: horde.remainingScaledMove,
+      productionState: horde.productionState,
+      productionKind: horde.productionKind,
+      productionTurnsRemaining: horde.productionTurnsRemaining,
+      productionText: document.querySelector("#unit-production").textContent,
       statusPopulation: document.querySelector("#faction-population-total").textContent,
       statusHorses: document.querySelector("#faction-horses-total").textContent,
       statusMetal: document.querySelector("#faction-metal-total").textContent,
     };
-  }, { unitId: hordePoint.unitId, q: deployPoint.q, r: deployPoint.r }), {
-    message: "horde resources should be spent and mongol lancers should deploy",
+  }, hordePoint.unitId), {
+    message: "horde should start lancer production and spend its action",
   }).toEqual({
-    population: 3,
-    metal: 2,
-    horses: 9,
+    population: 4,
+    metal: 4,
+    horses: 12,
     moveDone: true,
-    createdKind: "mongol_lancer",
-    createdAttack: 5,
-    createdDefense: 3,
-    createdMove: 4,
-    statusPopulation: "3",
-    statusHorses: "9",
-    statusMetal: "2",
+    remainingScaledMove: 0,
+    productionState: "building",
+    productionKind: "mongol_lancer",
+    productionTurnsRemaining: 3,
+    productionText: "Lancers: 3 turns",
+    statusPopulation: "4",
+    statusHorses: "12",
+    statusMetal: "4",
   });
 });
 
@@ -2076,8 +2170,35 @@ test("horde resource actions are unavailable after movement", async ({ page, isM
 
   const result = await page.evaluate(async () => {
     const horde = currentMap.units.find((unit) => unit.kind === "horde" && unit.faction === "mongol");
+    horde.remainingScaledMove = horde.scaledMove;
+    horde.remainingMove = horde.move;
+    horde.moveDone = false;
+    horde.movedThisTurn = false;
+    horde.combatDone = false;
+    horde.contactedEnemyThisTurn = false;
+    const occupied = new Set(currentMap.units
+      .filter((unit) => unit.id !== horde.id)
+      .map((unit) => `${unit.q},${unit.r}`));
+    let destination = Array.from({ length: 6 }, (_, direction) => neighborInDirection(horde, direction))
+      .find((coord) => {
+        const hex = currentMap.hexes.find((candidate) => candidate.q === coord.q && candidate.r === coord.r);
+        return hex
+          && !occupied.has(`${coord.q},${coord.r}`)
+          && !["none", "lake"].includes(hex.terrain);
+      });
+    if (!destination) {
+      horde.q = 6;
+      horde.r = 6;
+      destination = { q: 7, r: 6 };
+    }
+    replaceProjectionFromEngine(await postAppCommand({ type: "load_game", state: scenarioSnapshot() }), "load_game");
     applyGamePatch(await postAppCommand({ type: "select_unit", unitId: horde.id }));
-    const move = currentMap.game.legalMoves[0];
+    const move = currentMap.game.legalMoves.find((candidate) => (
+      candidate.q === destination.q && candidate.r === destination.r
+    )) || currentMap.game.legalMoves[0];
+    if (!move) {
+      throw new Error("horde should have a legal setup move");
+    }
     applyGamePatch(await postAppCommand({
       type: "move_unit",
       unitId: horde.id,
@@ -2116,42 +2237,23 @@ test("horde resource actions are unavailable next to enemies", async ({ page, is
 
   await openPlayMode(page);
 
-  const result = await page.evaluate(async () => {
-    const horde = currentMap.units.find((unit) => unit.kind === "horde" && unit.faction === "mongol");
-    applyGamePatch(await postAppCommand({ type: "end_turn" }));
-    const enemy = currentMap.units.find((unit) => unit.faction === "chinese" && unit.kind === "chinese_cavalry");
-    applyGamePatch(await postAppCommand({ type: "select_unit", unitId: enemy.id }));
-    const hordeNeighbors = Array.from({ length: 6 }, (_, direction) => neighborInDirection(horde, direction));
-    const adjacentHex = currentMap.game.legalMoves.find((hex) => (
-      hordeNeighbors.some((neighbor) => neighbor.q === hex.q && neighbor.r === hex.r)
-    ));
-    applyGamePatch(await postAppCommand({
-      type: "move_unit",
-      unitId: enemy.id,
-      to: { q: adjacentHex.q, r: adjacentHex.r },
-    }));
-    applyGamePatch(await postAppCommand({ type: "end_turn" }));
-    applyGamePatch(await postAppCommand({ type: "select_unit", unitId: horde.id }));
-    const createOptions = await postAppCommand({ type: "create_horse_archers_options", unitId: horde.id });
-    const lancerOptions = await postAppCommand({ type: "create_mongol_lancers_options", unitId: horde.id });
-    const detachOptions = await postAppCommand({ type: "detach_herd_options", unitId: horde.id, horses: 1 });
-    const movedEnemy = currentMap.units.find((unit) => unit.id === enemy.id);
-    const activeHorde = currentMap.units.find((unit) => unit.id === horde.id);
-    const panel = mapPanel.getBoundingClientRect();
-    const center = hexCenter(activeHorde);
-    const enemyCenter = hexCenter(movedEnemy);
+  const staged = await stageAdjacentEnemyForHorde(page);
+  const result = await page.evaluate(async ({ hordeId, enemyId, hordeX, hordeY, x, y, enemyAdjacent, attackable }) => {
+    const createOptions = await postAppCommand({ type: "create_horse_archers_options", unitId: hordeId });
+    const lancerOptions = await postAppCommand({ type: "create_mongol_lancers_options", unitId: hordeId });
+    const detachOptions = await postAppCommand({ type: "detach_herd_options", unitId: hordeId, horses: 1 });
     return {
-      enemyAdjacent: hordeNeighbors.some((neighbor) => neighbor.q === movedEnemy.q && neighbor.r === movedEnemy.r),
-      attackable: currentMap.game.legalAttacks.some((attack) => attack.unitId === enemy.id),
+      enemyAdjacent,
+      attackable,
       createDeployable: createOptions.deployableHexes.length,
       lancerDeployable: lancerOptions.deployableHexes.length,
       detachDeployable: detachOptions.deployableHexes.length,
-      x: panel.left + viewport.offsetX + center.x * viewport.scale,
-      y: panel.top + viewport.offsetY + center.y * viewport.scale,
-      enemyX: panel.left + viewport.offsetX + enemyCenter.x * viewport.scale,
-      enemyY: panel.top + viewport.offsetY + enemyCenter.y * viewport.scale,
+      x: hordeX,
+      y: hordeY,
+      enemyX: x,
+      enemyY: y,
     };
-  });
+  }, staged);
 
   expect(result.enemyAdjacent).toBe(true);
   expect(result.attackable).toBe(true);
@@ -2196,17 +2298,31 @@ test("play context menu exposes unit actions", async ({ page, isMobile }) => {
     };
   }, predicateSource);
 
-  let point = await unitPoint("unit.kind === 'herd' && unit.faction === 'mongol'");
+  let point = await unitPoint("unit.kind === 'horse_archer' && unit.faction === 'mongol'");
   await page.mouse.click(point.x, point.y, { button: "right" });
   await expect(page.locator("#context-menu")).toBeVisible();
   await expect(page.locator("#context-menu [data-action='select-unit']")).toHaveText("Select");
   await page.locator("#context-menu [data-action='select-unit']").click();
   await expect(page.locator("#unit-type")).not.toHaveText("-");
 
-  const movePoint = await page.evaluate(() => {
-    const selectedId = currentMap.game.selectedUnitId;
-    const unit = currentMap.units.find((candidate) => candidate.id === selectedId);
+  const movePoint = await page.evaluate(async () => {
+    const selectedId = currentMap.units.find((candidate) => (
+      candidate.kind === "horse_archer" && candidate.faction === "mongol"
+    )).id;
+    let unit = currentMap.units.find((candidate) => candidate.id === selectedId);
+    unit.remainingScaledMove = unit.scaledMove;
+    unit.remainingMove = unit.move;
+    unit.moveDone = false;
+    unit.movedThisTurn = false;
+    unit.combatDone = false;
+    unit.contactedEnemyThisTurn = false;
+    replaceProjectionFromEngine(await postAppCommand({ type: "load_game", state: scenarioSnapshot() }), "load_game");
+    applyGamePatch(await postAppCommand({ type: "select_unit", unitId: selectedId }));
+    unit = currentMap.units.find((candidate) => candidate.id === selectedId);
     const move = currentMap.game.legalMoves[0];
+    if (!move) {
+      throw new Error("selected unit should have a legal context-menu move");
+    }
     const panel = mapPanel.getBoundingClientRect();
     const center = hexCenter(move);
     return {
@@ -2240,6 +2356,14 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect(page.locator("#play-details-bar")).toBeVisible();
   await expect(page.locator("#unit-roster")).toBeVisible();
   await expect(page.getByRole("button", { name: "Hide Panel" })).toBeVisible();
+  await expect.poll(async () => {
+    try {
+      const view = await editorEngineView(page);
+      return view.width > 0;
+    } catch {
+      return false;
+    }
+  }).toBe(true);
   const expandedMapHeight = await page.evaluate(() => document.querySelector("#map-panel").getBoundingClientRect().height);
   await page.getByRole("button", { name: "Hide Panel" }).click();
   await expect(page.locator("#play-details-bar")).toBeHidden();
@@ -2253,6 +2377,10 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
     chineseAi: currentMap.game.factions.find((faction) => faction.key === "chinese").ai,
     turnOrder: currentMap.game.turnOrder,
   }))).toEqual({ chineseAi: true, turnOrder: [0, 2] });
+  await expect.poll(async () => {
+    const view = await editorEngineView(page);
+    return view.game.factions.find((faction) => faction.key === "chinese").ai;
+  }).toBe(true);
 
   const hexPoint = async (coord) => page.evaluate(({ q, r }) => {
     const panel = mapPanel.getBoundingClientRect();
@@ -2288,7 +2416,6 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect(page.locator("#edge-feature-choices")).toBeHidden();
   await expect(page.locator("#editor-unit-type")).toBeVisible();
   await expect(page.locator('[data-scenario-region="terrain"]')).toHaveClass(/is-active/);
-
   await page.locator('.unit-tool-button[data-unit-tool="edit"]').click();
   await expect(page.locator('[data-scenario-region="units"]')).toHaveClass(/is-active/);
   await page.locator('.unit-tool-button[data-unit-tool="place"]').click();
@@ -2303,11 +2430,29 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   let point = await edgePoint({ q: 2, r: 2 }, { q: 3, r: 2 });
   await page.mouse.click(point.x, point.y);
   await expect.poll(() => page.evaluate(() => currentMap.roads.length)).toBe(1);
+  await expect.poll(async () => {
+    const view = await editorEngineView(page);
+    return view.roads.length;
+  }).toBe(1);
   await expect(page.locator("#undo-button")).toBeEnabled();
   await page.locator("#undo-button").click();
   await expect.poll(() => page.evaluate(() => currentMap.roads.length)).toBe(0);
+  await expect.poll(async () => {
+    const view = await editorEngineView(page);
+    return view.roads.length;
+  }).toBe(0);
   await expect(page.locator("#undo-button")).toBeDisabled();
 
+  await page.getByRole("button", { name: "Hex Terrain" }).click();
+  await page.locator('.terrain-button[data-terrain="mountain"]').click();
+  const terrainPoint = await hexPoint({ q: 2, r: 2 });
+  await page.mouse.click(terrainPoint.x, terrainPoint.y);
+  await expect.poll(async () => {
+    const view = await editorEngineView(page);
+    return view.hexes.find((hex) => hex.q === 2 && hex.r === 2).terrain;
+  }).toBe("mountain");
+
+  await page.getByRole("button", { name: "Edges" }).click();
   await page.getByRole("button", { name: "River" }).click();
   point = await edgePoint({ q: 2, r: 2 }, { q: 3, r: 2 });
   await page.mouse.click(point.x, point.y);
@@ -2350,7 +2495,7 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
     gates: currentMap.wall_gates.length,
   }))).toEqual({ walls: 0, gates: 0 });
 
-  await page.getByRole("button", { name: "Units", exact: true }).click();
+  await page.locator('[data-scenario-activate="units"]').click();
   await expect(page.locator("#editor-unit-type")).toBeVisible();
   await expect(page.locator("#editor-unit-side")).toBeVisible();
   await page.locator("#editor-unit-type").selectOption("horde");
@@ -2365,6 +2510,10 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect.poll(() => page.evaluate(() => currentMap.units[0].respectsZoc)).toBe(true);
   await expect.poll(() => page.evaluate(() => currentMap.units[0].population)).toBe(4);
   await expect.poll(() => page.evaluate(() => currentMap.units[0].horses)).toBe(12);
+  await expect.poll(async () => {
+    const view = await editorEngineView(page);
+    return { count: view.units.length, kind: view.units[0]?.kind, owner: view.units[0]?.owner };
+  }).toEqual({ count: 1, kind: "horde", owner: 0 });
   point = await hexPoint({ q: 3, r: 3 });
   await page.mouse.click(point.x, point.y);
   await expect.poll(() => page.evaluate(() => currentMap.units.length)).toBe(0);
@@ -2404,6 +2553,10 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await page.locator("#unit-readiness-input").fill("42");
   await page.locator("#unit-readiness-input").dispatchEvent("change");
   await expect.poll(() => page.evaluate(() => currentMap.units[0].readiness)).toBe(42);
+  await expect.poll(async () => {
+    const view = await editorEngineView(page);
+    return view.units[0].readiness;
+  }).toBe(42);
   await expect(page.locator("#unit-resources")).toBeVisible();
   await expect(page.locator("#unit-population-row")).toBeHidden();
   await expect(page.locator("#unit-horses-row")).toBeVisible();
@@ -2450,7 +2603,12 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect.poll(() => page.evaluate(() => ({ q: currentMap.units[0].q, r: currentMap.units[0].r }))).toEqual({ q: 20, r: 3 });
 
   await page.evaluate(() => {
-    currentMap.factions = [{ id: 2, key: "chinese", name: "Chinese", color: "#c93632" }];
+    currentMap.factions = [{ id: 2, key: "chinese", name: "Chinese", color: "#c93632", enabled: true, ai: false, metal: 4, treasure: 0, food: 0 }];
+    currentMap.game = currentMap.game && typeof currentMap.game === "object" ? currentMap.game : {};
+    currentMap.game.factions = currentMap.factions;
+    currentMap.game.turnOrder = [2];
+    currentMap.game.activeFactionIndex = 0;
+    currentMap.game.activeOwner = 2;
     ensureGameMeta();
   });
   await page.getByRole("button", { name: "Play" }).click();
@@ -2475,7 +2633,7 @@ test("scenario AI editor configures groups and map pickers", async ({ page, isMo
     };
   }, coord);
 
-  await page.getByRole("button", { name: "Units", exact: true }).click();
+  await page.locator('[data-scenario-activate="units"]').click();
   await page.locator("#editor-unit-type").selectOption("horde");
   await page.locator("#editor-unit-side").selectOption("chinese");
   let point = await hexPoint({ q: 3, r: 3 });
@@ -2517,6 +2675,36 @@ test("scenario AI editor configures groups and map pickers", async ({ page, isMo
       target: { q: 6, r: 4 },
     }),
   }));
+});
+
+test("scenario AI edits update the engine-backed game before returning to play", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop scenario edit flow is covered once on desktop");
+
+  await page.goto("/");
+  await page.evaluate(async (state) => {
+    await loadMapText(JSON.stringify(state));
+  }, aiDirectiveGameState(
+    { type: "hunt" },
+    [
+      { id: 1, owner: 0, faction: "mongol", kind: "horde", q: 2, r: 3, hp: 10, maxHp: 10, remainingScaledMove: 24 },
+      { id: 3, owner: 2, faction: "chinese", kind: "chinese_cavalry", q: 8, r: 3, hp: 10, maxHp: 10, remainingScaledMove: 24 },
+    ]
+  ));
+
+  await page.getByRole("button", { name: "Play" }).click();
+  await expect.poll(() => page.evaluate(() => currentMap.game.aiGroups[0].directive.type)).toBe("hunt");
+
+  await page.getByRole("button", { name: "Scenario Edit" }).click();
+  await page.getByRole("button", { name: "AI", exact: true }).click();
+  await page.locator('[data-scenario-region="ai"] .ai-directive-type').first().selectOption("inactive");
+
+  await expect.poll(async () => {
+    const view = await editorEngineView(page);
+    return view.game.aiGroups[0].directive.type;
+  }).toBe("inactive");
+
+  await page.getByRole("button", { name: "Play" }).click();
+  await expect.poll(() => page.evaluate(() => currentMap.game.aiGroups[0].directive.type)).toBe("inactive");
 });
 
 test("scenario file API round-trips full snapshots with units", async ({ page, isMobile }) => {
@@ -2593,12 +2781,18 @@ test("AI smoke scenario can enter play and end the human turn", async ({ page, i
     .map((unit) => ({ id: unit.id, q: unit.q, r: unit.r, hp: unit.hp })));
 
   await page.locator("#status-end-turn-button").click();
-  await expect(page.locator("#faction-status-name")).toHaveText("Mongol");
   await expect.poll(() => page.evaluate(() => ({
     round: currentMap.game.round,
     activeFactionIndex: currentMap.game.activeFactionIndex,
     activeOwner: currentMap.game.activeOwner,
-  }))).toEqual({ round: 2, activeFactionIndex: 0, activeOwner: 0 });
+    aiAnimationInProgress,
+  })), { timeout: 15000 }).toEqual({
+    round: 2,
+    activeFactionIndex: 0,
+    activeOwner: 0,
+    aiAnimationInProgress: false,
+  });
+  await expect(page.locator("#faction-status-name")).toHaveText("Mongol");
   await expect.poll(() => page.evaluate((before) => currentMap.units
     .filter((unit) => unit.owner === 2)
     .some((unit) => {

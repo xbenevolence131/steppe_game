@@ -194,6 +194,7 @@ struct AiPathCandidateTrace {
     int distance_before = 0;
     int distance_after = 0;
     int distance_gain = 0;
+    int score = 0;
     bool selected = false;
     std::vector<Coord> path;
 };
@@ -388,6 +389,7 @@ bool execute_ai_group_turn(
     std::vector<AiAnimationStep>* animation = nullptr,
     std::vector<AiUnitDecisionTrace>* decision_trace = nullptr
 );
+bool replace_ai_groups_json(GameState& state, const std::string& ai_groups_json);
 void end_turn(GameState& state, std::vector<AiAnimationStep>* animation = nullptr);
 
 void print_game_state_json(const GameState& state, std::ostream& out);
