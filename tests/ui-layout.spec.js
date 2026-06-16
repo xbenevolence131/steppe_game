@@ -2647,6 +2647,15 @@ test("scenario AI editor configures groups and map pickers", async ({ page, isMo
   await page.getByRole("button", { name: "Add Group" }).click();
   await expect(page.locator(".ai-group-card")).toHaveCount(1);
   await expect(page.locator(".ai-group-owner")).toHaveValue("2");
+  await page.getByRole("button", { name: "Add Group" }).click();
+  await expect(page.locator(".ai-group-card")).toHaveCount(2);
+  await page.locator(".ai-group-delete").last().click();
+  await expect(page.locator(".ai-group-card")).toHaveCount(1);
+  await expect.poll(() => page.evaluate(() => currentMap.game.aiGroups.filter((group) => !group.generated).length)).toBe(1);
+  await expect.poll(async () => {
+    const view = await editorEngineView(page);
+    return view.game.aiGroups.filter((group) => !group.generated).length;
+  }).toBe(1);
 
   await page.locator(".ai-members-button").click();
   point = await hexPoint({ q: 3, r: 3 });

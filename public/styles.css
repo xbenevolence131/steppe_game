@@ -443,7 +443,8 @@ body {
   align-items: center;
 }
 
-.ai-group-collapse {
+.ai-group-collapse,
+.ai-group-delete {
   display: grid;
   place-items: center;
   min-width: 28px;

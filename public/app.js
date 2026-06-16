@@ -1505,6 +1505,27 @@ function mutateAiGroup(groupId, mutator, options = {}) {
   }
 }
 
+function removeAiGroup(groupId) {
+  if (!currentMap) {
+    return;
+  }
+  const groups = aiGroups();
+  const nextGroups = groups.filter((group) => group.id !== groupId);
+  if (nextGroups.length === groups.length) {
+    return;
+  }
+  recordLocalUndo();
+  currentMap.game.aiGroups = normalizeAiGroups(nextGroups);
+  collapsedAiGroupIds.delete(groupId);
+  if (activeAiGroupId === groupId) {
+    activeAiGroupId = 0;
+    aiPickMode = null;
+  }
+  syncEditorControls();
+  requestAnimationFrame(drawMap);
+  void syncAiGroupsToEngine();
+}
+
 function syncAiEditorControls() {
   if (!aiGroupsContainer) {
     return;
@@ -1527,30 +1548,17 @@ function syncAiEditorControls() {
   }
 
   for (const group of groups) {
-    const collapsed = collapsedAiGroupIds.has(group.id) && !(activeAiGroupId === group.id && aiPickMode !== null);
     const card = document.createElement("article");
     card.className = "ai-group-card";
     card.classList.toggle("is-picking", activeAiGroupId === group.id && aiPickMode !== null);
-    card.classList.toggle("is-collapsed", collapsed);
 
-    const collapseButton = document.createElement("button");
-    collapseButton.type = "button";
-    collapseButton.className = "ai-group-collapse";
-    collapseButton.setAttribute("aria-expanded", String(!collapsed));
-    collapseButton.setAttribute("aria-label", `${collapsed ? "Expand" : "Collapse"} ${group.name}`);
-    collapseButton.textContent = collapsed ? "▸" : "▾";
-    collapseButton.addEventListener("click", () => {
-      if (collapsedAiGroupIds.has(group.id)) {
-        collapsedAiGroupIds.delete(group.id);
-      } else {
-        collapsedAiGroupIds.add(group.id);
-      }
-      syncAiEditorControls();
-    });
-    const summary = document.createElement("span");
-    summary.className = "ai-group-summary";
-    summary.textContent = `${group.name} / ${optionLabelForFaction(factionForOwner(group.owner))} / ${group.unitIds.length} units / ${aiDirectiveLabel(group.directive.type)}`;
-
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "ai-group-delete";
+    deleteButton.setAttribute("aria-label", `Delete ${group.name}`);
+    deleteButton.title = `Delete ${group.name}`;
+    deleteButton.textContent = "-";
+    deleteButton.addEventListener("click", () => removeAiGroup(group.id));
     const groupRow = document.createElement("div");
     groupRow.className = "ai-group-edit-row";
 
@@ -1634,21 +1642,17 @@ function syncAiEditorControls() {
     targetReadout.className = "ai-target-readout";
     targetReadout.textContent = `${group.directive.target.q},${group.directive.target.r}`;
 
-    if (collapsed) {
-      groupRow.append(summary, collapseButton);
-    } else {
-      groupRow.append(
-        nameLabel,
-        ownerLabel,
-        membersButton,
-        memberCount,
-        directiveLabel,
-        targetButton,
-        targetFactionLabel,
-        targetReadout,
-        collapseButton
-      );
-    }
+    groupRow.append(
+      nameLabel,
+      ownerLabel,
+      membersButton,
+      memberCount,
+      directiveLabel,
+      targetButton,
+      targetFactionLabel,
+      targetReadout,
+      deleteButton
+    );
     card.append(groupRow);
     aiGroupsContainer.appendChild(card);
   }
