@@ -380,6 +380,7 @@ OwnerId owner_from_faction_key(const std::string& key, OwnerId fallback = neutra
 const char* ai_directive_kind_to_string(AiDirectiveKind kind) {
     switch (kind) {
         case AiDirectiveKind::Inactive: return "inactive";
+        case AiDirectiveKind::HoldHex: return "hold_hex";
         case AiDirectiveKind::DefendHex: return "defend_hex";
         case AiDirectiveKind::HuntHorde: return "hunt_horde";
         case AiDirectiveKind::CaptureHex: return "capture_hex";
@@ -391,6 +392,9 @@ const char* ai_directive_kind_to_string(AiDirectiveKind kind) {
 AiDirectiveKind ai_directive_kind_from_string(const std::string& value) {
     if (value == "inactive") {
         return AiDirectiveKind::Inactive;
+    }
+    if (value == "hold_hex") {
+        return AiDirectiveKind::HoldHex;
     }
     if (value == "defend_hex") {
         return AiDirectiveKind::DefendHex;
@@ -3313,6 +3317,8 @@ std::string strategic_group_name(const AiDirective& directive) {
     switch (directive.kind) {
         case AiDirectiveKind::Inactive:
             return "Inactive";
+        case AiDirectiveKind::HoldHex:
+            return "Hold Hex";
         case AiDirectiveKind::Hunt:
             return "Strategic: Hunt";
         case AiDirectiveKind::DefendHex:
@@ -3379,6 +3385,7 @@ void refresh_generated_strategic_ai_group(GameState& state, OwnerId owner) {
 const Unit* ai_target_for_directive(const GameState& state, const Unit& unit, const AiDirective& directive) {
     switch (directive.kind) {
         case AiDirectiveKind::Inactive:
+        case AiDirectiveKind::HoldHex:
             return nullptr;
         case AiDirectiveKind::HuntHorde:
             return nearest_enemy_unit_from_coord(state, unit.owner, unit.coord, directive.target_owner, true);
@@ -3411,10 +3418,11 @@ bool execute_ai_unit_single_action(
             decision_trace->attackable_unit_ids.push_back(attack.unit_id);
         }
     }
-    if (directive.kind == AiDirectiveKind::Inactive) {
+    if (directive.kind == AiDirectiveKind::Inactive || directive.kind == AiDirectiveKind::HoldHex) {
         if (decision_trace != nullptr) {
+            decision_trace->target = directive.target;
             decision_trace->action = "idle";
-            decision_trace->reason = "inactive_directive";
+            decision_trace->reason = directive.kind == AiDirectiveKind::HoldHex ? "hold_hex_directive" : "inactive_directive";
         }
         return false;
     }
@@ -3515,10 +3523,11 @@ void execute_ai_unit_directive(
             decision_trace->attackable_unit_ids.push_back(attack.unit_id);
         }
     }
-    if (directive.kind == AiDirectiveKind::Inactive) {
+    if (directive.kind == AiDirectiveKind::Inactive || directive.kind == AiDirectiveKind::HoldHex) {
         if (decision_trace != nullptr) {
+            decision_trace->target = directive.target;
             decision_trace->action = "idle";
-            decision_trace->reason = "inactive_directive";
+            decision_trace->reason = directive.kind == AiDirectiveKind::HoldHex ? "hold_hex_directive" : "inactive_directive";
         }
         return;
     }
@@ -4252,7 +4261,9 @@ void print_ai_groups_json(const std::vector<AiGroup>& groups, std::ostream& out)
             out << group.unit_ids[unit_index];
         }
         out << "],\"directive\":{\"type\":\"" << ai_directive_kind_to_string(group.directive.kind) << "\"";
-        if (group.directive.kind == AiDirectiveKind::DefendHex || group.directive.kind == AiDirectiveKind::CaptureHex) {
+        if (group.directive.kind == AiDirectiveKind::HoldHex
+            || group.directive.kind == AiDirectiveKind::DefendHex
+            || group.directive.kind == AiDirectiveKind::CaptureHex) {
             out << ",\"target\":";
             print_coord_json(group.directive.target, out);
         }
@@ -4638,7 +4649,9 @@ void print_ai_animation_json(const std::vector<AiAnimationStep>& animation, std:
 
 void print_ai_directive_json(const AiDirective& directive, std::ostream& out) {
     out << "{\"type\":\"" << ai_directive_kind_to_string(directive.kind) << "\"";
-    if (directive.kind == AiDirectiveKind::DefendHex || directive.kind == AiDirectiveKind::CaptureHex) {
+    if (directive.kind == AiDirectiveKind::HoldHex
+        || directive.kind == AiDirectiveKind::DefendHex
+        || directive.kind == AiDirectiveKind::CaptureHex) {
         out << ",\"target\":";
         print_coord_json(directive.target, out);
     }

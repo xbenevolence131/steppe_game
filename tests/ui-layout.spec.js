@@ -1227,6 +1227,29 @@ test("inactive AI directive leaves assigned units idle", async ({ isMobile }) =>
   expect(inactive.game.aiGroups[0].directive.type).toBe("inactive");
 });
 
+test("hold hex AI directive stays passive on its assigned hex", async ({ isMobile }) => {
+  test.skip(isMobile, "engine AI directive rules are covered once on desktop");
+
+  const held = runEngineJson(["game-end-turn"], aiDirectiveGameState(
+    { type: "hold_hex", target: { q: 3, r: 2 } },
+    [
+      { id: 1, owner: 0, faction: "mongol", kind: "infantry", q: 2, r: 2, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+      { id: 3, owner: 2, faction: "chinese", kind: "chinese_militia", q: 3, r: 2, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+    ]
+  ));
+
+  const mongol = held.units.find((unit) => unit.id === 1);
+  const chinese = held.units.find((unit) => unit.id === 3);
+  expect(mongol.hp).toBe(10);
+  expect(chinese.q).toBe(3);
+  expect(chinese.r).toBe(2);
+  expect(chinese.combatDone).toBe(false);
+  expect(held.game.aiGroups[0].directive).toEqual(expect.objectContaining({
+    type: "hold_hex",
+    target: { q: 3, r: 2 },
+  }));
+});
+
 test("AI animation orders combat retreat after the triggering attack", async ({ isMobile }) => {
   test.skip(isMobile, "engine AI animation rule is covered once on desktop");
 

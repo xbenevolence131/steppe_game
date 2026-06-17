@@ -2170,6 +2170,7 @@ function normalizeScenarioFactions(rawFactions, units = []) {
 
 const aiDirectiveTypes = [
   { key: "inactive", label: "Inactive" },
+  { key: "hold_hex", label: "Hold Hex" },
   { key: "hunt", label: "Hunt" },
   { key: "defend_hex", label: "Defend Hex" },
   { key: "hunt_horde", label: "Hunt Horde" },
@@ -5033,7 +5034,7 @@ function strategicAiTargetHex(group) {
     return null;
   }
   const directive = group.directive || {};
-  if (directive.type !== "capture_hex" && directive.type !== "defend_hex") {
+  if (directive.type !== "capture_hex" && directive.type !== "defend_hex" && directive.type !== "hold_hex") {
     return null;
   }
   return mapHexAt(directive.target);
