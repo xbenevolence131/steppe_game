@@ -1358,6 +1358,53 @@ test("settled AI auto groups remaining units into field armies", async ({ isMobi
   expect(fieldArmies.every((group) => group.name === "Field Army")).toBe(true);
 });
 
+test("reserve AI role moves to empty settled defense holes", async ({ isMobile }) => {
+  test.skip(isMobile, "engine settled AI role is covered once on desktop");
+
+  const state = settledGateDefenseAiGameState();
+  state.units = [
+    { id: 1, owner: 0, faction: "mongol", kind: "horse_archer", q: 4, r: 2, hp: 10, maxHp: 10, remainingScaledMove: 32 },
+    { id: 4, owner: 2, faction: "chinese", kind: "infantry", q: 8, r: 3, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+  ];
+  state.game.aiGroups = [{
+    id: 42,
+    owner: 2,
+    name: "Reserve",
+    role: "reserve",
+    unitIds: [4],
+    directive: { type: "inactive" },
+  }];
+
+  const result = runEngineJson(["game-end-turn"], state);
+  const reserve = result.units.find((unit) => unit.id === 4);
+  expect(reserve).toEqual(expect.objectContaining({ q: 6, r: 2 }));
+  expect(result.game.aiGroups.find((group) => group.id === 42)).toEqual(expect.objectContaining({
+    role: "reserve",
+    directive: expect.objectContaining({ type: "inactive" }),
+  }));
+});
+
+test("reserve AI role idles when settled defense holes are covered", async ({ isMobile }) => {
+  test.skip(isMobile, "engine settled AI role is covered once on desktop");
+
+  const state = settledGateDefenseAiGameState();
+  state.units.push(
+    { id: 4, owner: 2, faction: "chinese", kind: "infantry", q: 8, r: 3, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+    { id: 5, owner: 2, faction: "chinese", kind: "infantry", q: 6, r: 2, hp: 10, maxHp: 10, remainingScaledMove: 16 }
+  );
+  state.game.aiGroups = [{
+    id: 42,
+    owner: 2,
+    name: "Reserve",
+    role: "reserve",
+    unitIds: [4],
+    directive: { type: "inactive" },
+  }];
+
+  const result = runEngineJson(["game-end-turn"], state);
+  expect(result.units.find((unit) => unit.id === 4)).toEqual(expect.objectContaining({ q: 8, r: 3 }));
+});
+
 test("inactive AI directive leaves assigned units idle", async ({ isMobile }) => {
   test.skip(isMobile, "engine AI directive rules are covered once on desktop");
 

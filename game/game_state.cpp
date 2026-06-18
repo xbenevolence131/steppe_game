@@ -3368,6 +3368,66 @@ bool wall_gate_hold_hex(const GameState& state, OwnerId owner, Coord coord) {
     return false;
 }
 
+bool friendly_combat_unit_holding_coord(const GameState& state, OwnerId owner, Coord coord) {
+    for (const Unit& unit : state.units) {
+        if (unit.owner == owner
+            && unit.hp > 0
+            && can_attack(unit.kind)
+            && coord_equal(unit.coord, coord)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool reserve_defensive_hole_target(const GameState& state, OwnerId owner, Coord origin, Coord& target) {
+    bool found = false;
+    int best_score = std::numeric_limits<int>::max();
+
+    const auto consider = [&](Coord candidate, int priority) {
+        if (!passable_ai_objective_hex(state, candidate)
+            || friendly_combat_unit_holding_coord(state, owner, candidate)) {
+            return;
+        }
+        const Unit* threat = nearest_enemy_unit_from_coord(state, owner, candidate);
+        int threat_bonus = 0;
+        if (threat != nullptr) {
+            const int threat_distance = hex_distance(threat->coord, candidate);
+            if (threat_distance <= 5) {
+                threat_bonus = (6 - threat_distance) * 160 + threat->attack * 12 + threat->readiness;
+            }
+        }
+        const int score = hex_distance(origin, candidate) * 16 - threat_bonus - priority;
+        if (!found || score < best_score || (score == best_score && coord_less(candidate, target))) {
+            target = candidate;
+            best_score = score;
+            found = true;
+        }
+    };
+
+    for (const GameHex& hex : state.hexes) {
+        if (hex.owner == owner && hex.terrain == Terrain::Urban) {
+            consider(hex.coord, 40);
+        }
+    }
+    std::vector<Coord> considered_gates;
+    for (const WallGate& gate : state.wall_gates) {
+        Coord gate_coord;
+        if (!wall_gate_hold_coord(state, owner, gate, gate_coord)) {
+            continue;
+        }
+        const bool duplicate = std::any_of(considered_gates.begin(), considered_gates.end(), [&](const Coord& prior) {
+            return coord_equal(prior, gate_coord);
+        });
+        if (duplicate) {
+            continue;
+        }
+        considered_gates.push_back(gate_coord);
+        consider(gate_coord, 40);
+    }
+    return found;
+}
+
 void refresh_generated_strategic_ai_group(GameState& state, OwnerId owner) {
     state.ai_groups.erase(
         std::remove_if(state.ai_groups.begin(), state.ai_groups.end(), [&](const AiGroup& group) {
@@ -3534,6 +3594,16 @@ AiDirective directive_for_ai_group(const GameState& state, const AiGroup& group)
         return group.directive;
     }
     if (role == "reserve") {
+        const Unit* anchor = ai_group_anchor_unit(state, group);
+        Coord target;
+        if (anchor != nullptr
+            && settled_archetype(faction_archetype(state, group.owner))
+            && reserve_defensive_hole_target(state, group.owner, anchor->coord, target)) {
+            AiDirective directive;
+            directive.kind = AiDirectiveKind::DefendHex;
+            directive.target = target;
+            return directive;
+        }
         AiDirective directive;
         directive.kind = AiDirectiveKind::Inactive;
         directive.target = group.directive.target;
