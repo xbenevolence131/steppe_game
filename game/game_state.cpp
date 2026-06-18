@@ -1118,16 +1118,6 @@ SettlementKind settlement_kind_from_town(const Town& town) {
     return SettlementKind::Generic;
 }
 
-OwnerId owner_from_town(const Town& town) {
-    if (town.feature == "persian_town") {
-        return persian_owner;
-    }
-    if (town.feature == "chinese_town") {
-        return chinese_owner;
-    }
-    return neutral_owner;
-}
-
 PastureState initial_pasture_for_terrain(Terrain terrain) {
     switch (terrain) {
         case Terrain::Grassland:
@@ -1170,7 +1160,6 @@ GameState game_state_from_generated_map(const GeneratedMap& generated) {
         settlement.id = next_settlement_id++;
         settlement.coord = town.coord;
         settlement.kind = settlement_kind_from_town(town);
-        settlement.owner = owner_from_town(town);
         settlement.source_feature = town.feature;
         settlement.source_labels = town.labels;
         state.settlements.push_back(std::move(settlement));
@@ -1425,6 +1414,11 @@ std::set<Coord, decltype(coord_less)*> supplied_hex_coords(const GameState& stat
 const Unit* unit_at(const GameState& state, const Coord& coord);
 bool enemy_zoc_at(const GameState& state, const Coord& coord, const Unit& moving_unit);
 
+OwnerId settlement_hex_owner(const GameState& state, const Settlement& settlement) {
+    const GameHex* hex = find_hex(state, settlement.coord);
+    return hex != nullptr && territory_claimable_terrain(hex->terrain) ? hex->owner : neutral_owner;
+}
+
 void seed_initial_territory(GameState& state) {
     constexpr int initial_territory_radius = 12;
 
@@ -1434,17 +1428,15 @@ void seed_initial_territory(GameState& state) {
         int distance = 0;
     };
 
-    std::vector<Settlement> sources;
+    std::vector<Frontier> sources;
     for (const Settlement& settlement : state.settlements) {
-        if (!settled_owner(settlement.owner)) {
+        const OwnerId owner = settlement_hex_owner(state, settlement);
+        if (!settled_owner(owner)) {
             continue;
         }
-        const GameHex* hex = find_hex(state, settlement.coord);
-        if (hex != nullptr && territory_claimable_terrain(hex->terrain)) {
-            sources.push_back(settlement);
-        }
+        sources.push_back({settlement.coord, owner, 0});
     }
-    std::sort(sources.begin(), sources.end(), [](const Settlement& first, const Settlement& second) {
+    std::sort(sources.begin(), sources.end(), [](const Frontier& first, const Frontier& second) {
         if (first.owner != second.owner) {
             return first.owner < second.owner;
         }
@@ -1454,7 +1446,7 @@ void seed_initial_territory(GameState& state) {
     std::map<Coord, int, decltype(coord_less)*> best_distances(coord_less);
     std::map<Coord, OwnerId, decltype(coord_less)*> owners(coord_less);
     std::deque<Frontier> queue;
-    for (const Settlement& source : sources) {
+    for (const Frontier& source : sources) {
         const auto existing = best_distances.find(source.coord);
         if (existing != best_distances.end() && existing->second == 0 && owners[source.coord] <= source.owner) {
             continue;
@@ -3111,7 +3103,7 @@ bool nearest_owned_settlement_threat(const GameState& state, OwnerId owner, Coor
     bool found = false;
     int best_score = std::numeric_limits<int>::min();
     for (const Settlement& settlement : state.settlements) {
-        if (settlement.owner != owner) {
+        if (settlement_hex_owner(state, settlement) != owner) {
             continue;
         }
         const Unit* threat = nearest_enemy_unit_from_coord(state, owner, settlement.coord);
@@ -3147,7 +3139,7 @@ bool passable_ai_objective_hex(const GameState& state, Coord coord) {
 int nearest_owned_settlement_distance(const GameState& state, OwnerId owner, Coord coord) {
     int best = std::numeric_limits<int>::max();
     for (const Settlement& settlement : state.settlements) {
-        if (settlement.owner == owner) {
+        if (settlement_hex_owner(state, settlement) == owner) {
             best = std::min(best, hex_distance(coord, settlement.coord));
         }
     }
@@ -3221,8 +3213,9 @@ bool nearest_capturable_hex(const GameState& state, OwnerId owner, Coord origin,
     bool found = false;
     int best_score = std::numeric_limits<int>::max();
     for (const Settlement& settlement : state.settlements) {
-        if (settlement.owner == owner
-            || (settlement.owner != neutral_owner && !at_war(state, owner, settlement.owner))) {
+        const OwnerId settlement_owner = settlement_hex_owner(state, settlement);
+        if (settlement_owner == owner
+            || (settlement_owner != neutral_owner && !at_war(state, owner, settlement_owner))) {
             continue;
         }
         const int score = hex_distance(origin, settlement.coord);
@@ -3346,8 +3339,13 @@ bool owned_urban_hex(const GameState& state, OwnerId owner, Coord coord) {
 
 bool wall_gate_hold_hex(const GameState& state, OwnerId owner, Coord coord) {
     for (const WallGate& gate : state.wall_gates) {
-        Coord target;
-        if (wall_gate_hold_coord(state, owner, gate, target) && coord_equal(coord, target)) {
+        if (!coord_equal(coord, gate.edge.a) && !coord_equal(coord, gate.edge.b)) {
+            continue;
+        }
+        const GameHex* hex = find_hex(state, coord);
+        if (hex != nullptr
+            && hex->owner == owner
+            && terrain_movement_cost(hex->terrain) != blocked_movement_cost()) {
             return true;
         }
     }
@@ -5141,7 +5139,6 @@ GameState parse_game_state_json(const std::string& json) {
         settlement.id = next_settlement_id++;
         settlement.coord = town.coord;
         settlement.kind = settlement_kind_from_town(town);
-        settlement.owner = owner_from_town(town);
         settlement.source_feature = town.feature;
         settlement.source_labels = town.labels;
         state.settlements.push_back(std::move(settlement));
@@ -5162,7 +5159,6 @@ GameState parse_game_state_json(const std::string& json) {
             settlement.id = next_settlement_id++;
             settlement.coord = town.coord;
             settlement.kind = settlement_kind_from_town(town);
-            settlement.owner = owner_from_town(town);
             settlement.source_feature = town.feature;
             settlement.source_labels = town.labels;
             state.settlements.push_back(std::move(settlement));
@@ -5173,7 +5169,7 @@ GameState parse_game_state_json(const std::string& json) {
     }
     if (!saw_explicit_supply_source) {
         for (const Settlement& settlement : state.settlements) {
-            if (!settled_owner(settlement.owner)) {
+            if (!settled_owner(settlement_hex_owner(state, settlement))) {
                 continue;
             }
             GameHex* hex = find_hex(state, settlement.coord);

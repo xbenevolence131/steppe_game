@@ -1217,10 +1217,34 @@ test("settled AI auto assigns owned urban units to hold hex", async ({ isMobile 
   expect(chineseUnit.combatDone).toBe(false);
 });
 
+test("settled AI town garrisons follow urban hex owner not town feature", async ({ isMobile }) => {
+  test.skip(isMobile, "engine settled AI rule is covered once on desktop");
+
+  const state = settledGateDefenseAiGameState();
+  state.wall_gates = [];
+  state.hexes = state.hexes.map((hex) => (
+    hex.q === 7 && hex.r === 2
+      ? { ...hex, owner: 0, terrain: "urban", labels: ["urban", "chinese_town"] }
+      : hex
+  ));
+
+  const result = runEngineJson(["game-end-turn"], state);
+  const chineseGroup = result.game.aiGroups.find((group) => group.unitIds.includes(3));
+  expect(chineseGroup).toBeTruthy();
+  expect(chineseGroup.name).not.toBe("Town Garrison");
+  expect(chineseGroup.directive.type).not.toBe("hold_hex");
+});
+
 test("settled AI auto assigns wall gate units to hold hex", async ({ isMobile }) => {
   test.skip(isMobile, "engine settled AI rule is covered once on desktop");
 
   const state = settledGateDefenseAiGameState();
+  state.towns = [];
+  state.hexes = state.hexes.map((hex) => (
+    hex.q === 7 && hex.r === 2
+      ? { ...hex, terrain: "grassland", labels: ["base_steppe"], owner: 2 }
+      : hex
+  ));
   state.units = [
     { id: 1, owner: 0, faction: "mongol", kind: "horse_archer", q: 4, r: 2, hp: 10, maxHp: 10, remainingScaledMove: 32 },
     { id: 3, owner: 2, faction: "chinese", kind: "infantry", q: 6, r: 2, hp: 10, maxHp: 10, remainingScaledMove: 16 },
@@ -1864,6 +1888,8 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
     return coordinate.top >= title.top - 1 && coordinate.bottom <= title.bottom + 1;
   })).resolves.toBe(true);
   await expect(page.locator(".control-status-region h2")).toHaveText("Game Control Panel");
+  await expect(page.locator(".map-toolbar #diplomacy-toggle-button")).toBeVisible();
+  await expect(page.locator(".control-status-region #diplomacy-toggle-button")).toHaveCount(0);
   await expect(page.locator(".control-status-line")).toContainText("Round");
   await expect(page.locator(".control-status-line")).toContainText("Mongol");
   await expect(page.locator("#round-count")).toHaveText("1");
@@ -1945,7 +1971,7 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   expect(layout.scrollWidth).toBeLessThanOrEqual(layout.viewportWidth);
 });
 
-test("play strategic AI panel collapses to a single row", async ({ page, isMobile }) => {
+test("map AI control toggles the strategic AI dashboard", async ({ page, isMobile }) => {
   test.skip(isMobile, "desktop layout has stable panel height assertions");
 
   await openPlayMode(page);
@@ -1964,9 +1990,9 @@ test("play strategic AI panel collapses to a single row", async ({ page, isMobil
 
   await expect(page.locator("#strategic-ai-panel-summary")).toHaveText("1 AI group / 1 units");
   if (await page.locator("#app-shell").evaluate((shell) => shell.classList.contains("strategic-ai-collapsed"))) {
-    await page.locator("#strategic-ai-toggle-button").click();
+    await page.locator("#map-ai-toggle-button").click();
   }
-  await expect(page.locator("#strategic-ai-groups")).toBeVisible();
+  await expect(page.locator("#strategic-ai-dashboard")).toBeVisible();
 
   const expanded = await page.evaluate(() => {
     const dashboard = document.querySelector("#strategic-ai-dashboard").getBoundingClientRect();
@@ -1974,10 +2000,10 @@ test("play strategic AI panel collapses to a single row", async ({ page, isMobil
     return { dashboardHeight: dashboard.height, mapTop: map.top };
   });
 
-  await page.locator("#strategic-ai-toggle-button").click();
+  await page.locator("#map-ai-toggle-button").click();
   await expect(page.locator("#app-shell")).toHaveClass(/strategic-ai-collapsed/);
-  await expect(page.locator("#strategic-ai-toggle-button")).toHaveAttribute("aria-expanded", "false");
-  await expect(page.locator("#strategic-ai-groups")).toBeHidden();
+  await expect(page.locator("#map-ai-toggle-button")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#strategic-ai-dashboard")).toBeHidden();
 
   const collapsed = await page.evaluate(() => {
     const dashboard = document.querySelector("#strategic-ai-dashboard").getBoundingClientRect();
@@ -1985,12 +2011,43 @@ test("play strategic AI panel collapses to a single row", async ({ page, isMobil
     return { dashboardHeight: dashboard.height, mapTop: map.top };
   });
   expect(collapsed.dashboardHeight).toBeLessThan(expanded.dashboardHeight);
-  expect(collapsed.dashboardHeight).toBeLessThanOrEqual(64);
+  expect(collapsed.dashboardHeight).toBe(0);
   expect(collapsed.mapTop).toBeLessThan(expanded.mapTop);
 
-  await page.locator("#strategic-ai-toggle-button").click();
+  await page.locator("#map-ai-toggle-button").click();
   await expect(page.locator("#app-shell")).not.toHaveClass(/strategic-ai-collapsed/);
-  await expect(page.locator("#strategic-ai-groups")).toBeVisible();
+  await expect(page.locator("#strategic-ai-dashboard")).toBeVisible();
+});
+
+test("map toolbar stays available while diplomacy replaces the map panel", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop layout has stable map toolbar assertions");
+
+  await openPlayMode(page);
+  await expect(page.locator(".map-toolbar #diplomacy-toggle-button")).toBeVisible();
+
+  await page.locator("#diplomacy-toggle-button").click();
+  await expect(page.locator(".map-toolbar")).toBeVisible();
+  await expect(page.locator("#diplomacy-toggle-button")).toHaveText("Map");
+  await expect(page.locator("#diplomacy-toggle-button")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#diplomacy-panel")).toBeVisible();
+  await expect(page.locator("#map-panel")).toBeHidden();
+
+  const diplomacyLayout = await page.evaluate(() => {
+    const toolbar = document.querySelector(".map-toolbar").getBoundingClientRect();
+    const diplomacy = document.querySelector("#diplomacy-panel").getBoundingClientRect();
+    return {
+      toolbarHeight: toolbar.height,
+      diplomacyBelowToolbar: diplomacy.top >= toolbar.bottom - 1,
+    };
+  });
+  expect(diplomacyLayout.toolbarHeight).toBeGreaterThan(0);
+  expect(diplomacyLayout.diplomacyBelowToolbar).toBe(true);
+
+  await page.locator("#diplomacy-toggle-button").click();
+  await expect(page.locator("#diplomacy-toggle-button")).toHaveText("Diplomacy");
+  await expect(page.locator("#diplomacy-toggle-button")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#map-panel")).toBeVisible();
+  await expect(page.locator("#diplomacy-panel")).toBeHidden();
 });
 
 test("unit counters use sprite glyph zoom bands", async ({ page, isMobile }) => {

@@ -350,7 +350,6 @@ bool has_tag(HexTagMask mask, HexTag tag);
 HexTagMask tags_from_labels(const std::vector<std::string>& labels);
 
 SettlementKind settlement_kind_from_town(const Town& town);
-OwnerId owner_from_town(const Town& town);
 PastureState initial_pasture_for_terrain(Terrain terrain);
 
 GameState game_state_from_generated_map(const GeneratedMap& generated);

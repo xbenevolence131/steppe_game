@@ -128,7 +128,7 @@ body {
 }
 
 .app-shell.is-play.strategic-ai-collapsed .strategic-ai-dashboard {
-  display: grid;
+  display: none;
 }
 
 .faction-status-title {
@@ -939,10 +939,6 @@ button.is-active {
 }
 
 .map-section.is-diplomacy .map-panel {
-  display: none;
-}
-
-.map-section.is-diplomacy .map-toolbar {
   display: none;
 }
 
