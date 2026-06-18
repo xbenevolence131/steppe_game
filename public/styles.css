@@ -1773,6 +1773,8 @@ select[hidden] {
 }
 
 .diplomacy-toggle-button {
+  order: -1;
+  margin-right: auto;
   min-width: 98px;
 }
 

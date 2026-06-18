@@ -133,6 +133,7 @@ function summarizeGameView(view) {
         id: group.id,
         owner: group.owner,
         name: group.name,
+        role: group.role,
         generated: Boolean(group.generated),
         unitIds: Array.isArray(group.unitIds) ? group.unitIds.slice() : [],
         directive: group.directive,

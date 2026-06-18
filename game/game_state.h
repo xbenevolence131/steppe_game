@@ -135,6 +135,7 @@ struct AiGroup {
     int id = 0;
     OwnerId owner = neutral_owner;
     std::string name;
+    std::string role = "manual_directive";
     std::vector<int> unit_ids;
     AiDirective directive;
     bool generated = false;

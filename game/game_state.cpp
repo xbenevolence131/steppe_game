@@ -896,6 +896,17 @@ AiDirective ai_directive_from_json(const Json& directive_json) {
     return directive;
 }
 
+std::string normalize_ai_group_role(const std::string& role) {
+    if (role == "garrison"
+        || role == "field_army"
+        || role == "raiding_force"
+        || role == "reserve"
+        || role == "manual_directive") {
+        return role;
+    }
+    return "manual_directive";
+}
+
 std::vector<AiGroup> ai_groups_from_json(const Json& ai_group_items) {
     std::vector<AiGroup> groups;
     if (!ai_group_items.is_array()) {
@@ -909,6 +920,7 @@ std::vector<AiGroup> ai_groups_from_json(const Json& ai_group_items) {
         group.id = int_field(group_json, "id", 0);
         group.owner = int_field(group_json, "owner", neutral_owner);
         group.name = string_field(group_json, "name", "");
+        group.role = normalize_ai_group_role(string_field(group_json, "role", "manual_directive"));
         group.generated = bool_field(group_json, "generated", false);
         group.unit_ids = int_array_field(group_json, "unitIds");
         const Json empty_object = Json::object();
@@ -3332,6 +3344,10 @@ int generated_town_garrison_group_id(OwnerId owner, int index) {
     return -100000 - owner * 1000 - index;
 }
 
+int generated_field_army_group_id(OwnerId owner, int index) {
+    return -200000 - owner * 1000 - index;
+}
+
 bool owned_urban_hex(const GameState& state, OwnerId owner, Coord coord) {
     const GameHex* hex = find_hex(state, coord);
     return hex != nullptr && hex->owner == owner && hex->terrain == Terrain::Urban;
@@ -3400,6 +3416,7 @@ void refresh_generated_strategic_ai_group(GameState& state, OwnerId owner) {
             group.id = generated_town_garrison_group_id(owner, garrison_index++);
             group.owner = owner;
             group.name = town_garrison ? "Town Garrison" : "Gate Garrison";
+            group.role = "garrison";
             group.unit_ids = {unit_id};
             group.directive = directive;
             group.generated = true;
@@ -3409,6 +3426,35 @@ void refresh_generated_strategic_ai_group(GameState& state, OwnerId owner) {
         if (unassigned_unit_ids.empty()) {
             return;
         }
+    }
+
+    if (settled_archetype(faction_archetype(state, owner))) {
+        constexpr std::size_t field_army_size = 4;
+        int army_index = 0;
+        for (std::size_t start = 0; start < unassigned_unit_ids.size(); start += field_army_size) {
+            std::vector<int> army_unit_ids;
+            const std::size_t end = std::min(start + field_army_size, unassigned_unit_ids.size());
+            army_unit_ids.insert(army_unit_ids.end(), unassigned_unit_ids.begin() + start, unassigned_unit_ids.begin() + end);
+            const Unit* anchor_unit = find_unit(state, army_unit_ids.front());
+            if (anchor_unit == nullptr) {
+                continue;
+            }
+            AiDirective directive;
+            if (!strategic_directive_for_owner(state, owner, anchor_unit->coord, directive)) {
+                continue;
+            }
+
+            AiGroup group;
+            group.id = generated_field_army_group_id(owner, army_index++);
+            group.owner = owner;
+            group.name = "Field Army";
+            group.role = "field_army";
+            group.unit_ids = std::move(army_unit_ids);
+            group.directive = directive;
+            group.generated = true;
+            state.ai_groups.push_back(std::move(group));
+        }
+        return;
     }
 
     const Unit* anchor_unit = find_unit(state, unassigned_unit_ids.front());
@@ -3424,6 +3470,7 @@ void refresh_generated_strategic_ai_group(GameState& state, OwnerId owner) {
     group.id = generated_ai_group_id(owner);
     group.owner = owner;
     group.name = strategic_group_name(directive);
+    group.role = "manual_directive";
     group.unit_ids = std::move(unassigned_unit_ids);
     group.directive = directive;
     group.generated = true;
@@ -3445,6 +3492,61 @@ const Unit* ai_target_for_directive(const GameState& state, const Unit& unit, co
             return nearest_enemy_unit(state, unit);
     }
     return nearest_enemy_unit(state, unit);
+}
+
+const Unit* ai_group_anchor_unit(const GameState& state, const AiGroup& group) {
+    for (const int unit_id : group.unit_ids) {
+        const Unit* unit = find_unit(state, unit_id);
+        if (unit != nullptr
+            && unit->owner == group.owner
+            && unit->hp > 0
+            && can_attack(unit->kind)) {
+            return unit;
+        }
+    }
+    return nullptr;
+}
+
+AiDirective directive_for_ai_group(const GameState& state, const AiGroup& group) {
+    const std::string role = normalize_ai_group_role(group.role);
+    if (role == "field_army") {
+        const Unit* anchor = ai_group_anchor_unit(state, group);
+        AiDirective directive;
+        if (anchor != nullptr && strategic_directive_for_owner(state, group.owner, anchor->coord, directive)) {
+            return directive;
+        }
+        return group.directive;
+    }
+    if (role == "raiding_force") {
+        const Unit* anchor = ai_group_anchor_unit(state, group);
+        if (anchor != nullptr) {
+            const Unit* horde = nearest_enemy_unit_from_coord(state, group.owner, anchor->coord, neutral_owner, true);
+            if (horde != nullptr) {
+                AiDirective directive;
+                directive.kind = AiDirectiveKind::HuntHorde;
+                directive.target_owner = horde->owner;
+                return directive;
+            }
+            if (nearest_enemy_unit_from_coord(state, group.owner, anchor->coord) != nullptr) {
+                return default_hunt_directive();
+            }
+        }
+        return group.directive;
+    }
+    if (role == "reserve") {
+        AiDirective directive;
+        directive.kind = AiDirectiveKind::Inactive;
+        directive.target = group.directive.target;
+        directive.target_owner = group.directive.target_owner;
+        return directive;
+    }
+    if (role == "garrison" && group.directive.kind == AiDirectiveKind::Hunt) {
+        AiDirective directive;
+        directive.kind = AiDirectiveKind::HoldHex;
+        directive.target = group.directive.target;
+        return directive;
+    }
+    return group.directive;
 }
 
 bool execute_ai_unit_single_action(
@@ -3747,7 +3849,7 @@ bool step_ai_turn(GameState& state, AiAnimationStep* animation, std::vector<AiUn
         }
         std::vector<int> group_units = group.unit_ids;
         std::sort(group_units.begin(), group_units.end());
-        batches.push_back({group_units, group.directive, group.id});
+        batches.push_back({group_units, directive_for_ai_group(state, group), group.id});
         assigned_unit_ids.insert(assigned_unit_ids.end(), group_units.begin(), group_units.end());
     }
 
@@ -3849,7 +3951,7 @@ void execute_ai_turn(GameState& state, OwnerId owner, std::vector<AiAnimationSte
         }
         std::vector<int> group_units = group.unit_ids;
         std::sort(group_units.begin(), group_units.end());
-        execute_ai_units(state, group_units, group.directive, animation, nullptr, group.id);
+        execute_ai_units(state, group_units, directive_for_ai_group(state, group), animation, nullptr, group.id);
         assigned_unit_ids.insert(assigned_unit_ids.end(), group_units.begin(), group_units.end());
     }
 
@@ -3904,7 +4006,7 @@ bool execute_ai_group_turn(
     state.active_faction_index = owner_turn_index;
     std::vector<int> group_units = found->unit_ids;
     std::sort(group_units.begin(), group_units.end());
-    execute_ai_units(state, group_units, found->directive, animation, decision_trace, found->id);
+    execute_ai_units(state, group_units, directive_for_ai_group(state, *found), animation, decision_trace, found->id);
     state.active_faction_index = previous_turn_index;
     state.selected_unit_id = 0;
     state.legal_moves.clear();
@@ -4300,6 +4402,7 @@ void print_ai_groups_json(const std::vector<AiGroup>& groups, std::ostream& out)
         out << "{\"id\":" << group.id
             << ",\"owner\":" << group.owner
             << ",\"name\":\"" << escape_json(group.name) << "\""
+            << ",\"role\":\"" << escape_json(normalize_ai_group_role(group.role)) << "\""
             << ",\"generated\":" << (group.generated ? "true" : "false")
             << ",\"unitIds\":[";
         for (std::size_t unit_index = 0; unit_index < group.unit_ids.size(); ++unit_index) {
@@ -4413,6 +4516,7 @@ std::string game_state_hash(const GameState& state) {
         hash_append_int(hash, group.id);
         hash_append_int(hash, group.owner);
         hash_append(hash, group.name);
+        hash_append(hash, normalize_ai_group_role(group.role));
         hash_append_bool(hash, group.generated);
         hash_append(hash, ai_directive_kind_to_string(group.directive.kind));
         hash_append_int(hash, group.directive.target.q);

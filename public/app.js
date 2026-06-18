@@ -1594,6 +1594,19 @@ function syncAiEditorControls() {
     });
     ownerLabel.appendChild(ownerSelect);
 
+    const roleLabel = document.createElement("label");
+    roleLabel.className = "ai-field";
+    roleLabel.textContent = "Role";
+    const roleSelect = document.createElement("select");
+    roleSelect.className = "ai-group-role";
+    appendAiGroupRoleOptions(roleSelect, group.role);
+    roleSelect.addEventListener("change", () => {
+      mutateAiGroup(group.id, (draft) => {
+        draft.role = roleSelect.value;
+      });
+    });
+    roleLabel.appendChild(roleSelect);
+
     const membersButton = document.createElement("button");
     membersButton.type = "button";
     membersButton.className = "ai-members-button";
@@ -1645,6 +1658,7 @@ function syncAiEditorControls() {
     groupRow.append(
       nameLabel,
       ownerLabel,
+      roleLabel,
       membersButton,
       memberCount,
       directiveLabel,
@@ -1660,6 +1674,29 @@ function syncAiEditorControls() {
 
 function aiDirectiveLabel(type) {
   return aiDirectiveTypes.find((directive) => directive.key === type)?.label || titleCaseToken(type);
+}
+
+const aiGroupRoles = [
+  { key: "manual_directive", label: "Manual Directive" },
+  { key: "garrison", label: "Garrison" },
+  { key: "field_army", label: "Field Army" },
+  { key: "raiding_force", label: "Raiding Force" },
+  { key: "reserve", label: "Reserve" },
+];
+
+function aiGroupRoleLabel(role) {
+  return aiGroupRoles.find((candidate) => candidate.key === role)?.label || titleCaseToken(role);
+}
+
+function appendAiGroupRoleOptions(select, selectedRole = "manual_directive") {
+  select.replaceChildren();
+  for (const role of aiGroupRoles) {
+    const option = document.createElement("option");
+    option.value = role.key;
+    option.textContent = role.label;
+    option.selected = role.key === selectedRole;
+    select.appendChild(option);
+  }
 }
 
 function strategicAiGroups() {
@@ -1763,7 +1800,7 @@ function syncStrategicAiDashboard() {
 
     const summary = document.createElement("span");
     summary.className = "ai-group-summary";
-    summary.textContent = `${group.name} / ${optionLabelForFaction(factionForOwner(group.owner))} / ${group.unitIds.length} units / ${aiDirectiveLabel(group.directive.type)}`;
+    summary.textContent = `${group.name} / ${aiGroupRoleLabel(group.role)} / ${optionLabelForFaction(factionForOwner(group.owner))} / ${group.unitIds.length} units / ${aiDirectiveLabel(group.directive.type)}`;
 
     const groupRow = document.createElement("div");
     groupRow.className = "ai-group-edit-row";
@@ -1791,6 +1828,14 @@ function syncStrategicAiDashboard() {
     ownerValue.className = "ai-target-readout";
     ownerValue.textContent = optionLabelForFaction(factionForOwner(group.owner));
     ownerField.appendChild(ownerValue);
+
+    const roleField = document.createElement("div");
+    roleField.className = "ai-field";
+    roleField.textContent = "Role";
+    const roleValue = document.createElement("span");
+    roleValue.className = "ai-target-readout";
+    roleValue.textContent = aiGroupRoleLabel(group.role);
+    roleField.appendChild(roleValue);
 
     const membersField = document.createElement("div");
     membersField.className = "ai-field ai-members-field";
@@ -1841,6 +1886,7 @@ function syncStrategicAiDashboard() {
       statusField,
       nameField,
       ownerField,
+      roleField,
       membersField,
       directiveField,
       targetField,
@@ -2049,6 +2095,7 @@ function addAiGroup() {
     id,
     owner,
     name: `AI Group ${id}`,
+    role: "manual_directive",
     unitIds: [],
     directive: {
       type: "hunt",
@@ -2257,6 +2304,7 @@ function normalizeAiGroup(group, index = 0, usedIds = new Set()) {
     id,
     owner,
     name: typeof (group && group.name) === "string" && group.name.trim() ? group.name.trim() : `AI Group ${index + 1}`,
+    role: aiGroupRoles.some((candidate) => candidate.key === (group && group.role)) ? group.role : "manual_directive",
     generated: group && group.generated !== undefined ? Boolean(group.generated) : false,
     unitIds,
     directive: normalizeAiDirective(group && group.directive),
@@ -2860,8 +2908,17 @@ function syncScenarioEditorToEngine() {
   scenarioEditorEngineSync = scenarioEditorEngineSync
     .catch(() => false)
     .then(async () => {
-      const command = { type: commandType, state: snapshot };
-      const payload = await postAppCommand(command);
+      let command = { type: commandType, state: snapshot };
+      let payload;
+      try {
+        payload = await postAppCommand(command);
+      } catch (error) {
+        if (commandType !== "set_editor_state" || !String(error && error.message).includes("unknown gameId")) {
+          throw error;
+        }
+        command = { type: "load_game", state: snapshot };
+        payload = await postAppCommand(command);
+      }
       if (syncVersion === scenarioEditorSyncVersion) {
         replaceProjectionFromEngine(payload, command.type);
         syncModeControls();
@@ -4810,6 +4867,7 @@ function drawUnitCounters(units) {
     ? currentMap.game.selectedUnitId
     : 0;
   const strategicMemberIds = activeStrategicAiMemberIds();
+  const editorAiMemberIds = activeEditorAiMemberIds();
   for (const unit of units) {
     const faction = factions[unit.faction] || factions.mongol;
     const metrics = unitCounterMetrics();
@@ -4819,9 +4877,11 @@ function drawUnitCounters(units) {
     const x = center.x - counterWidth / 2;
     const y = center.y - counterHeight / 2;
     const dividerX = x + metrics.dividerOffset;
+    const isStrategicMember = strategicMemberIds.has(unit.id);
+    const isEditorAiMember = editorAiMemberIds.has(unit.id);
 
     roundedRectPath(x, y, counterWidth, counterHeight, metrics.cornerRadius);
-    ctx.fillStyle = strategicMemberIds.has(unit.id) ? "#bfe8bf" : "#fffdf8";
+    ctx.fillStyle = isEditorAiMember || isStrategicMember ? "#bfe8bf" : "#fffdf8";
     ctx.fill();
     if (unitOutOfSupply(unit)) {
       ctx.fillStyle = "rgba(201, 54, 50, 0.18)";
@@ -4846,7 +4906,6 @@ function drawUnitCounters(units) {
       ctx.lineWidth = metrics.strokeWidth * 0.8;
       ctx.stroke();
     }
-
     ctx.beginPath();
     ctx.moveTo(dividerX, y + counterHeight * 0.13);
     ctx.lineTo(dividerX, y + counterHeight * 0.87);
@@ -4994,16 +5053,16 @@ function drawAiEditorHighlights() {
       }
     });
     ctx.closePath();
-    ctx.fillStyle = "rgba(31, 79, 82, 0.28)";
+    ctx.fillStyle = "rgba(191, 232, 191, 0.28)";
     ctx.fill();
-    ctx.strokeStyle = aiMemberPickActive() ? "#133c3f" : "#1f4f52";
+    ctx.strokeStyle = "#4f8f4f";
     ctx.lineWidth = (aiMemberPickActive() ? 2.4 : 1.6) / viewport.scale;
     ctx.stroke();
   }
   const target = group.directive && group.directive.target;
   if (target && Number.isInteger(target.q) && Number.isInteger(target.r)) {
     const center = hexCenter(target);
-    const points = hexPoints(center.x, center.y, geometry.size * 0.66);
+    const points = hexPoints(center.x, center.y, geometry.size * 0.92);
     ctx.beginPath();
     points.forEach(([x, y], index) => {
       if (index === 0) {
@@ -5013,10 +5072,10 @@ function drawAiEditorHighlights() {
       }
     });
     ctx.closePath();
-    ctx.fillStyle = "rgba(202, 126, 32, 0.28)";
+    ctx.fillStyle = "rgba(217, 35, 190, 0.2)";
     ctx.fill();
-    ctx.strokeStyle = aiTargetPickActive() ? "#8c4a0b" : "#a15b16";
-    ctx.lineWidth = (aiTargetPickActive() ? 2.4 : 1.6) / viewport.scale;
+    ctx.strokeStyle = "#d923be";
+    ctx.lineWidth = 4.2 / viewport.scale;
     ctx.stroke();
   }
   ctx.restore();
@@ -5042,6 +5101,11 @@ function strategicAiTargetHex(group) {
 
 function activeStrategicAiMemberIds() {
   const group = appMode === "play" ? activeStrategicAiGroup() : null;
+  return new Set(group ? group.unitIds : []);
+}
+
+function activeEditorAiMemberIds() {
+  const group = aiEditingActive() ? activeAiGroup() : null;
   return new Set(group ? group.unitIds : []);
 }
 

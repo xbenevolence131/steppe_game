@@ -1313,6 +1313,51 @@ test("manual AI groups keep owned urban units out of auto hold garrisons", async
   }));
 });
 
+test("manual field army role gets engine-selected tactical directives", async ({ isMobile }) => {
+  test.skip(isMobile, "engine AI directive rules are covered once on desktop");
+
+  const state = aiDirectiveGameState(
+    { type: "inactive" },
+    [
+      { id: 1, owner: 0, faction: "mongol", kind: "infantry", q: 7, r: 3, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+      { id: 3, owner: 2, faction: "chinese", kind: "chinese_cavalry", q: 8, r: 3, hp: 10, maxHp: 10, remainingScaledMove: 24 },
+    ]
+  );
+  state.game.aiGroups[0].name = "Manual Field Army";
+  state.game.aiGroups[0].role = "field_army";
+
+  const result = runEngineJson(["game-end-turn"], state);
+  expect(result.game.aiGroups[0]).toEqual(expect.objectContaining({
+    generated: false,
+    role: "field_army",
+    directive: expect.objectContaining({ type: "inactive" }),
+  }));
+  expect(result.units.find((unit) => unit.id === 1).hp).toBeLessThan(10);
+});
+
+test("settled AI auto groups remaining units into field armies", async ({ isMobile }) => {
+  test.skip(isMobile, "engine settled AI rule is covered once on desktop");
+
+  const state = aiDirectiveGameState(
+    { type: "hunt" },
+    [
+      { id: 1, owner: 0, faction: "mongol", kind: "infantry", q: 1, r: 3, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+      { id: 3, owner: 2, faction: "chinese", kind: "chinese_cavalry", q: 8, r: 1, hp: 10, maxHp: 10, remainingScaledMove: 24 },
+      { id: 4, owner: 2, faction: "chinese", kind: "infantry", q: 8, r: 2, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+      { id: 5, owner: 2, faction: "chinese", kind: "infantry", q: 8, r: 3, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+      { id: 6, owner: 2, faction: "chinese", kind: "infantry", q: 8, r: 4, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+      { id: 7, owner: 2, faction: "chinese", kind: "chinese_cavalry", q: 7, r: 4, hp: 10, maxHp: 10, remainingScaledMove: 24 },
+    ]
+  );
+  state.game.aiGroups = [];
+
+  const result = runEngineJson(["game-end-turn"], state);
+  const fieldArmies = result.game.aiGroups.filter((group) => group.generated && group.role === "field_army");
+  expect(fieldArmies).toHaveLength(2);
+  expect(fieldArmies.map((group) => group.unitIds.length).sort()).toEqual([1, 4]);
+  expect(fieldArmies.every((group) => group.name === "Field Army")).toBe(true);
+});
+
 test("inactive AI directive leaves assigned units idle", async ({ isMobile }) => {
   test.skip(isMobile, "engine AI directive rules are covered once on desktop");
 
@@ -2024,6 +2069,15 @@ test("map toolbar stays available while diplomacy replaces the map panel", async
 
   await openPlayMode(page);
   await expect(page.locator(".map-toolbar #diplomacy-toggle-button")).toBeVisible();
+  await expect(page.evaluate(() => {
+    const toolbar = document.querySelector(".map-toolbar").getBoundingClientRect();
+    const diplomacy = document.querySelector("#diplomacy-toggle-button").getBoundingClientRect();
+    const zoomOut = document.querySelector("#zoom-out-button").getBoundingClientRect();
+    return {
+      diplomacyLeftAligned: diplomacy.left <= toolbar.left + 10,
+      diplomacyBeforeMapTools: diplomacy.right <= zoomOut.left,
+    };
+  })).resolves.toEqual({ diplomacyLeftAligned: true, diplomacyBeforeMapTools: true });
 
   await page.locator("#diplomacy-toggle-button").click();
   await expect(page.locator(".map-toolbar")).toBeVisible();
@@ -2781,6 +2835,9 @@ test("scenario AI editor configures groups and map pickers", async ({ page, isMo
   await page.goto("/");
   await page.getByRole("button", { name: "Scenario Edit" }).click();
   await page.getByRole("button", { name: "New Scenario" }).click();
+  await page.evaluate(async () => {
+    replaceProjectionFromEngine(await postAppCommand({ type: "load_game", state: scenarioSnapshot() }), "load_game");
+  });
 
   const hexPoint = async (coord) => page.evaluate(({ q, r }) => {
     const panel = mapPanel.getBoundingClientRect();
@@ -2814,11 +2871,21 @@ test("scenario AI editor configures groups and map pickers", async ({ page, isMo
     const view = await editorEngineView(page);
     return view.game.aiGroups.filter((group) => !group.generated).length;
   }).toBe(1);
+  await expect(page.locator(".ai-group-role")).toHaveValue("manual_directive");
+  await page.locator(".ai-group-role").selectOption("field_army");
+  await expect.poll(async () => {
+    const view = await editorEngineView(page);
+    return view.game.aiGroups[0].role;
+  }).toBe("field_army");
 
   await page.locator(".ai-members-button").click();
   point = await hexPoint({ q: 3, r: 3 });
   await page.mouse.click(point.x, point.y);
   await expect.poll(() => page.evaluate(() => currentMap.game.aiGroups[0].unitIds)).toEqual([1]);
+  await expect.poll(() => page.evaluate(() => ({
+    picking: aiMemberPickActive(),
+    memberIds: Array.from(activeEditorAiMemberIds()),
+  }))).toEqual({ picking: true, memberIds: [1] });
   point = await hexPoint({ q: 5, r: 4 });
   await page.mouse.click(point.x, point.y);
   await expect.poll(() => page.evaluate(() => currentMap.game.aiGroups[0].unitIds)).toEqual([1]);
@@ -2834,6 +2901,7 @@ test("scenario AI editor configures groups and map pickers", async ({ page, isMo
     return snapshot.game.aiGroups[0];
   })).toEqual(expect.objectContaining({
     owner: 2,
+    role: "field_army",
     unitIds: [1],
     directive: expect.objectContaining({
       type: "hunt_horde",
@@ -2842,6 +2910,29 @@ test("scenario AI editor configures groups and map pickers", async ({ page, isMo
       target: { q: 6, r: 4 },
     }),
   }));
+});
+
+test("scenario AI role edits recover from stale engine projection", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop scenario edit flow is covered once on desktop");
+
+  await page.goto("/");
+  await page.evaluate(() => {
+    engineProjection.version = 1;
+    engineProjection.hash = "stale-browser-projection";
+  });
+  await page.getByRole("button", { name: "Scenario Edit" }).click();
+  await page.getByRole("button", { name: "New Scenario" }).click();
+  await page.getByRole("button", { name: "AI", exact: true }).click();
+  await page.getByRole("button", { name: "Add Group" }).click();
+  await page.locator(".ai-group-role").selectOption("field_army");
+
+  await expect.poll(async () => {
+    await page.evaluate(() => (
+      typeof scenarioEditorEngineSync !== "undefined" ? scenarioEditorEngineSync : Promise.resolve(false)
+    ));
+    const view = await page.evaluate(() => postAppCommand({ type: "get_state" }));
+    return view.game.aiGroups[0]?.role;
+  }).toBe("field_army");
 });
 
 test("scenario AI edits update the engine-backed game before returning to play", async ({ page, isMobile }) => {
