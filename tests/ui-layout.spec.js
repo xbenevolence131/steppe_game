@@ -1217,7 +1217,32 @@ test("settled AI auto assigns owned urban units to hold hex", async ({ isMobile 
   expect(chineseUnit.combatDone).toBe(false);
 });
 
-test("settled AI assigns remaining units after urban hold garrisons", async ({ isMobile }) => {
+test("settled AI auto assigns wall gate units to hold hex", async ({ isMobile }) => {
+  test.skip(isMobile, "engine settled AI rule is covered once on desktop");
+
+  const state = settledGateDefenseAiGameState();
+  state.units = [
+    { id: 1, owner: 0, faction: "mongol", kind: "horse_archer", q: 4, r: 2, hp: 10, maxHp: 10, remainingScaledMove: 32 },
+    { id: 3, owner: 2, faction: "chinese", kind: "infantry", q: 6, r: 2, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+  ];
+
+  const result = runEngineJson(["game-end-turn"], state);
+  const chineseUnit = result.units.find((unit) => unit.id === 3);
+  const garrison = result.game.aiGroups.find((group) => group.unitIds.includes(3));
+  expect(garrison).toEqual(expect.objectContaining({
+    generated: true,
+    name: "Gate Garrison",
+    directive: expect.objectContaining({
+      type: "hold_hex",
+      target: { q: 6, r: 2 },
+    }),
+  }));
+  expect(chineseUnit.q).toBe(6);
+  expect(chineseUnit.r).toBe(2);
+  expect(chineseUnit.combatDone).toBe(false);
+});
+
+test("settled AI turns remaining gate defenders into hold garrisons after redeploying", async ({ isMobile }) => {
   test.skip(isMobile, "engine settled AI rule is covered once on desktop");
 
   const state = settledGateDefenseAiGameState();
@@ -1231,9 +1256,13 @@ test("settled AI assigns remaining units after urban hold garrisons", async ({ i
     type: "hold_hex",
     target: { q: 7, r: 2 },
   }));
-  expect(fieldGroup.directive).toEqual(expect.objectContaining({
-    type: "defend_hex",
-    target: { q: 6, r: 2 },
+  expect(fieldGroup).toEqual(expect.objectContaining({
+    generated: true,
+    name: "Gate Garrison",
+    directive: expect.objectContaining({
+      type: "hold_hex",
+      target: { q: 6, r: 2 },
+    }),
   }));
   expect(fieldUnit.q).toBe(6);
   expect(fieldUnit.r).toBe(2);

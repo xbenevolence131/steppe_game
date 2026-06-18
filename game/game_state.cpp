@@ -3344,6 +3344,16 @@ bool owned_urban_hex(const GameState& state, OwnerId owner, Coord coord) {
     return hex != nullptr && hex->owner == owner && hex->terrain == Terrain::Urban;
 }
 
+bool wall_gate_hold_hex(const GameState& state, OwnerId owner, Coord coord) {
+    for (const WallGate& gate : state.wall_gates) {
+        Coord target;
+        if (wall_gate_hold_coord(state, owner, gate, target) && coord_equal(coord, target)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void refresh_generated_strategic_ai_group(GameState& state, OwnerId owner) {
     state.ai_groups.erase(
         std::remove_if(state.ai_groups.begin(), state.ai_groups.end(), [&](const AiGroup& group) {
@@ -3377,7 +3387,9 @@ void refresh_generated_strategic_ai_group(GameState& state, OwnerId owner) {
         int garrison_index = 0;
         for (const int unit_id : unassigned_unit_ids) {
             const Unit* unit = find_unit(state, unit_id);
-            if (unit == nullptr || !owned_urban_hex(state, owner, unit->coord)) {
+            const bool town_garrison = unit != nullptr && owned_urban_hex(state, owner, unit->coord);
+            const bool gate_garrison = unit != nullptr && !town_garrison && wall_gate_hold_hex(state, owner, unit->coord);
+            if (!town_garrison && !gate_garrison) {
                 remaining_unit_ids.push_back(unit_id);
                 continue;
             }
@@ -3389,7 +3401,7 @@ void refresh_generated_strategic_ai_group(GameState& state, OwnerId owner) {
             AiGroup group;
             group.id = generated_town_garrison_group_id(owner, garrison_index++);
             group.owner = owner;
-            group.name = "Town Garrison";
+            group.name = town_garrison ? "Town Garrison" : "Gate Garrison";
             group.unit_ids = {unit_id};
             group.directive = directive;
             group.generated = true;
