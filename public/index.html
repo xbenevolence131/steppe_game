@@ -49,46 +49,56 @@
                     <input id="map-height" type="number" min="1" max="80" value="80">
                   </label>
                 </div>
-                <fieldset class="faction-selector" aria-label="Scenario factions">
-                  <legend>Factions</legend>
-                  <table class="scenario-faction-table">
-                    <thead>
-                      <tr>
-                        <th scope="col">Enabled</th>
-                        <th scope="col">AI Control</th>
-                        <th scope="col">Faction</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr data-faction-key="mongol">
-                        <td><input class="scenario-faction-enabled" type="checkbox" value="mongol" checked aria-label="Enable Mongol"></td>
-                        <td><input class="scenario-faction-ai" type="checkbox" value="mongol" aria-label="AI Control Mongol"></td>
-                        <td>Mongol</td>
-                      </tr>
-                      <tr data-faction-key="chinese">
-                        <td><input class="scenario-faction-enabled" type="checkbox" value="chinese" checked aria-label="Enable Chinese"></td>
-                        <td><input class="scenario-faction-ai" type="checkbox" value="chinese" aria-label="AI Control Chinese"></td>
-                        <td>Chinese</td>
-                      </tr>
-                      <tr data-faction-key="persian">
-                        <td><input class="scenario-faction-enabled" type="checkbox" value="persian" aria-label="Enable Persian"></td>
-                        <td><input class="scenario-faction-ai" type="checkbox" value="persian" aria-label="AI Control Persian"></td>
-                        <td>Persian</td>
-                      </tr>
-                      <tr data-faction-key="jurchen">
-                        <td><input class="scenario-faction-enabled" type="checkbox" value="jurchen" aria-label="Enable Jurchen"></td>
-                        <td><input class="scenario-faction-ai" type="checkbox" value="jurchen" checked aria-label="AI Control Jurchen"></td>
-                        <td>Jurchen</td>
-                      </tr>
-                      <tr data-faction-key="forest_nomad">
-                        <td><input class="scenario-faction-enabled" type="checkbox" value="forest_nomad" aria-label="Enable Forest Nomads"></td>
-                        <td><input class="scenario-faction-ai" type="checkbox" value="forest_nomad" checked aria-label="AI Control Forest Nomads"></td>
-                        <td>Forest Nomads</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </fieldset>
               </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="scenario-region" data-scenario-region="factions">
+          <button class="scenario-region-rail" type="button" data-scenario-activate="factions" aria-pressed="false">Factions</button>
+          <div class="scenario-region-body">
+            <button class="scenario-region-toggle" type="button" data-scenario-toggle="factions" aria-expanded="true" aria-label="Collapse Factions">-</button>
+            <div class="scenario-tool-panel faction-tool-panel" data-scenario-panel="factions">
+              <fieldset class="faction-selector" aria-label="Scenario factions">
+                <legend>Factions</legend>
+                <table class="scenario-faction-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Enabled</th>
+                      <th scope="col">AI Control</th>
+                      <th scope="col">Faction</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr data-faction-key="mongol">
+                      <td><input class="scenario-faction-enabled" type="checkbox" value="mongol" checked aria-label="Enable Mongol"></td>
+                      <td><input class="scenario-faction-ai" type="checkbox" value="mongol" aria-label="AI Control Mongol"></td>
+                      <td>Mongol</td>
+                    </tr>
+                    <tr data-faction-key="chinese">
+                      <td><input class="scenario-faction-enabled" type="checkbox" value="chinese" checked aria-label="Enable Chinese"></td>
+                      <td><input class="scenario-faction-ai" type="checkbox" value="chinese" aria-label="AI Control Chinese"></td>
+                      <td>Chinese</td>
+                    </tr>
+                    <tr data-faction-key="persian">
+                      <td><input class="scenario-faction-enabled" type="checkbox" value="persian" aria-label="Enable Persian"></td>
+                      <td><input class="scenario-faction-ai" type="checkbox" value="persian" aria-label="AI Control Persian"></td>
+                      <td>Persian</td>
+                    </tr>
+                    <tr data-faction-key="jurchen">
+                      <td><input class="scenario-faction-enabled" type="checkbox" value="jurchen" aria-label="Enable Jurchen"></td>
+                      <td><input class="scenario-faction-ai" type="checkbox" value="jurchen" checked aria-label="AI Control Jurchen"></td>
+                      <td>Jurchen</td>
+                    </tr>
+                    <tr data-faction-key="forest_nomad">
+                      <td><input class="scenario-faction-enabled" type="checkbox" value="forest_nomad" aria-label="Enable Forest Nomads"></td>
+                      <td><input class="scenario-faction-ai" type="checkbox" value="forest_nomad" checked aria-label="AI Control Forest Nomads"></td>
+                      <td>Forest Nomads</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </fieldset>
+              <div id="faction-relationships" class="faction-relationships" aria-label="Faction relationships"></div>
             </div>
           </div>
         </article>
@@ -254,7 +264,6 @@
               <div class="ai-toolbar">
                 <button id="add-ai-group-button" type="button">Add Group</button>
               </div>
-              <div id="ai-postures" class="ai-postures" aria-label="AI postures"></div>
               <div id="ai-groups" class="ai-groups" aria-label="AI groups"></div>
             </div>
           </div>

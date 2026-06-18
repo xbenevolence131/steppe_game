@@ -1656,6 +1656,7 @@ test("scenario controls sit above the shared map", async ({ page }) => {
   await expect(page.locator("#scenario-controls")).toBeVisible();
   await expect(page.locator(".app-header .mode-chooser")).toBeVisible();
   await expect(page.getByRole("button", { name: "Session", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Factions", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Parameters", exact: true })).toHaveCount(0);
   await expect(page.locator('[data-scenario-region="session"]')).toHaveClass(/is-active/);
   await expect(page.locator("#play-controls")).toBeVisible();
@@ -2679,6 +2680,8 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
     .toBeGreaterThan(expandedMapHeight + 40);
   await page.getByRole("button", { name: "Show Panel" }).click();
   await expect(page.locator("#play-details-bar")).toBeVisible();
+  await page.getByRole("button", { name: "Factions", exact: true }).click();
+  await expect(page.locator('[data-scenario-region="factions"]')).toHaveClass(/is-active/);
   await page.getByLabel("AI Control Chinese").check();
   await expect.poll(() => page.evaluate(() => ({
     chineseAi: currentMap.game.factions.find((faction) => faction.key === "chinese").ai,
@@ -2952,13 +2955,19 @@ test("scenario AI editor configures groups and map pickers", async ({ page, isMo
   point = await hexPoint({ q: 5, r: 4 });
   await page.mouse.click(point.x, point.y);
 
-  await page.getByRole("button", { name: "AI", exact: true }).click();
-  await expect(page.locator('[data-scenario-region="ai"]')).toHaveClass(/is-active/);
+  await page.getByRole("button", { name: "Factions", exact: true }).click();
+  await expect(page.locator('[data-scenario-region="factions"]')).toHaveClass(/is-active/);
+  await page.getByLabel("Chinese affinity toward Mongol").fill("35");
+  await page.getByLabel("Chinese affinity toward Mongol").dispatchEvent("change");
   await page.getByLabel("Chinese posture toward Mongol").selectOption("defensive");
   await expect.poll(async () => {
     const view = await editorEngineView(page);
-    return view.game.diplomacy.find((relationship) => relationship.owner === 2 && relationship.target === 0)?.aiPosture;
-  }).toBe("defensive");
+    const relationship = view.game.diplomacy.find((candidate) => candidate.owner === 2 && candidate.target === 0);
+    return relationship ? { affinity: relationship.affinity, posture: relationship.aiPosture } : null;
+  }).toEqual({ affinity: 35, posture: "defensive" });
+
+  await page.getByRole("button", { name: "AI", exact: true }).click();
+  await expect(page.locator('[data-scenario-region="ai"]')).toHaveClass(/is-active/);
   await page.getByRole("button", { name: "Add Group" }).click();
   await expect(page.locator(".ai-group-card")).toHaveCount(1);
   await expect(page.locator(".ai-group-owner")).toHaveValue("2");

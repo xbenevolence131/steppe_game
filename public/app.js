@@ -70,7 +70,7 @@ const ownershipFactionSelect = document.querySelector("#ownership-faction-select
 const ownershipFactionSwatch = document.querySelector("#ownership-faction-swatch");
 const terrainPalette = document.querySelector("#terrain-palette");
 const addAiGroupButton = document.querySelector("#add-ai-group-button");
-const aiPosturesContainer = document.querySelector("#ai-postures");
+const factionRelationshipsContainer = document.querySelector("#faction-relationships");
 const aiGroupsContainer = document.querySelector("#ai-groups");
 const strategicAiGroupsContainer = document.querySelector("#strategic-ai-groups");
 const strategicAiToggleButton = document.querySelector("#strategic-ai-toggle-button");
@@ -164,7 +164,7 @@ let unitSelectionInProgress = false;
 let collapsedAiGroupIds = new Set();
 let collapsedStrategicAiGroupIds = new Set();
 let strategicAiCollapsed = false;
-let openScenarioRegions = new Set(["session", "terrain", "ownership", "units", "ai"]);
+let openScenarioRegions = new Set(["session", "factions", "terrain", "ownership", "units", "ai"]);
 let paintStrokeKeys = new Set();
 let paintUndoRecorded = false;
 let terrainUndo = new Map();
@@ -1527,11 +1527,11 @@ function removeAiGroup(groupId) {
   void syncAiGroupsToEngine();
 }
 
-function syncAiPostureControls() {
-  if (!aiPosturesContainer) {
+function syncFactionRelationshipControls() {
+  if (!factionRelationshipsContainer) {
     return;
   }
-  aiPosturesContainer.replaceChildren();
+  factionRelationshipsContainer.replaceChildren();
   if (!currentMap) {
     return;
   }
@@ -1542,11 +1542,11 @@ function syncAiPostureControls() {
   }
 
   const title = document.createElement("div");
-  title.className = "ai-postures-title";
-  title.textContent = "Faction Postures";
+  title.className = "faction-relationships-title";
+  title.textContent = "Relationships";
 
   const table = document.createElement("table");
-  table.className = "ai-posture-table";
+  table.className = "faction-relationship-table";
   const thead = document.createElement("thead");
   const headRow = document.createElement("tr");
   const corner = document.createElement("th");
@@ -1573,8 +1573,20 @@ function syncAiPostureControls() {
       if (ownerFaction.id === targetFaction.id) {
         cell.textContent = "-";
       } else {
+        const affinityInput = document.createElement("input");
+        affinityInput.type = "number";
+        affinityInput.min = "0";
+        affinityInput.max = "100";
+        affinityInput.step = "1";
+        affinityInput.className = "faction-affinity-input";
+        affinityInput.value = String(diplomacyAffinity(ownerFaction.id, targetFaction.id));
+        affinityInput.setAttribute("aria-label", `${optionLabelForFaction(ownerFaction)} affinity toward ${optionLabelForFaction(targetFaction)}`);
+        affinityInput.addEventListener("change", () => {
+          updateDiplomacyAffinity(ownerFaction.id, targetFaction.id, affinityInput.value);
+        });
+
         const select = document.createElement("select");
-        select.className = "ai-posture-select";
+        select.className = "faction-posture-select";
         select.setAttribute("aria-label", `${optionLabelForFaction(ownerFaction)} posture toward ${optionLabelForFaction(targetFaction)}`);
         for (const posture of aiPostures) {
           const option = document.createElement("option");
@@ -1586,18 +1598,20 @@ function syncAiPostureControls() {
         select.addEventListener("change", () => {
           updateDiplomacyPosture(ownerFaction.id, targetFaction.id, select.value);
         });
-        cell.appendChild(select);
+        const cellStack = document.createElement("div");
+        cellStack.className = "faction-relationship-cell";
+        cellStack.append(affinityInput, select);
+        cell.appendChild(cellStack);
       }
       row.appendChild(cell);
     }
     tbody.appendChild(row);
   }
   table.append(thead, tbody);
-  aiPosturesContainer.append(title, table);
+  factionRelationshipsContainer.append(title, table);
 }
 
 function syncAiEditorControls() {
-  syncAiPostureControls();
   if (!aiGroupsContainer) {
     return;
   }
@@ -2070,7 +2084,7 @@ function syncScenarioToolControls() {
 }
 
 function setScenarioTool(tool) {
-  scenarioTool = ["session", "terrain", "ownership", "units", "ai"].includes(tool) ? tool : "session";
+  scenarioTool = ["session", "factions", "terrain", "ownership", "units", "ai"].includes(tool) ? tool : "session";
   openScenarioRegions.add(scenarioTool);
   if (scenarioTool !== "ai") {
     aiPickMode = null;
@@ -2517,7 +2531,26 @@ function updateDiplomacyPosture(owner, target, posture) {
   recordLocalUndo();
   relationship.aiPosture = normalizedPosture;
   currentMap.game.diplomacy = normalizeDiplomacy(currentMap.game.diplomacy);
-  syncAiPostureControls();
+  syncFactionRelationshipControls();
+  syncDiplomacyScreen();
+  void syncScenarioEditorToEngine();
+}
+
+function updateDiplomacyAffinity(owner, target, value) {
+  if (!currentMap || owner === target) {
+    return;
+  }
+  ensureGameMeta();
+  const affinity = Math.max(0, Math.min(100, Math.trunc(Number.parseFloat(value))));
+  currentMap.game.diplomacy = normalizeDiplomacy(currentMap.game.diplomacy);
+  const relationship = currentMap.game.diplomacy.find((candidate) => candidate.owner === owner && candidate.target === target);
+  if (!relationship) {
+    return;
+  }
+  recordLocalUndo();
+  relationship.affinity = Number.isFinite(affinity) ? affinity : 50;
+  currentMap.game.diplomacy = normalizeDiplomacy(currentMap.game.diplomacy);
+  syncFactionRelationshipControls();
   syncDiplomacyScreen();
   void syncScenarioEditorToEngine();
 }
@@ -4131,6 +4164,7 @@ function syncModeControls() {
   }
   syncEditorControls();
   syncScenarioParameterControls();
+  syncFactionRelationshipControls();
   syncPlayControls();
   syncDiplomacyScreen();
   syncUndoControls();

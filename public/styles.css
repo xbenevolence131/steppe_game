@@ -1113,12 +1113,12 @@ select[hidden] {
   font-weight: 700;
 }
 
-.ai-postures {
+.faction-relationships {
   min-width: 0;
   overflow-x: auto;
 }
 
-.ai-postures-title {
+.faction-relationships-title {
   margin: 2px 0 6px;
   color: var(--muted);
   font-size: 12px;
@@ -1126,32 +1126,44 @@ select[hidden] {
   text-transform: uppercase;
 }
 
-.ai-posture-table {
+.faction-relationship-table {
   width: max-content;
   min-width: 100%;
   border-collapse: collapse;
   font-size: 12px;
 }
 
-.ai-posture-table th,
-.ai-posture-table td {
+.faction-relationship-table th,
+.faction-relationship-table td {
   border: 1px solid rgba(185, 173, 150, 0.55);
   padding: 4px 6px;
   text-align: center;
   white-space: nowrap;
 }
 
-.ai-posture-table th {
+.faction-relationship-table th {
   background: var(--surface);
   color: var(--muted);
   font-weight: 700;
 }
 
-.ai-posture-table th:first-child {
+.faction-relationship-table th:first-child {
   text-align: left;
 }
 
-.ai-posture-select {
+.faction-relationship-cell {
+  display: grid;
+  grid-template-columns: 64px minmax(104px, 1fr);
+  gap: 6px;
+  align-items: center;
+}
+
+.faction-affinity-input {
+  min-width: 0;
+  width: 64px;
+}
+
+.faction-posture-select {
   min-width: 104px;
 }
 
