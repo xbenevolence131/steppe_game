@@ -1358,6 +1358,54 @@ test("settled AI auto groups remaining units into field armies", async ({ isMobi
   expect(fieldArmies.every((group) => group.name === "Field Army")).toBe(true);
 });
 
+test("settled AI posture controls generated mobile group role", async ({ isMobile }) => {
+  test.skip(isMobile, "engine settled AI posture is covered once on desktop");
+
+  const baseState = aiDirectiveGameState(
+    { type: "hunt" },
+    [
+      { id: 1, owner: 0, faction: "mongol", kind: "infantry", q: 1, r: 3, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+      { id: 3, owner: 2, faction: "chinese", kind: "chinese_cavalry", q: 8, r: 1, hp: 10, maxHp: 10, remainingScaledMove: 24 },
+      { id: 4, owner: 2, faction: "chinese", kind: "infantry", q: 8, r: 2, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+    ]
+  );
+  baseState.game.aiGroups = [];
+
+  const defensiveState = JSON.parse(JSON.stringify(baseState));
+  defensiveState.game.diplomacy = [{
+    owner: 2,
+    faction: "chinese",
+    target: 0,
+    targetFaction: "mongol",
+    status: "war",
+    affinity: 50,
+    aiPosture: "defensive",
+  }];
+  const defensive = runEngineJson(["game-end-turn"], defensiveState);
+  expect(defensive.game.aiGroups.find((group) => group.owner === 2)).toEqual(expect.objectContaining({
+    generated: true,
+    role: "reserve",
+    name: "Reserve",
+  }));
+
+  const aggressiveState = JSON.parse(JSON.stringify(baseState));
+  aggressiveState.game.diplomacy = [{
+    owner: 2,
+    faction: "chinese",
+    target: 0,
+    targetFaction: "mongol",
+    status: "war",
+    affinity: 50,
+    aiPosture: "aggressive",
+  }];
+  const aggressive = runEngineJson(["game-end-turn"], aggressiveState);
+  expect(aggressive.game.aiGroups.find((group) => group.owner === 2)).toEqual(expect.objectContaining({
+    generated: true,
+    role: "field_army",
+    name: "Field Army",
+  }));
+});
+
 test("reserve AI role moves to empty settled defense holes", async ({ isMobile }) => {
   test.skip(isMobile, "engine settled AI role is covered once on desktop");
 
@@ -2906,6 +2954,11 @@ test("scenario AI editor configures groups and map pickers", async ({ page, isMo
 
   await page.getByRole("button", { name: "AI", exact: true }).click();
   await expect(page.locator('[data-scenario-region="ai"]')).toHaveClass(/is-active/);
+  await page.getByLabel("Chinese posture toward Mongol").selectOption("defensive");
+  await expect.poll(async () => {
+    const view = await editorEngineView(page);
+    return view.game.diplomacy.find((relationship) => relationship.owner === 2 && relationship.target === 0)?.aiPosture;
+  }).toBe("defensive");
   await page.getByRole("button", { name: "Add Group" }).click();
   await expect(page.locator(".ai-group-card")).toHaveCount(1);
   await expect(page.locator(".ai-group-owner")).toHaveValue("2");

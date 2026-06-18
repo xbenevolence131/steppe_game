@@ -408,6 +408,17 @@ AiDirectiveKind ai_directive_kind_from_string(const std::string& value) {
     return AiDirectiveKind::Hunt;
 }
 
+std::string normalize_ai_posture(const std::string& posture) {
+    if (posture == "passive"
+        || posture == "defensive"
+        || posture == "balanced"
+        || posture == "aggressive"
+        || posture == "raiding") {
+        return posture;
+    }
+    return "balanced";
+}
+
 struct UnitTypeTable {
     std::vector<UnitKind> order;
     std::map<UnitKind, UnitDefaults> defaults;
@@ -1006,6 +1017,7 @@ bool unit_kind_available_to_archetype(UnitKind kind, const std::string& archetyp
 void normalize_diplomacy(GameState& state) {
     std::map<int, int> existing_affinity;
     std::map<int, std::string> existing_status;
+    std::map<int, std::string> existing_posture;
     for (const DiplomaticRelationship& relationship : state.diplomacy) {
         if (relationship.owner == neutral_owner || relationship.target == neutral_owner || relationship.owner == relationship.target) {
             continue;
@@ -1014,6 +1026,8 @@ void normalize_diplomacy(GameState& state) {
             std::max(0, std::min(100, relationship.affinity));
         const std::string status = relationship.status == "peace" ? "peace" : "war";
         existing_status[diplomacy_key(relationship.owner, relationship.target)] = status;
+        existing_posture[diplomacy_key(relationship.owner, relationship.target)] =
+            normalize_ai_posture(relationship.ai_posture);
     }
 
     std::vector<OwnerId> owners;
@@ -1055,6 +1069,8 @@ void normalize_diplomacy(GameState& state) {
             relationship.owner = owner;
             relationship.target = target;
             relationship.affinity = found == existing_affinity.end() ? 50 : found->second;
+            const auto posture_found = existing_posture.find(key);
+            relationship.ai_posture = posture_found == existing_posture.end() ? "balanced" : posture_found->second;
             const bool has_explicit_status =
                 status_found != existing_status.end() || reverse_status_found != existing_status.end();
             relationship.status =
@@ -1077,6 +1093,13 @@ bool at_war(const GameState& state, OwnerId first, OwnerId second) {
         return relationship.owner == first && relationship.target == second;
     });
     return found == state.diplomacy.end() || found->status == "war";
+}
+
+std::string ai_posture_toward(const GameState& state, OwnerId owner, OwnerId target) {
+    const auto found = std::find_if(state.diplomacy.begin(), state.diplomacy.end(), [&](const DiplomaticRelationship& relationship) {
+        return relationship.owner == owner && relationship.target == target;
+    });
+    return found == state.diplomacy.end() ? "balanced" : normalize_ai_posture(found->ai_posture);
 }
 
 bool hostile_units(const GameState& state, const Unit& first, const Unit& second) {
@@ -3111,7 +3134,7 @@ bool first_ai_anchor_coord(const GameState& state, OwnerId owner, Coord& anchor)
     return true;
 }
 
-bool nearest_owned_settlement_threat(const GameState& state, OwnerId owner, Coord origin, Coord& target) {
+bool nearest_owned_settlement_threat(const GameState& state, OwnerId owner, Coord origin, Coord& target, OwnerId& threat_owner) {
     bool found = false;
     int best_score = std::numeric_limits<int>::min();
     for (const Settlement& settlement : state.settlements) {
@@ -3132,6 +3155,7 @@ bool nearest_owned_settlement_threat(const GameState& state, OwnerId owner, Coor
             - hex_distance(origin, settlement.coord) * 8;
         if (!found || score > best_score || (score == best_score && coord_less(settlement.coord, target))) {
             target = settlement.coord;
+            threat_owner = threat->owner;
             best_score = score;
             found = true;
         }
@@ -3189,7 +3213,7 @@ bool wall_gate_hold_coord(const GameState& state, OwnerId owner, const WallGate&
     return found;
 }
 
-bool best_threatened_wall_gate(const GameState& state, OwnerId owner, Coord origin, Coord& target) {
+bool best_threatened_wall_gate(const GameState& state, OwnerId owner, Coord origin, Coord& target, OwnerId& threat_owner) {
     bool found = false;
     int best_score = std::numeric_limits<int>::min();
     for (const WallGate& gate : state.wall_gates) {
@@ -3214,6 +3238,7 @@ bool best_threatened_wall_gate(const GameState& state, OwnerId owner, Coord orig
             - hex_distance(origin, gate_coord) * 6;
         if (!found || score > best_score || (score == best_score && coord_less(gate_coord, target))) {
             target = gate_coord;
+            threat_owner = threat->owner;
             best_score = score;
             found = true;
         }
@@ -3221,7 +3246,7 @@ bool best_threatened_wall_gate(const GameState& state, OwnerId owner, Coord orig
     return found;
 }
 
-bool nearest_capturable_hex(const GameState& state, OwnerId owner, Coord origin, Coord& target) {
+bool nearest_capturable_hex(const GameState& state, OwnerId owner, Coord origin, Coord& target, OwnerId& target_owner) {
     bool found = false;
     int best_score = std::numeric_limits<int>::max();
     for (const Settlement& settlement : state.settlements) {
@@ -3233,6 +3258,7 @@ bool nearest_capturable_hex(const GameState& state, OwnerId owner, Coord origin,
         const int score = hex_distance(origin, settlement.coord);
         if (!found || score < best_score || (score == best_score && coord_less(settlement.coord, target))) {
             target = settlement.coord;
+            target_owner = settlement_owner;
             best_score = score;
             found = true;
         }
@@ -3246,6 +3272,7 @@ bool nearest_capturable_hex(const GameState& state, OwnerId owner, Coord origin,
         const int score = hex_distance(origin, hex.coord);
         if (!found || score < best_score || (score == best_score && coord_less(hex.coord, target))) {
             target = hex.coord;
+            target_owner = hex.owner;
             best_score = score;
             found = true;
         }
@@ -3271,22 +3298,41 @@ bool strategic_directive_for_owner(const GameState& state, OwnerId owner, Coord 
 
     if (settled_archetype(archetype)) {
         Coord target;
-        if (best_threatened_wall_gate(state, owner, origin, target)) {
+        OwnerId target_owner = neutral_owner;
+        if (best_threatened_wall_gate(state, owner, origin, target, target_owner)
+            && ai_posture_toward(state, owner, target_owner) != "passive") {
             directive.kind = AiDirectiveKind::DefendHex;
             directive.target = target;
             return true;
         }
-        if (nearest_owned_settlement_threat(state, owner, origin, target)) {
+        if (nearest_owned_settlement_threat(state, owner, origin, target, target_owner)
+            && ai_posture_toward(state, owner, target_owner) != "passive") {
             directive.kind = AiDirectiveKind::DefendHex;
             directive.target = target;
             return true;
         }
-        if (nearest_capturable_hex(state, owner, origin, target)) {
+        if (nearest_capturable_hex(state, owner, origin, target, target_owner)) {
+            const std::string posture = target_owner == neutral_owner ? "balanced" : ai_posture_toward(state, owner, target_owner);
+            if (posture != "balanced" && posture != "aggressive") {
+                return false;
+            }
             directive.kind = AiDirectiveKind::CaptureHex;
             directive.target = target;
             return true;
         }
-        if (nearest_enemy_unit_from_coord(state, owner, origin) != nullptr) {
+        if (const Unit* horde = nearest_enemy_unit_from_coord(state, owner, origin, neutral_owner, true)) {
+            const std::string posture = ai_posture_toward(state, owner, horde->owner);
+            if (posture == "raiding" || posture == "aggressive") {
+                directive.kind = AiDirectiveKind::HuntHorde;
+                directive.target_owner = horde->owner;
+                return true;
+            }
+        }
+        if (const Unit* enemy = nearest_enemy_unit_from_coord(state, owner, origin)) {
+            const std::string posture = ai_posture_toward(state, owner, enemy->owner);
+            if (posture != "balanced" && posture != "aggressive" && posture != "raiding") {
+                return false;
+            }
             directive = default_hunt_directive();
             return true;
         }
@@ -3346,6 +3392,35 @@ int generated_town_garrison_group_id(OwnerId owner, int index) {
 
 int generated_field_army_group_id(OwnerId owner, int index) {
     return -200000 - owner * 1000 - index;
+}
+
+std::string generated_settled_mobile_role(const GameState& state, OwnerId owner) {
+    bool has_field_posture = false;
+    bool has_war = false;
+    for (const DiplomaticRelationship& relationship : state.diplomacy) {
+        if (relationship.owner != owner || relationship.target == neutral_owner || relationship.status == "peace") {
+            continue;
+        }
+        has_war = true;
+        const std::string posture = normalize_ai_posture(relationship.ai_posture);
+        if (posture == "raiding") {
+            return "raiding_force";
+        }
+        if (posture == "balanced" || posture == "aggressive") {
+            has_field_posture = true;
+        }
+    }
+    return has_field_posture || !has_war ? "field_army" : "reserve";
+}
+
+std::string generated_settled_mobile_group_name(const std::string& role) {
+    if (role == "reserve") {
+        return "Reserve";
+    }
+    if (role == "raiding_force") {
+        return "Raiding Force";
+    }
+    return "Field Army";
 }
 
 bool owned_urban_hex(const GameState& state, OwnerId owner, Coord coord) {
@@ -3491,6 +3566,7 @@ void refresh_generated_strategic_ai_group(GameState& state, OwnerId owner) {
     if (settled_archetype(faction_archetype(state, owner))) {
         constexpr std::size_t field_army_size = 4;
         int army_index = 0;
+        const std::string mobile_role = generated_settled_mobile_role(state, owner);
         for (std::size_t start = 0; start < unassigned_unit_ids.size(); start += field_army_size) {
             std::vector<int> army_unit_ids;
             const std::size_t end = std::min(start + field_army_size, unassigned_unit_ids.size());
@@ -3500,15 +3576,14 @@ void refresh_generated_strategic_ai_group(GameState& state, OwnerId owner) {
                 continue;
             }
             AiDirective directive;
-            if (!strategic_directive_for_owner(state, owner, anchor_unit->coord, directive)) {
-                continue;
-            }
+            directive.kind = AiDirectiveKind::Inactive;
+            strategic_directive_for_owner(state, owner, anchor_unit->coord, directive);
 
             AiGroup group;
             group.id = generated_field_army_group_id(owner, army_index++);
             group.owner = owner;
-            group.name = "Field Army";
-            group.role = "field_army";
+            group.name = generated_settled_mobile_group_name(mobile_role);
+            group.role = mobile_role;
             group.unit_ids = std::move(army_unit_ids);
             group.directive = directive;
             group.generated = true;
@@ -4513,6 +4588,7 @@ void print_diplomacy_json(const std::vector<DiplomaticRelationship>& diplomacy, 
             << ",\"targetFaction\":\"" << escape_json(target.key) << "\""
             << ",\"affinity\":" << std::max(0, std::min(100, relationship.affinity))
             << ",\"status\":\"" << escape_json(relationship.status == "peace" ? "peace" : "war") << "\""
+            << ",\"aiPosture\":\"" << escape_json(normalize_ai_posture(relationship.ai_posture)) << "\""
             << "}";
     }
     out << "]";
@@ -4581,6 +4657,7 @@ std::string game_state_hash(const GameState& state) {
         hash_append_int(hash, relationship.target);
         hash_append_int(hash, relationship.affinity);
         hash_append(hash, relationship.status);
+        hash_append(hash, normalize_ai_posture(relationship.ai_posture));
     }
     for (const AiGroup& group : state.ai_groups) {
         hash_append_int(hash, group.id);
@@ -5244,6 +5321,7 @@ GameState parse_game_state_json(const std::string& json) {
         );
         relationship.affinity = std::max(0, std::min(100, int_field(diplomacy_json, "affinity", 50)));
         relationship.status = string_field(diplomacy_json, "status", "war") == "peace" ? "peace" : "war";
+        relationship.ai_posture = normalize_ai_posture(string_field(diplomacy_json, "aiPosture", "balanced"));
         state.diplomacy.push_back(std::move(relationship));
     }
     normalize_diplomacy(state);

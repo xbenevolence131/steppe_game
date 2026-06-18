@@ -1113,6 +1113,48 @@ select[hidden] {
   font-weight: 700;
 }
 
+.ai-postures {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.ai-postures-title {
+  margin: 2px 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.ai-posture-table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.ai-posture-table th,
+.ai-posture-table td {
+  border: 1px solid rgba(185, 173, 150, 0.55);
+  padding: 4px 6px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.ai-posture-table th {
+  background: var(--surface);
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.ai-posture-table th:first-child {
+  text-align: left;
+}
+
+.ai-posture-select {
+  min-width: 104px;
+}
+
 .context-menu {
   position: absolute;
   z-index: 20;

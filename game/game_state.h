@@ -220,6 +220,7 @@ struct DiplomaticRelationship {
     OwnerId target = neutral_owner;
     int affinity = 50;
     std::string status = "war";
+    std::string ai_posture = "balanced";
 };
 
 struct UnitDefaults {

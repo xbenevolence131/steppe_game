@@ -139,6 +139,15 @@ function summarizeGameView(view) {
         directive: group.directive,
       }))
       : [],
+    diplomacy: Array.isArray(game.diplomacy)
+      ? game.diplomacy.map((relationship) => ({
+        owner: relationship.owner,
+        target: relationship.target,
+        affinity: relationship.affinity,
+        status: relationship.status,
+        aiPosture: relationship.aiPosture,
+      }))
+      : [],
     units: Array.isArray(view.units) ? view.units.map(unitSummary).filter(Boolean) : [],
   };
 }
