@@ -3335,6 +3335,15 @@ int generated_ai_group_id(OwnerId owner) {
     return -1000 - owner;
 }
 
+int generated_town_garrison_group_id(OwnerId owner, int index) {
+    return -100000 - owner * 1000 - index;
+}
+
+bool owned_urban_hex(const GameState& state, OwnerId owner, Coord coord) {
+    const GameHex* hex = find_hex(state, coord);
+    return hex != nullptr && hex->owner == owner && hex->terrain == Terrain::Urban;
+}
+
 void refresh_generated_strategic_ai_group(GameState& state, OwnerId owner) {
     state.ai_groups.erase(
         std::remove_if(state.ai_groups.begin(), state.ai_groups.end(), [&](const AiGroup& group) {
@@ -3361,6 +3370,35 @@ void refresh_generated_strategic_ai_group(GameState& state, OwnerId owner) {
     }
     if (unassigned_unit_ids.empty()) {
         return;
+    }
+
+    if (settled_archetype(faction_archetype(state, owner))) {
+        std::vector<int> remaining_unit_ids;
+        int garrison_index = 0;
+        for (const int unit_id : unassigned_unit_ids) {
+            const Unit* unit = find_unit(state, unit_id);
+            if (unit == nullptr || !owned_urban_hex(state, owner, unit->coord)) {
+                remaining_unit_ids.push_back(unit_id);
+                continue;
+            }
+
+            AiDirective directive;
+            directive.kind = AiDirectiveKind::HoldHex;
+            directive.target = unit->coord;
+
+            AiGroup group;
+            group.id = generated_town_garrison_group_id(owner, garrison_index++);
+            group.owner = owner;
+            group.name = "Town Garrison";
+            group.unit_ids = {unit_id};
+            group.directive = directive;
+            group.generated = true;
+            state.ai_groups.push_back(std::move(group));
+        }
+        unassigned_unit_ids = std::move(remaining_unit_ids);
+        if (unassigned_unit_ids.empty()) {
+            return;
+        }
     }
 
     const Unit* anchor_unit = find_unit(state, unassigned_unit_ids.front());

@@ -1198,17 +1198,66 @@ test("AI directives choose distinct tactical targets", async ({ isMobile }) => {
   expect(defend.game.aiGroups[0].directive.type).toBe("defend_hex");
 });
 
-test("settled AI holds threatened wall gates before towns", async ({ isMobile }) => {
+test("settled AI auto assigns owned urban units to hold hex", async ({ isMobile }) => {
   test.skip(isMobile, "engine settled AI rule is covered once on desktop");
 
   const result = runEngineJson(["game-end-turn"], settledGateDefenseAiGameState());
   const chineseUnit = result.units.find((unit) => unit.id === 3);
-  expect(result.game.aiGroups[0].directive).toEqual(expect.objectContaining({
+  const garrison = result.game.aiGroups.find((group) => group.unitIds.includes(3));
+  expect(garrison).toEqual(expect.objectContaining({
+    generated: true,
+    name: "Town Garrison",
+    directive: expect.objectContaining({
+      type: "hold_hex",
+      target: { q: 7, r: 2 },
+    }),
+  }));
+  expect(chineseUnit.q).toBe(7);
+  expect(chineseUnit.r).toBe(2);
+  expect(chineseUnit.combatDone).toBe(false);
+});
+
+test("settled AI assigns remaining units after urban hold garrisons", async ({ isMobile }) => {
+  test.skip(isMobile, "engine settled AI rule is covered once on desktop");
+
+  const state = settledGateDefenseAiGameState();
+  state.units.push({ id: 4, owner: 2, faction: "chinese", kind: "infantry", q: 8, r: 3, hp: 10, maxHp: 10, remainingScaledMove: 16 });
+
+  const result = runEngineJson(["game-end-turn"], state);
+  const garrison = result.game.aiGroups.find((group) => group.unitIds.includes(3));
+  const fieldGroup = result.game.aiGroups.find((group) => group.unitIds.includes(4));
+  const fieldUnit = result.units.find((unit) => unit.id === 4);
+  expect(garrison.directive).toEqual(expect.objectContaining({
+    type: "hold_hex",
+    target: { q: 7, r: 2 },
+  }));
+  expect(fieldGroup.directive).toEqual(expect.objectContaining({
     type: "defend_hex",
     target: { q: 6, r: 2 },
   }));
-  expect(chineseUnit.q).toBe(6);
-  expect(chineseUnit.r).toBe(2);
+  expect(fieldUnit.q).toBe(6);
+  expect(fieldUnit.r).toBe(2);
+});
+
+test("manual AI groups keep owned urban units out of auto hold garrisons", async ({ isMobile }) => {
+  test.skip(isMobile, "engine settled AI rule is covered once on desktop");
+
+  const state = settledGateDefenseAiGameState();
+  state.game.aiGroups = [{
+    id: 99,
+    owner: 2,
+    name: "Manual Town Unit",
+    unitIds: [3],
+    directive: { type: "inactive" },
+  }];
+
+  const result = runEngineJson(["game-end-turn"], state);
+  expect(result.game.aiGroups).toHaveLength(1);
+  expect(result.game.aiGroups[0]).toEqual(expect.objectContaining({
+    id: 99,
+    generated: false,
+    directive: expect.objectContaining({ type: "inactive" }),
+  }));
 });
 
 test("inactive AI directive leaves assigned units idle", async ({ isMobile }) => {
