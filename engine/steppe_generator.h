@@ -34,6 +34,7 @@ struct Coord {
 enum class Terrain {
     None,
     Grassland,
+    Farmland,
     Lake,
     Hill,
     Mountain,

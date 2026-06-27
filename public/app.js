@@ -225,12 +225,13 @@ const scenarioDirectoryHandleKey = "scenario-directory";
 
 const editorTerrains = [
   { key: "grassland", label: "Grassland", fill: "#d8c596", stroke: "#7e735f", labelColor: "#29251d" },
+  { key: "farmland", label: "Farmland", fill: "#c8ad62", stroke: "#806f35", labelColor: "#241f0d" },
   { key: "none", label: "None", fill: "#111111", stroke: "#5b5f5b", labelColor: "#eeeeee" },
   { key: "lake", label: "Lake", fill: "#82c7e6", stroke: "#245e78", labelColor: "#082c3a" },
   { key: "hill", label: "Hill", fill: "#b98c56", stroke: "#6f4f2f", labelColor: "#21170f" },
   { key: "mountain", label: "Mountain", fill: "#5b3724", stroke: "#2c1a11", labelColor: "#f1e7d8" },
-  { key: "forest", label: "Forest", fill: "#246b3b", stroke: "#133c22", labelColor: "#eef7e8" },
-  { key: "marsh", label: "Marsh", fill: "#74794b", stroke: "#42462a", labelColor: "#f3eed0" },
+  { key: "forest", label: "Forest", fill: "#2f8a4c", stroke: "#176032", labelColor: "#eef7e8" },
+  { key: "marsh", label: "Marsh", fill: "#969b6a", stroke: "#5f633d", labelColor: "#211f12" },
   { key: "desert", label: "Desert", fill: "#d3b766", stroke: "#80692d", labelColor: "#241c0d" },
   { key: "urban", label: "Urban", fill: "#8e8e8e", stroke: "#4e4e4e", labelColor: "#111111" },
 ];
@@ -238,6 +239,7 @@ const editorTerrains = [
 const terrainStyles = {
   none: terrainStyle("none"),
   grassland: terrainStyle("grassland"),
+  farmland: terrainStyle("farmland"),
   lake: terrainStyle("lake"),
   hill: terrainStyle("hill"),
   hills: terrainStyle("hill"),
@@ -639,6 +641,7 @@ function terrainDefensePercent(terrain) {
     case "desert":
       return 90;
     case "grassland":
+    case "farmland":
     case "none":
     case "lake":
     default:
@@ -649,6 +652,7 @@ function terrainDefensePercent(terrain) {
 function terrainMovementCostScaled(terrain) {
   switch (terrain) {
     case "grassland":
+    case "farmland":
     case "desert":
       return 8;
     case "hill":
@@ -2099,7 +2103,7 @@ function setScenarioTool(tool) {
 }
 
 function toggleScenarioRegion(region) {
-  if (!["session", "terrain", "ownership", "units", "ai"].includes(region)) {
+  if (!["session", "factions", "terrain", "ownership", "units", "ai"].includes(region)) {
     return;
   }
   if (openScenarioRegions.has(region)) {
@@ -4507,7 +4511,7 @@ function drawCrossings(crossings) {
 }
 
 function territoryClaimableHex(hex) {
-  return hex && ["grassland", "desert", "hill", "forest", "marsh", "urban"].includes(hex.terrain);
+  return hex && ["grassland", "farmland", "desert", "hill", "forest", "marsh", "urban"].includes(hex.terrain);
 }
 
 function territoryOwnerForHex(hex) {

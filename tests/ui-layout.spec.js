@@ -748,6 +748,7 @@ test("combat uses unit stats terrain defense and retaliation", async ({ isMobile
 
   const terrainDefenseCases = [
     ["grassland", 100, 5],
+    ["farmland", 100, 5],
     ["desert", 90, 5],
     ["hill", 125, 7],
     ["forest", 125, 7],
@@ -2682,6 +2683,11 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect(page.locator("#play-details-bar")).toBeVisible();
   await page.getByRole("button", { name: "Factions", exact: true }).click();
   await expect(page.locator('[data-scenario-region="factions"]')).toHaveClass(/is-active/);
+  await page.getByLabel("Collapse Factions").click();
+  await expect(page.locator('[data-scenario-panel="factions"]')).toBeHidden();
+  await expect(page.getByLabel("Expand factions")).toBeVisible();
+  await page.getByLabel("Expand factions").click();
+  await expect(page.locator('[data-scenario-panel="factions"]')).toBeVisible();
   await page.getByLabel("AI Control Chinese").check();
   await expect.poll(() => page.evaluate(() => ({
     chineseAi: currentMap.game.factions.find((faction) => faction.key === "chinese").ai,

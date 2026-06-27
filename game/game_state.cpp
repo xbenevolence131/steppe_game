@@ -138,6 +138,7 @@ const char* terrain_to_string(Terrain terrain) {
     switch (terrain) {
         case Terrain::None: return "none";
         case Terrain::Grassland: return "grassland";
+        case Terrain::Farmland: return "farmland";
         case Terrain::Lake: return "lake";
         case Terrain::Hill: return "hill";
         case Terrain::Mountain: return "mountain";
@@ -151,6 +152,7 @@ const char* terrain_to_string(Terrain terrain) {
 
 Terrain terrain_from_string(const std::string& terrain) {
     if (terrain == "grassland") return Terrain::Grassland;
+    if (terrain == "farmland") return Terrain::Farmland;
     if (terrain == "lake") return Terrain::Lake;
     if (terrain == "hill") return Terrain::Hill;
     if (terrain == "mountain") return Terrain::Mountain;
@@ -691,6 +693,7 @@ int blocked_movement_cost() {
 int terrain_movement_cost(Terrain terrain) {
     switch (terrain) {
         case Terrain::Grassland:
+        case Terrain::Farmland:
         case Terrain::Desert:
             return 8;
         case Terrain::Hill:
@@ -1117,6 +1120,7 @@ bool settled_unit(const Unit& unit) {
 bool territory_claimable_terrain(Terrain terrain) {
     switch (terrain) {
         case Terrain::Grassland:
+        case Terrain::Farmland:
         case Terrain::Desert:
         case Terrain::Hill:
         case Terrain::Forest:
@@ -1696,6 +1700,7 @@ int terrain_defense_percent(Terrain terrain) {
         case Terrain::Desert:
             return 90;
         case Terrain::Grassland:
+        case Terrain::Farmland:
         case Terrain::None:
         case Terrain::Lake:
             return 100;
@@ -1984,7 +1989,7 @@ bool can_pursue_into_defender_hex(const GameState& state, const Unit& attacker, 
 }
 
 bool open_terrain_for_feigned_retreat(Terrain terrain) {
-    return terrain == Terrain::Grassland || terrain == Terrain::Desert;
+    return terrain == Terrain::Grassland || terrain == Terrain::Farmland || terrain == Terrain::Desert;
 }
 
 bool defender_on_feigned_retreat_terrain(const GameState& state, const Unit& defender) {

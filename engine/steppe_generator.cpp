@@ -4296,6 +4296,7 @@ const char* terrain_to_string(Terrain terrain) {
     switch (terrain) {
         case Terrain::None: return "none";
         case Terrain::Grassland: return "grassland";
+        case Terrain::Farmland: return "farmland";
         case Terrain::Lake: return "lake";
         case Terrain::Hill: return "hill";
         case Terrain::Mountain: return "mountain";
@@ -4521,6 +4522,7 @@ GeneratedMap generate_map(const GenerateArgs& args) {
     map.metadata.terrain_types = {
         Terrain::None,
         Terrain::Grassland,
+        Terrain::Farmland,
         Terrain::Lake,
         Terrain::Hill,
         Terrain::Mountain,
