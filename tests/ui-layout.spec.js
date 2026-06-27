@@ -120,6 +120,7 @@ function commandForLegacyArgs(args) {
       return { type: "select_unit", unitId: intAfter("--unit") };
     case "game-reachable":
     case "game-attackable":
+    case "game-raidable":
       return { type: "select_unit", unitId: intAfter("--unit") };
     case "game-combat-preview":
       return { type: "combat_preview", attackerId: intAfter("--attacker"), defenderId: intAfter("--defender") };
@@ -127,6 +128,8 @@ function commandForLegacyArgs(args) {
       return { type: "move_unit", unitId: intAfter("--unit"), to: { q: intAfter("--q"), r: intAfter("--r") } };
     case "game-attack":
       return { type: "attack_unit", attackerId: intAfter("--attacker"), defenderId: intAfter("--defender") };
+    case "game-raid":
+      return { type: "raid_hex", unitId: intAfter("--unit"), target: { q: intAfter("--q"), r: intAfter("--r") } };
     case "game-end-turn":
       return { type: "end_turn" };
     case "game-ai-step":
@@ -174,6 +177,9 @@ function runEngineJson(args, input) {
   }
   if (args[0] === "game-attackable") {
     return { attackable: view.game && Array.isArray(view.game.legalAttacks) ? view.game.legalAttacks : [] };
+  }
+  if (args[0] === "game-raidable") {
+    return { raidable: view.game && Array.isArray(view.game.legalRaids) ? view.game.legalRaids : [] };
   }
   return view;
 }
@@ -401,6 +407,33 @@ function combatGameState(defenderTerrain = "grassland") {
       turnOrder: [1, 2],
     },
   };
+}
+
+function raidGameState() {
+  const state = combatGameState("farmland");
+  state.hexes = state.hexes.map((hex) => (
+    hex.q === 2 && hex.r === 1
+      ? { ...hex, terrain: "farmland", owner: 2, labels: [] }
+      : { ...hex, owner: -1 }
+  ));
+  state.units = [
+    { id: 1, owner: 1, faction: "persian", kind: "persian_cavalry", q: 1, r: 1, hp: 10, maxHp: 10, remainingScaledMove: 32 },
+  ];
+  state.game = {
+    round: 1,
+    activeFactionIndex: 0,
+    selectedUnitId: 1,
+    turnOrder: [1, 2],
+  };
+  return state;
+}
+
+function neutralRaidGameState() {
+  const state = raidGameState();
+  state.hexes = state.hexes.map((hex) => (
+    hex.q === 2 && hex.r === 1 ? { ...hex, owner: -1 } : hex
+  ));
+  return state;
 }
 
 function blockedRetreatCombatGameState() {
@@ -783,6 +816,32 @@ test("combat uses unit stats terrain defense and retaliation", async ({ isMobile
   expect(hordePreview.attacker.baseReadinessDamage).toBe(0);
   expect(hordePreview.attacker.readinessDamageDealt).toBe(0);
   expect(hordePreview.defender.resultReadiness).toBe(100);
+});
+
+test("combat units can raid adjacent enemy farmland", async ({ isMobile }) => {
+  test.skip(isMobile, "engine invariant is covered by desktop run");
+
+  const selected = runEngineJson(["game-select", "--unit", "1"], raidGameState());
+  expect(selected.game.legalRaids).toContainEqual({ q: 2, r: 1 });
+
+  const selectedNeutral = runEngineJson(["game-select", "--unit", "1"], neutralRaidGameState());
+  expect(selectedNeutral.game.legalRaids).toContainEqual({ q: 2, r: 1 });
+
+  const raided = runEngineJson(["game-raid", "--unit", "1", "--q", "2", "--r", "1"], raidGameState());
+  const raidedHex = raided.hexes.find((hex) => hex.q === 2 && hex.r === 1);
+  const raider = raided.units.find((unit) => unit.id === 1);
+  const raiderFaction = raided.game.factions.find((faction) => faction.id === 1);
+  const victimFaction = raided.game.factions.find((faction) => faction.id === 2);
+
+  expect(raidedHex).toEqual(expect.objectContaining({ terrain: "grassland", owner: -1 }));
+  expect(raider).toEqual(expect.objectContaining({ combatDone: true }));
+  expect(raided.game.legalRaids).toEqual([]);
+  expect(raiderFaction.treasure).toBe(1);
+  expect(victimFaction.food).toBe(18);
+
+  const neutralRaided = runEngineJson(["game-raid", "--unit", "1", "--q", "2", "--r", "1"], neutralRaidGameState());
+  const neutralRaidedHex = neutralRaided.hexes.find((hex) => hex.q === 2 && hex.r === 1);
+  expect(neutralRaidedHex).toEqual(expect.objectContaining({ terrain: "grassland", owner: -1 }));
 });
 
 test("horse archers default to feigned retreat when attacked by non horse archers", async ({ isMobile }) => {

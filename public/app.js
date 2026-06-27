@@ -232,7 +232,7 @@ const editorTerrains = [
   { key: "mountain", label: "Mountain", fill: "#5b3724", stroke: "#2c1a11", labelColor: "#f1e7d8" },
   { key: "forest", label: "Forest", fill: "#2f8a4c", stroke: "#176032", labelColor: "#eef7e8" },
   { key: "marsh", label: "Marsh", fill: "#969b6a", stroke: "#5f633d", labelColor: "#211f12" },
-  { key: "desert", label: "Desert", fill: "#d3b766", stroke: "#80692d", labelColor: "#241c0d" },
+  { key: "desert", label: "Desert", fill: "#e1c84f", stroke: "#8b7624", labelColor: "#211b08" },
   { key: "urban", label: "Urban", fill: "#8e8e8e", stroke: "#4e4e4e", labelColor: "#111111" },
 ];
 
@@ -2701,6 +2701,9 @@ function ensureGameMeta() {
     if (!Number.isInteger(currentMap.game.activeOwner)) {
       currentMap.game.activeOwner = currentMap.game.turnOrder[activeFactionIndex] ?? null;
     }
+    currentMap.game.legalMoves = Array.isArray(currentMap.game.legalMoves) ? currentMap.game.legalMoves : [];
+    currentMap.game.legalAttacks = Array.isArray(currentMap.game.legalAttacks) ? currentMap.game.legalAttacks : [];
+    currentMap.game.legalRaids = Array.isArray(currentMap.game.legalRaids) ? currentMap.game.legalRaids : [];
     currentMap.game.aiGroups = normalizeAiGroups(currentMap.game.aiGroups);
     currentMap.game.diplomacy = normalizeDiplomacy(currentMap.game.diplomacy);
     return;
@@ -2755,6 +2758,9 @@ function ensureGameMeta() {
   currentMap.game.round = currentTurn;
   currentMap.game.activeFactionIndex = activeFactionIndex;
   currentMap.game.activeOwner = currentMap.game.turnOrder[activeFactionIndex] ?? null;
+  currentMap.game.legalMoves = Array.isArray(currentMap.game.legalMoves) ? currentMap.game.legalMoves : [];
+  currentMap.game.legalAttacks = Array.isArray(currentMap.game.legalAttacks) ? currentMap.game.legalAttacks : [];
+  currentMap.game.legalRaids = Array.isArray(currentMap.game.legalRaids) ? currentMap.game.legalRaids : [];
 }
 
 function cloneMapState(map) {
@@ -3124,6 +3130,7 @@ function projectionComparableState(map) {
       foodConsumption: game.foodConsumption !== false,
       legalMoves: Array.isArray(game.legalMoves) ? game.legalMoves : [],
       legalAttacks: Array.isArray(game.legalAttacks) ? game.legalAttacks : [],
+      legalRaids: Array.isArray(game.legalRaids) ? game.legalRaids : [],
       turnOrder: Array.isArray(game.turnOrder) ? game.turnOrder : [],
       factions: Array.isArray(game.factions) ? game.factions : [],
       aiGroups: normalizeAiGroups(game.aiGroups),
@@ -3320,12 +3327,22 @@ function legalAttacks() {
     : [];
 }
 
+function legalRaids() {
+  return currentMap && currentMap.game && Array.isArray(currentMap.game.legalRaids)
+    ? currentMap.game.legalRaids
+    : [];
+}
+
 function legalMoveAt(coord) {
   return legalMoves().find((move) => move.q === coord.q && move.r === coord.r) || null;
 }
 
 function legalAttackForUnit(unit) {
   return unit ? legalAttacks().find((attack) => attack.unitId === unit.id) || null : null;
+}
+
+function legalRaidAt(coord) {
+  return coord ? legalRaids().find((raid) => raid.q === coord.q && raid.r === coord.r) || null : null;
 }
 
 function hideCombatPreview() {
@@ -3557,6 +3574,13 @@ const contextActionDefinitions = [
     visible: ({ unit }) => Boolean(unit && legalAttackForUnit(unit)),
     enabled: ({ unit }) => Boolean(unit && legalAttackForUnit(unit)),
     run: async ({ unit }) => attackSelectedUnit(unit),
+  },
+  {
+    id: "raid-hex",
+    label: "Raid farmland",
+    visible: ({ hex }) => Boolean(hex && legalRaidAt(hex)),
+    enabled: ({ hex }) => Boolean(hex && legalRaidAt(hex)),
+    run: async ({ hex }) => raidSelectedHex(hex),
   },
   {
     id: "detach-herd",
@@ -5153,6 +5177,37 @@ function drawReachableHexes() {
   ctx.restore();
 }
 
+function drawRaidableHexes() {
+  if (appMode !== "play" || aiAnimationInProgress) {
+    return;
+  }
+  const raids = legalRaids();
+  if (raids.length === 0) {
+    return;
+  }
+
+  ctx.save();
+  for (const raid of raids) {
+    const center = hexCenter(raid);
+    const points = hexPoints(center.x, center.y, geometry.size * 0.82);
+    ctx.beginPath();
+    points.forEach(([x, y], index) => {
+      if (index === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    });
+    ctx.closePath();
+    ctx.fillStyle = "rgba(187, 68, 36, 0.28)";
+    ctx.fill();
+    ctx.strokeStyle = "#9d301d";
+    ctx.lineWidth = 1.8 / viewport.scale;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawEditorUnitMoveHexes() {
   if (!unitEditActive()) {
     return;
@@ -5814,6 +5869,24 @@ async function attackSelectedUnit(defender) {
   return true;
 }
 
+async function raidSelectedHex(hex) {
+  const unit = selectedUnit();
+  if (!unit || !hex || !legalRaidAt(hex)) {
+    return false;
+  }
+  hideCombatPreview();
+  selectedHexCoord = { q: hex.q, r: hex.r };
+  const payload = await postUndoableGameCommand({
+    type: "raid_hex",
+    unitId: unit.id,
+    target: { q: hex.q, r: hex.r },
+  });
+  applyEnginePatch(payload, "raid_hex");
+  syncModeControls();
+  drawMap();
+  return true;
+}
+
 async function animateAiPatch(payload) {
   const steps = normalizeAiAnimation(payload && payload.aiAnimation);
   if (steps.length === 0 || !currentMap || !Array.isArray(currentMap.units)) {
@@ -6006,6 +6079,7 @@ function drawMap() {
   drawMapMarkers(currentMap.merge_points, terrainStyles.river.merge, 5);
   drawMapMarkers(currentMap.river_destinations, terrainStyles.river.destination, 5);
   drawReachableHexes();
+  drawRaidableHexes();
   drawEditorUnitMoveHexes();
   drawAiEditorHighlights();
   drawStrategicAiHighlights();
@@ -7304,6 +7378,10 @@ mapPanel.addEventListener("pointerdown", async (event) => {
       return;
     }
     const hex = findNearestHex(point);
+    if (hex && await raidSelectedHex(hex)) {
+      event.preventDefault();
+      return;
+    }
     if (hex && await moveSelectedUnitTo(hex)) {
       event.preventDefault();
       return;

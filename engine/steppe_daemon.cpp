@@ -378,6 +378,19 @@ std::string handle_command(const std::string& body) {
         }
         return command_response(game_id, ok, game_patch_json(state, ok, nullptr, ok ? &before : nullptr));
     }
+    if (type == "raid_hex") {
+        const steppe::game::GameState before = state;
+        const bool ok = steppe::game::raid_hex(
+            state,
+            int_field(command, "unitId", 0),
+            coord_field(command, "target")
+        );
+        if (ok) {
+            push_undo_state(game_id, before);
+            advance_state_version(state);
+        }
+        return command_response(game_id, ok, game_patch_json(state, ok, nullptr, ok ? &before : nullptr));
+    }
     if (type == "combat_preview") {
         const steppe::game::CombatPreview preview = steppe::game::combat_preview(
             state,

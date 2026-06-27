@@ -1920,6 +1920,7 @@ std::vector<Coord> adjacent_deployable_hexes(const GameState& state, const Unit&
 void refresh_legal_actions(GameState& state) {
     state.legal_moves.clear();
     state.legal_attacks.clear();
+    state.legal_raids.clear();
     if (state.selected_unit_id == 0) {
         return;
     }
@@ -1933,6 +1934,7 @@ void refresh_legal_actions(GameState& state) {
     }
     state.legal_moves = reachable_hexes(state, state.selected_unit_id);
     state.legal_attacks = attackable_units(state, state.selected_unit_id);
+    state.legal_raids = raidable_hexes(state, state.selected_unit_id);
 }
 
 bool enemy_zoc_at(const GameState& state, const Coord& coord, const Unit& moving_unit) {
@@ -2205,6 +2207,38 @@ std::vector<AttackableUnit> attackable_units(const GameState& state, int unit_id
     return attackable;
 }
 
+bool legal_raid_target(const GameState& state, const Unit& unit, const GameHex& hex) {
+    if (hex.terrain != Terrain::Farmland
+        || hex.owner == unit.owner
+        || (hex.owner != neutral_owner && !at_war(state, unit.owner, hex.owner))
+        || (!coord_equal(unit.coord, hex.coord) && !adjacent(unit.coord, hex.coord))
+        || (adjacent(unit.coord, hex.coord) && unbridged_river_crossing_between(state, unit.coord, hex.coord))) {
+        return false;
+    }
+    const Unit* occupant = unit_at(state, hex.coord);
+    return occupant == nullptr || occupant->id == unit.id || !hostile_units(state, unit, *occupant);
+}
+
+std::vector<Coord> raidable_hexes(const GameState& state, int unit_id) {
+    std::vector<Coord> raids;
+    const Unit* unit = find_unit(state, unit_id);
+    if (unit == nullptr
+        || unit->owner != active_faction(state)
+        || unit->combat_done
+        || !can_attack(unit->kind)
+        || unit->attack <= 0) {
+        return raids;
+    }
+
+    for (const GameHex& hex : state.hexes) {
+        if (legal_raid_target(state, *unit, hex)) {
+            raids.push_back(hex.coord);
+        }
+    }
+    std::sort(raids.begin(), raids.end(), coord_less);
+    return raids;
+}
+
 CombatantPreview combatant_preview(const GameState& state, const Unit& unit, int flanking_defense_percent = 100) {
     CombatantPreview preview;
     preview.unit_id = unit.id;
@@ -2396,6 +2430,7 @@ bool select_unit(GameState& state, int unit_id) {
         state.selected_unit_id = 0;
         state.legal_moves.clear();
         state.legal_attacks.clear();
+        state.legal_raids.clear();
         return false;
     }
     state.selected_unit_id = unit_id;
@@ -2543,6 +2578,45 @@ bool attack_unit(GameState& state, int attacker_id, int defender_id) {
         return unit.hp <= 0;
     }), state.units.end());
     state.selected_unit_id = find_unit(state, attacker_id) == nullptr ? 0 : attacker_id;
+    refresh_legal_actions(state);
+    return true;
+}
+
+bool raid_hex(GameState& state, int unit_id, Coord target) {
+    Unit* unit = find_unit(state, unit_id);
+    GameHex* hex = find_hex(state, target);
+    if (unit == nullptr
+        || hex == nullptr
+        || unit->owner != active_faction(state)
+        || unit->combat_done
+        || !can_attack(unit->kind)
+        || unit->attack <= 0
+        || !legal_raid_target(state, *unit, *hex)) {
+        return false;
+    }
+
+    const OwnerId raider_owner = unit->owner;
+    const OwnerId victim_owner = hex->owner;
+    FactionState* raider = find_faction(state, raider_owner);
+    FactionState* victim = find_faction(state, victim_owner);
+    if (raider != nullptr) {
+        raider->treasure += 1;
+    }
+    if (victim != nullptr) {
+        victim->food = std::max(0, victim->food - 2);
+    }
+
+    hex->terrain = Terrain::Grassland;
+    hex->owner = neutral_owner;
+    hex->supply_source = false;
+    hex->tags = tag_mask(HexTag::BaseSteppe);
+    hex->source_labels = {"base_steppe"};
+    hex->pasture = initial_pasture_for_terrain(hex->terrain);
+
+    cancel_horde_production(*unit);
+    unit->combat_done = true;
+    unit->contacted_enemy_this_turn = true;
+    state.selected_unit_id = unit_id;
     refresh_legal_actions(state);
     return true;
 }
@@ -4082,6 +4156,7 @@ bool step_ai_turn(GameState& state, AiAnimationStep* animation, std::vector<AiUn
             state.selected_unit_id = 0;
             state.legal_moves.clear();
             state.legal_attacks.clear();
+            state.legal_raids.clear();
             return true;
         }
     }
@@ -4089,6 +4164,7 @@ bool step_ai_turn(GameState& state, AiAnimationStep* animation, std::vector<AiUn
     state.selected_unit_id = 0;
     state.legal_moves.clear();
     state.legal_attacks.clear();
+    state.legal_raids.clear();
     return false;
 }
 
@@ -4123,6 +4199,7 @@ void execute_ai_turn(GameState& state, OwnerId owner, std::vector<AiAnimationSte
     state.selected_unit_id = 0;
     state.legal_moves.clear();
     state.legal_attacks.clear();
+    state.legal_raids.clear();
 }
 
 int turn_order_index_for_owner(const GameState& state, OwnerId owner) {
@@ -4161,6 +4238,7 @@ bool execute_ai_group_turn(
     state.selected_unit_id = 0;
     state.legal_moves.clear();
     state.legal_attacks.clear();
+    state.legal_raids.clear();
     return true;
 }
 
@@ -4307,6 +4385,7 @@ void end_turn(GameState& state, std::vector<AiAnimationStep>* /*animation*/) {
     state.selected_unit_id = 0;
     state.legal_moves.clear();
     state.legal_attacks.clear();
+    state.legal_raids.clear();
     if (state.turn_order.empty()) {
         state.turn_order = {mongol_owner, chinese_owner};
     }
@@ -4464,6 +4543,17 @@ void print_attackable_array_json(const std::vector<AttackableUnit>& attackable, 
             << ",\"q\":" << attackable[i].coord.q
             << ",\"r\":" << attackable[i].coord.r
             << "}";
+    }
+    out << "]";
+}
+
+void print_coord_array_json(const std::vector<Coord>& coords, std::ostream& out) {
+    out << "[";
+    for (std::size_t i = 0; i < coords.size(); ++i) {
+        if (i > 0) {
+            out << ",";
+        }
+        print_coord_json(coords[i], out);
     }
     out << "]";
 }
@@ -4638,6 +4728,10 @@ std::string game_state_hash(const GameState& state) {
         hash_append_int(hash, attack.coord.q);
         hash_append_int(hash, attack.coord.r);
     }
+    for (const Coord& raid : state.legal_raids) {
+        hash_append_int(hash, raid.q);
+        hash_append_int(hash, raid.r);
+    }
     for (const GameHex& hex : state.hexes) {
         hash_append_int(hash, hex.coord.q);
         hash_append_int(hash, hex.coord.r);
@@ -4717,6 +4811,8 @@ void print_game_meta_json(const GameState& state, std::ostream& out) {
     print_reachable_array_json(state.legal_moves, out);
     out << ",\"legalAttacks\":";
     print_attackable_array_json(state.legal_attacks, out);
+    out << ",\"legalRaids\":";
+    print_coord_array_json(state.legal_raids, out);
     out << ",";
     out << "\"turnOrder\":[";
     for (std::size_t i = 0; i < state.turn_order.size(); ++i) {
@@ -5134,6 +5230,14 @@ void print_game_events_json(const GameState& state, const GameState* before, std
             print_coord_json(hex.coord, out);
             out << ",\"fromOwner\":" << prior.owner
                 << ",\"toOwner\":" << hex.owner
+                << "}";
+        }
+        if (prior.terrain != hex.terrain) {
+            event_prefix();
+            out << "{\"type\":\"hex_terrain_changed\",\"hex\":";
+            print_coord_json(hex.coord, out);
+            out << ",\"fromTerrain\":\"" << terrain_to_string(prior.terrain) << "\""
+                << ",\"toTerrain\":\"" << terrain_to_string(hex.terrain) << "\""
                 << "}";
         }
         if (prior.supply_source != hex.supply_source) {

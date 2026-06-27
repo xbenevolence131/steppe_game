@@ -331,6 +331,7 @@ struct GameState {
     std::vector<OwnerId> turn_order;
     std::vector<ReachableHex> legal_moves;
     std::vector<AttackableUnit> legal_attacks;
+    std::vector<Coord> legal_raids;
 
     std::vector<GameHex> hexes;
     std::vector<RiverEdge> rivers;
@@ -369,11 +370,13 @@ bool unit_kind_available_to_archetype(UnitKind kind, const std::string& archetyp
 OwnerId active_faction(const GameState& state);
 std::vector<ReachableHex> reachable_hexes(const GameState& state, int unit_id);
 std::vector<AttackableUnit> attackable_units(const GameState& state, int unit_id);
+std::vector<Coord> raidable_hexes(const GameState& state, int unit_id);
 CombatPreview combat_preview(const GameState& state, int attacker_id, int defender_id);
 bool select_unit(GameState& state, int unit_id);
 bool set_unit_stance(GameState& state, int unit_id, UnitStance stance);
 bool move_unit(GameState& state, int unit_id, Coord destination);
 bool attack_unit(GameState& state, int attacker_id, int defender_id);
+bool raid_hex(GameState& state, int unit_id, Coord target);
 DetachHerdOptions detach_herd_options(const GameState& state, int unit_id, int horses);
 bool detach_herd(GameState& state, int unit_id, int horses, Coord destination);
 CreateHorseArchersOptions create_horse_archers_options(const GameState& state, int unit_id);
