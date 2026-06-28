@@ -218,9 +218,7 @@ struct AiUnitDecisionTrace {
 struct DiplomaticRelationship {
     OwnerId owner = neutral_owner;
     OwnerId target = neutral_owner;
-    int affinity = 50;
-    std::string status = "war";
-    std::string ai_posture = "balanced";
+    int disposition = 25;
 };
 
 struct UnitDefaults {

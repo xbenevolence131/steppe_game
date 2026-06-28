@@ -143,9 +143,7 @@ function summarizeGameView(view) {
       ? game.diplomacy.map((relationship) => ({
         owner: relationship.owner,
         target: relationship.target,
-        affinity: relationship.affinity,
-        status: relationship.status,
-        aiPosture: relationship.aiPosture,
+        disposition: relationship.disposition,
       }))
       : [],
     units: Array.isArray(view.units) ? view.units.map(unitSummary).filter(Boolean) : [],

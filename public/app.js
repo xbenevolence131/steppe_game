@@ -1577,34 +1577,21 @@ function syncFactionRelationshipControls() {
       if (ownerFaction.id === targetFaction.id) {
         cell.textContent = "-";
       } else {
-        const affinityInput = document.createElement("input");
-        affinityInput.type = "number";
-        affinityInput.min = "0";
-        affinityInput.max = "100";
-        affinityInput.step = "1";
-        affinityInput.className = "faction-affinity-input";
-        affinityInput.value = String(diplomacyAffinity(ownerFaction.id, targetFaction.id));
-        affinityInput.setAttribute("aria-label", `${optionLabelForFaction(ownerFaction)} affinity toward ${optionLabelForFaction(targetFaction)}`);
-        affinityInput.addEventListener("change", () => {
-          updateDiplomacyAffinity(ownerFaction.id, targetFaction.id, affinityInput.value);
+        const dispositionInput = document.createElement("input");
+        dispositionInput.type = "number";
+        dispositionInput.min = "0";
+        dispositionInput.max = "100";
+        dispositionInput.step = "1";
+        dispositionInput.className = "faction-disposition-input";
+        dispositionInput.value = String(diplomacyDisposition(ownerFaction.id, targetFaction.id));
+        dispositionInput.setAttribute("aria-label", `${optionLabelForFaction(ownerFaction)} disposition toward ${optionLabelForFaction(targetFaction)}`);
+        dispositionInput.addEventListener("change", () => {
+          updateDiplomacyDisposition(ownerFaction.id, targetFaction.id, dispositionInput.value);
         });
 
-        const select = document.createElement("select");
-        select.className = "faction-posture-select";
-        select.setAttribute("aria-label", `${optionLabelForFaction(ownerFaction)} posture toward ${optionLabelForFaction(targetFaction)}`);
-        for (const posture of aiPostures) {
-          const option = document.createElement("option");
-          option.value = posture.key;
-          option.textContent = posture.label;
-          select.appendChild(option);
-        }
-        select.value = diplomacyPosture(ownerFaction.id, targetFaction.id);
-        select.addEventListener("change", () => {
-          updateDiplomacyPosture(ownerFaction.id, targetFaction.id, select.value);
-        });
         const cellStack = document.createElement("div");
         cellStack.className = "faction-relationship-cell";
-        cellStack.append(affinityInput, select);
+        cellStack.append(dispositionInput);
         cell.appendChild(cellStack);
       }
       row.appendChild(cell);
@@ -2022,9 +2009,9 @@ function syncDiplomacyScreen() {
       if (ownerFaction.id === targetFaction.id) {
         cell.textContent = "-";
       } else {
-        const status = diplomacyStatus(ownerFaction.id, targetFaction.id);
-        cell.textContent = `${titleCaseToken(status)} / ${diplomacyAffinity(ownerFaction.id, targetFaction.id)} / ${aiPostureLabel(diplomacyPosture(ownerFaction.id, targetFaction.id))}`;
-        cell.className = status === "peace" ? "is-peace" : "is-war";
+        const disposition = diplomacyDisposition(ownerFaction.id, targetFaction.id);
+        cell.textContent = `${dispositionLabel(disposition)} / ${disposition}`;
+        cell.className = `is-${dispositionBand(disposition)}`;
       }
       row.appendChild(cell);
     }
@@ -2420,28 +2407,55 @@ function diplomacyOwnerKey(owner, target) {
   return `${owner}->${target}`;
 }
 
-const aiPostures = [
-  { key: "passive", label: "Passive" },
-  { key: "defensive", label: "Defensive" },
-  { key: "balanced", label: "Balanced" },
-  { key: "aggressive", label: "Aggressive" },
-  { key: "raiding", label: "Raiding" },
-];
-
-function normalizeAiPosture(posture) {
-  return aiPostures.some((candidate) => candidate.key === posture) ? posture : "balanced";
+function clampDisposition(value, fallback = 25) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.trunc(parsed))) : fallback;
 }
 
-function aiPostureLabel(posture) {
-  return aiPostures.find((candidate) => candidate.key === posture)?.label || titleCaseToken(posture);
+function legacyDisposition(relationship) {
+  if (Number.isFinite(relationship.disposition)) {
+    return clampDisposition(relationship.disposition);
+  }
+  let disposition = clampDisposition(relationship.affinity, 50);
+  if (relationship.status === "peace") {
+    disposition = Math.max(disposition, 50);
+  } else {
+    disposition = Math.min(disposition, 25);
+  }
+  switch (relationship.aiPosture) {
+    case "raiding":
+      return Math.min(disposition, 10);
+    case "aggressive":
+      return Math.min(disposition, 20);
+    case "defensive":
+      return Math.min(disposition, 35);
+    case "passive":
+      return Math.max(disposition, 60);
+    default:
+      return disposition;
+  }
+}
+
+function dispositionBand(disposition) {
+  const value = clampDisposition(disposition);
+  if (value <= 15) return "hostile";
+  if (value <= 35) return "threat";
+  if (value < 65) return "neutral";
+  return "friendly";
+}
+
+function dispositionLabel(disposition) {
+  const value = clampDisposition(disposition);
+  if (value <= 15) return "Hostile";
+  if (value <= 35) return "Unfriendly";
+  if (value < 65) return "Neutral";
+  return "Friendly";
 }
 
 function normalizeDiplomacy(rawDiplomacy) {
   const factionsForDiplomacy = enabledScenarioFactions()
     .filter((faction) => faction.id !== factions.neutral.owner);
   const prior = new Map();
-  const priorStatus = new Map();
-  const priorPosture = new Map();
   if (Array.isArray(rawDiplomacy)) {
     for (const relationship of rawDiplomacy) {
       if (!relationship || typeof relationship !== "object") {
@@ -2456,13 +2470,8 @@ function normalizeDiplomacy(rawDiplomacy) {
       if (owner === target || owner === factions.neutral.owner || target === factions.neutral.owner) {
         continue;
       }
-      const affinity = Number.isFinite(relationship.affinity)
-        ? Math.max(0, Math.min(100, Math.trunc(relationship.affinity)))
-        : 50;
       const key = diplomacyOwnerKey(owner, target);
-      prior.set(key, affinity);
-      priorStatus.set(key, relationship.status === "peace" ? "peace" : "war");
-      priorPosture.set(key, normalizeAiPosture(relationship.aiPosture));
+      prior.set(key, legacyDisposition(relationship));
     }
   }
 
@@ -2473,86 +2482,40 @@ function normalizeDiplomacy(rawDiplomacy) {
         continue;
       }
       const key = diplomacyOwnerKey(ownerFaction.id, targetFaction.id);
-      const reverseKey = diplomacyOwnerKey(targetFaction.id, ownerFaction.id);
-      const explicitStatus = priorStatus.has(key) || priorStatus.has(reverseKey);
-      const status = explicitStatus
-        && (!priorStatus.has(key) || priorStatus.get(key) === "peace")
-        && (!priorStatus.has(reverseKey) || priorStatus.get(reverseKey) === "peace")
-        ? "peace"
-        : "war";
       normalized.push({
         owner: ownerFaction.id,
         faction: ownerFaction.key,
         target: targetFaction.id,
         targetFaction: targetFaction.key,
-        affinity: prior.has(key) ? prior.get(key) : 50,
-        status,
-        aiPosture: priorPosture.has(key) ? priorPosture.get(key) : "balanced",
+        disposition: prior.has(key) ? prior.get(key) : 25,
       });
     }
   }
   return normalized;
 }
 
-function diplomacyAffinity(owner, target) {
+function diplomacyDisposition(owner, target) {
   const relationship = currentMap
     && currentMap.game
     && Array.isArray(currentMap.game.diplomacy)
     ? currentMap.game.diplomacy.find((candidate) => candidate.owner === owner && candidate.target === target)
     : null;
-  return relationship ? relationship.affinity : 50;
+  return relationship ? clampDisposition(relationship.disposition) : 25;
 }
 
-function diplomacyStatus(owner, target) {
-  const relationship = currentMap
-    && currentMap.game
-    && Array.isArray(currentMap.game.diplomacy)
-    ? currentMap.game.diplomacy.find((candidate) => candidate.owner === owner && candidate.target === target)
-    : null;
-  return relationship && relationship.status === "peace" ? "peace" : "war";
-}
-
-function diplomacyPosture(owner, target) {
-  const relationship = currentMap
-    && currentMap.game
-    && Array.isArray(currentMap.game.diplomacy)
-    ? currentMap.game.diplomacy.find((candidate) => candidate.owner === owner && candidate.target === target)
-    : null;
-  return normalizeAiPosture(relationship && relationship.aiPosture);
-}
-
-function updateDiplomacyPosture(owner, target, posture) {
+function updateDiplomacyDisposition(owner, target, value) {
   if (!currentMap || owner === target) {
     return;
   }
   ensureGameMeta();
-  const normalizedPosture = normalizeAiPosture(posture);
+  const disposition = clampDisposition(value);
   currentMap.game.diplomacy = normalizeDiplomacy(currentMap.game.diplomacy);
   const relationship = currentMap.game.diplomacy.find((candidate) => candidate.owner === owner && candidate.target === target);
   if (!relationship) {
     return;
   }
   recordLocalUndo();
-  relationship.aiPosture = normalizedPosture;
-  currentMap.game.diplomacy = normalizeDiplomacy(currentMap.game.diplomacy);
-  syncFactionRelationshipControls();
-  syncDiplomacyScreen();
-  void syncScenarioEditorToEngine();
-}
-
-function updateDiplomacyAffinity(owner, target, value) {
-  if (!currentMap || owner === target) {
-    return;
-  }
-  ensureGameMeta();
-  const affinity = Math.max(0, Math.min(100, Math.trunc(Number.parseFloat(value))));
-  currentMap.game.diplomacy = normalizeDiplomacy(currentMap.game.diplomacy);
-  const relationship = currentMap.game.diplomacy.find((candidate) => candidate.owner === owner && candidate.target === target);
-  if (!relationship) {
-    return;
-  }
-  recordLocalUndo();
-  relationship.affinity = Number.isFinite(affinity) ? affinity : 50;
+  relationship.disposition = disposition;
   currentMap.game.diplomacy = normalizeDiplomacy(currentMap.game.diplomacy);
   syncFactionRelationshipControls();
   syncDiplomacyScreen();

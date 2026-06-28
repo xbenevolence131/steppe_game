@@ -1418,8 +1418,8 @@ test("settled AI auto groups remaining units into field armies", async ({ isMobi
   expect(fieldArmies.every((group) => group.name === "Field Army")).toBe(true);
 });
 
-test("settled AI posture controls generated mobile group role", async ({ isMobile }) => {
-  test.skip(isMobile, "engine settled AI posture is covered once on desktop");
+test("settled AI disposition controls generated mobile group role", async ({ isMobile }) => {
+  test.skip(isMobile, "engine settled AI disposition is covered once on desktop");
 
   const baseState = aiDirectiveGameState(
     { type: "hunt" },
@@ -1431,35 +1431,31 @@ test("settled AI posture controls generated mobile group role", async ({ isMobil
   );
   baseState.game.aiGroups = [];
 
-  const defensiveState = JSON.parse(JSON.stringify(baseState));
-  defensiveState.game.diplomacy = [{
+  const reserveState = JSON.parse(JSON.stringify(baseState));
+  reserveState.game.diplomacy = [{
     owner: 2,
     faction: "chinese",
     target: 0,
     targetFaction: "mongol",
-    status: "war",
-    affinity: 50,
-    aiPosture: "defensive",
+    disposition: 35,
   }];
-  const defensive = runEngineJson(["game-end-turn"], defensiveState);
-  expect(defensive.game.aiGroups.find((group) => group.owner === 2)).toEqual(expect.objectContaining({
+  const reserve = runEngineJson(["game-end-turn"], reserveState);
+  expect(reserve.game.aiGroups.find((group) => group.owner === 2)).toEqual(expect.objectContaining({
     generated: true,
     role: "reserve",
     name: "Reserve",
   }));
 
-  const aggressiveState = JSON.parse(JSON.stringify(baseState));
-  aggressiveState.game.diplomacy = [{
+  const fieldArmyState = JSON.parse(JSON.stringify(baseState));
+  fieldArmyState.game.diplomacy = [{
     owner: 2,
     faction: "chinese",
     target: 0,
     targetFaction: "mongol",
-    status: "war",
-    affinity: 50,
-    aiPosture: "aggressive",
+    disposition: 20,
   }];
-  const aggressive = runEngineJson(["game-end-turn"], aggressiveState);
-  expect(aggressive.game.aiGroups.find((group) => group.owner === 2)).toEqual(expect.objectContaining({
+  const fieldArmy = runEngineJson(["game-end-turn"], fieldArmyState);
+  expect(fieldArmy.game.aiGroups.find((group) => group.owner === 2)).toEqual(expect.objectContaining({
     generated: true,
     role: "field_army",
     name: "Field Army",
@@ -3022,14 +3018,13 @@ test("scenario AI editor configures groups and map pickers", async ({ page, isMo
 
   await page.getByRole("button", { name: "Factions", exact: true }).click();
   await expect(page.locator('[data-scenario-region="factions"]')).toHaveClass(/is-active/);
-  await page.getByLabel("Chinese affinity toward Mongol").fill("35");
-  await page.getByLabel("Chinese affinity toward Mongol").dispatchEvent("change");
-  await page.getByLabel("Chinese posture toward Mongol").selectOption("defensive");
+  await page.getByLabel("Chinese disposition toward Mongol").fill("35");
+  await page.getByLabel("Chinese disposition toward Mongol").dispatchEvent("change");
   await expect.poll(async () => {
     const view = await editorEngineView(page);
     const relationship = view.game.diplomacy.find((candidate) => candidate.owner === 2 && candidate.target === 0);
-    return relationship ? { affinity: relationship.affinity, posture: relationship.aiPosture } : null;
-  }).toEqual({ affinity: 35, posture: "defensive" });
+    return relationship ? relationship.disposition : null;
+  }).toBe(35);
 
   await page.getByRole("button", { name: "AI", exact: true }).click();
   await expect(page.locator('[data-scenario-region="ai"]')).toHaveClass(/is-active/);

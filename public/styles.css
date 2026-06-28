@@ -1103,14 +1103,19 @@ select[hidden] {
   font-weight: 700;
 }
 
-.diplomacy-table td.is-war {
+.diplomacy-table td.is-hostile,
+.diplomacy-table td.is-threat {
   color: #9f2f2b;
   font-weight: 700;
 }
 
-.diplomacy-table td.is-peace {
+.diplomacy-table td.is-friendly {
   color: #27613a;
   font-weight: 700;
+}
+
+.diplomacy-table td.is-neutral {
+  color: var(--text);
 }
 
 .faction-relationships {
@@ -1153,18 +1158,15 @@ select[hidden] {
 
 .faction-relationship-cell {
   display: grid;
-  grid-template-columns: 64px minmax(104px, 1fr);
+  grid-template-columns: 64px;
   gap: 6px;
   align-items: center;
+  justify-content: center;
 }
 
-.faction-affinity-input {
+.faction-disposition-input {
   min-width: 0;
   width: 64px;
-}
-
-.faction-posture-select {
-  min-width: 104px;
 }
 
 .context-menu {
