@@ -167,51 +167,17 @@ body {
 
 .app-shell.is-play .main-workbench,
 .app-shell.is-scenario .main-workbench {
-  grid-template-columns: 300px minmax(0, 1fr);
-}
-
-.mode-sidebar {
-  display: none;
-  align-content: start;
-  gap: 14px;
-  border-right: 1px solid var(--line);
-  background: var(--surface);
-  padding: 14px;
-  overflow: auto;
-}
-
-.app-shell.is-play .play-sidebar,
-.app-shell.is-scenario .play-sidebar {
-  display: grid;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .app-shell.is-intro .scenario-topbar,
-.app-shell.is-intro .faction-status-bar,
-.app-shell.is-intro .mode-sidebar {
+.app-shell.is-intro .faction-status-bar {
   display: none;
 }
 
 .app-shell.is-play .play-details-bar,
 .app-shell.is-scenario .play-details-bar {
   display: grid;
-}
-
-.sidebar-section {
-  display: grid;
-  gap: 10px;
-  border-bottom: 1px solid rgba(185, 173, 150, 0.7);
-  padding-bottom: 14px;
-}
-
-.sidebar-section:last-child {
-  border-bottom: 0;
-}
-
-.sidebar-section h2 {
-  margin: 0;
-  color: var(--text);
-  font-size: 15px;
-  font-weight: 650;
 }
 
 .control-section {
@@ -423,16 +389,17 @@ body {
 .ai-group-edit-row {
   display: grid;
   grid-template-columns:
-    minmax(120px, 1.15fr)
-    minmax(110px, 0.9fr)
-    auto
-    auto
-    minmax(120px, 1fr)
-    auto
-    minmax(120px, 1fr)
-    auto
-    auto;
-  min-width: 920px;
+    minmax(112px, 1.1fr)
+    minmax(100px, 0.85fr)
+    minmax(108px, 0.85fr)
+    88px
+    54px
+    minmax(112px, 0.95fr)
+    88px
+    minmax(112px, 0.95fr)
+    52px
+    28px;
+  min-width: 912px;
   gap: 8px;
   align-items: end;
 }
@@ -879,45 +846,6 @@ select {
 .status-list dd {
   margin: 0;
   font-weight: 650;
-}
-
-.unit-roster {
-  display: grid;
-  gap: 6px;
-}
-
-.unit-roster-empty {
-  border: 1px solid var(--line);
-  background: #fffdf8;
-  color: var(--muted);
-  padding: 8px;
-  font-size: 13px;
-}
-
-.unit-roster-item {
-  display: grid;
-  gap: 3px;
-  min-height: 0;
-  border-color: var(--line);
-  border-left: 5px solid var(--unit-color, var(--accent));
-  background: #fffdf8;
-  color: var(--text);
-  padding: 7px 8px;
-  text-align: left;
-}
-
-.unit-roster-item.is-selected {
-  border-color: #1f4f52;
-  background: #e8f1ef;
-}
-
-.unit-roster-name {
-  font-weight: 650;
-}
-
-.unit-roster-meta {
-  color: var(--muted);
-  font-size: 12px;
 }
 
 button:disabled {
@@ -1924,12 +1852,6 @@ select[hidden] {
   .app-shell.is-play .main-workbench,
   .app-shell.is-scenario .main-workbench {
     grid-template-columns: 1fr;
-  }
-
-  .mode-sidebar {
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-    max-height: 46vh;
   }
 
   .panel-actions {

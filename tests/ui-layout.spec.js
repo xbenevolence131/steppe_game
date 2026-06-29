@@ -8,7 +8,28 @@ test.describe.configure({ mode: "serial" });
 async function openPlayMode(page) {
   await page.goto("/");
   await page.getByRole("button", { name: "Play" }).click();
-  await expect.poll(() => page.locator(".unit-roster-item").count()).toBeGreaterThan(0);
+  await expect(page.locator(".map-section")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => currentMap && Array.isArray(currentMap.units) && currentMap.units.length > 0)).toBe(true);
+}
+
+async function clickFirstUnitMatching(page, predicateSource) {
+  const point = await page.evaluate((source) => {
+    const predicate = new Function("unit", `return (${source})(unit);`);
+    const unit = currentMap.units.find((candidate) => predicate(candidate));
+    if (!unit) {
+      throw new Error("could not find matching unit");
+    }
+    const panel = mapPanel.getBoundingClientRect();
+    const center = hexCenter(unit);
+    return {
+      id: unit.id,
+      x: panel.left + viewport.offsetX + center.x * viewport.scale,
+      y: panel.top + viewport.offsetY + center.y * viewport.scale,
+    };
+  }, predicateSource);
+  await page.mouse.click(point.x, point.y);
+  await expect.poll(() => page.evaluate(() => currentMap.game.selectedUnitId)).toBe(point.id);
+  return point;
 }
 
 async function editorEngineView(page) {
@@ -1850,8 +1871,7 @@ test("scenario controls sit above the shared map", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Factions", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Parameters", exact: true })).toHaveCount(0);
   await expect(page.locator('[data-scenario-region="session"]')).toHaveClass(/is-active/);
-  await expect(page.locator("#play-controls")).toBeVisible();
-  await expect(page.locator("#unit-roster")).toBeVisible();
+  await expect(page.locator("#play-controls")).toHaveCount(0);
   await expect(page.locator(".map-section")).toBeVisible();
   await expect(page.locator("#food-consumption-enabled")).toBeVisible();
   await expect(page.locator("#food-consumption-enabled")).toBeChecked();
@@ -1887,12 +1907,9 @@ test("scenario controls sit above the shared map", async ({ page }) => {
 
   const layout = await page.evaluate(() => {
     const topbar = document.querySelector("#scenario-controls").getBoundingClientRect();
-    const sidebar = document.querySelector("#play-controls").getBoundingClientRect();
     const map = document.querySelector(".map-section").getBoundingClientRect();
     return {
       topbarBottom: topbar.bottom,
-      sidebarRight: sidebar.right,
-      sidebarBottom: sidebar.bottom,
       mapLeft: map.left,
       mapTop: map.top,
       mapWidth: map.width,
@@ -1902,13 +1919,8 @@ test("scenario controls sit above the shared map", async ({ page }) => {
   });
 
   expect(layout.mapTop).toBeGreaterThanOrEqual(layout.topbarBottom - 1);
-  if (layout.viewportWidth > 820) {
-    expect(layout.mapLeft).toBeGreaterThanOrEqual(layout.sidebarRight - 1);
-    expect(layout.mapWidth).toBeGreaterThan(layout.viewportWidth * 0.6);
-  } else {
-    expect(layout.mapTop).toBeGreaterThanOrEqual(layout.sidebarBottom - 1);
-    expect(layout.mapWidth).toBeGreaterThan(layout.viewportWidth * 0.95);
-  }
+  expect(layout.mapLeft).toBeGreaterThanOrEqual(0);
+  expect(layout.mapWidth).toBeGreaterThan(layout.viewportWidth * 0.95);
   expect(layout.scrollWidth).toBeLessThanOrEqual(layout.viewportWidth);
 });
 
@@ -2123,7 +2135,7 @@ test("undo reverts play movement through the engine", async ({ page, isMobile })
   await expect(page.locator("#undo-button")).toBeDisabled();
 });
 
-test("play sidebar lists deployed units and bottom panel inspects selection", async ({ page, isMobile }) => {
+test("play map selection and bottom panel inspect units", async ({ page, isMobile }) => {
   test.skip(isMobile, "desktop-only bottom panel assertion");
 
   await openPlayMode(page);
@@ -2154,20 +2166,13 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   await expect(page.locator("#faction-food-total")).toHaveText("18");
   await expect(page.locator("#faction-metal-total")).toHaveText("2");
   await expect(page.locator("#faction-treasure-total")).toHaveText("0");
-  await expect(page.locator("#play-controls .sidebar-section")).toHaveCount(1);
-  await expect(page.locator("#play-controls")).toContainText("Units");
-  await expect(page.locator("#play-controls")).not.toContainText("Faction");
-  await expect(page.locator("#play-controls")).not.toContainText("End Turn");
-  await expect(page.locator("#play-controls")).not.toContainText("Selection");
+  await expect(page.locator("#play-controls")).toHaveCount(0);
 
-  const rosterItems = page.locator(".unit-roster-item");
   const horseArcherRoster = await page.evaluate(() => {
     const unit = currentMap.units.find((candidate) => candidate.kind === "horse_archer" && candidate.faction === "mongol");
     return { id: unit.id, name: unitDisplayName(unit) };
   });
-  const horseArcherRosterItem = rosterItems.filter({ hasText: horseArcherRoster.name }).first();
-  await expect(horseArcherRosterItem).toContainText(/m_horse_archer_\d+/);
-  await expect(horseArcherRosterItem).toContainText("Horse Archers - HP 10/10");
+  expect(horseArcherRoster.name).toMatch(/m_horse_archer_\d+/);
   const shortNameStats = await page.evaluate(() => {
     const names = currentMap.units.map((unit) => unitDisplayName(unit));
     return {
@@ -2184,7 +2189,7 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   expect(shortNameStats.hasMongol).toBe(true);
   expect(shortNameStats.hasChinese).toBe(true);
 
-  await horseArcherRosterItem.click();
+  await clickFirstUnitMatching(page, "(unit) => unit.kind === 'horse_archer' && unit.faction === 'mongol'");
   await expect.poll(() => page.evaluate(() => currentMap.game.selectedUnitId)).toBe(horseArcherRoster.id);
 
   await expect(page.locator(".unit-inspector h2")).toContainText("Unit Inspector Panel");
@@ -2286,19 +2291,19 @@ test("play sidebar lists deployed units and bottom panel inspects selection", as
   await expect(page.locator("#faction-metal-total")).toHaveText(nextFactionStatus.metal);
 
   const layout = await page.evaluate(() => {
-    const sidebar = document.querySelector("#play-controls").getBoundingClientRect();
     const map = document.querySelector(".map-section").getBoundingClientRect();
     const inspector = document.querySelector(".unit-inspector").getBoundingClientRect();
     return {
-      sidebarRight: sidebar.right,
       mapLeft: map.left,
+      mapWidth: map.width,
       inspectorHeight: inspector.height,
       scrollWidth: document.documentElement.scrollWidth,
       viewportWidth: window.innerWidth,
     };
   });
 
-  expect(layout.mapLeft).toBeGreaterThanOrEqual(layout.sidebarRight - 1);
+  expect(layout.mapLeft).toBeGreaterThanOrEqual(0);
+  expect(layout.mapWidth).toBeGreaterThan(layout.viewportWidth * 0.95);
   expect(layout.inspectorHeight).toBeGreaterThan(0);
   expect(layout.scrollWidth).toBeLessThanOrEqual(layout.viewportWidth);
 });
@@ -2495,7 +2500,7 @@ test("horde inspector shows resource counters", async ({ page, isMobile }) => {
 
   await openPlayMode(page);
 
-  await page.locator(".unit-roster-item").filter({ hasText: /m_horde_\d+/ }).click();
+  await clickFirstUnitMatching(page, "(unit) => unit.kind === 'horde' && unit.faction === 'mongol'");
   await expect(page.locator("#unit-type")).toHaveText("Horde");
   await expect(page.locator("#unit-resources")).toBeVisible();
   await expect(page.locator("#unit-population")).toHaveText("4");
@@ -2851,9 +2856,8 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect(page.getByRole("button", { name: "Save Scenario" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Load Scenario" })).toBeVisible();
   await page.getByRole("button", { name: "New Scenario" }).click();
-  await expect(page.locator("#play-controls")).toBeVisible();
+  await expect(page.locator("#play-controls")).toHaveCount(0);
   await expect(page.locator("#play-details-bar")).toBeVisible();
-  await expect(page.locator("#unit-roster")).toBeVisible();
   await expect(page.getByRole("button", { name: "Hide Panel" })).toBeVisible();
   await expect.poll(async () => {
     try {
@@ -3092,7 +3096,8 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await page.locator("#unit-hp-input").fill("7");
   await page.locator("#unit-hp-input").dispatchEvent("change");
   await expect.poll(() => page.evaluate(() => currentMap.units[0].hp)).toBe(7);
-  await page.locator(".unit-roster-item").first().click();
+  point = await hexPoint(await page.evaluate(() => ({ q: currentMap.units[0].q, r: currentMap.units[0].r })));
+  await page.mouse.click(point.x, point.y);
   await expect(page.locator(".unit-inspector")).toHaveClass(/is-editing/);
   await expect.poll(() => page.evaluate(() => currentMap.game.selectedUnitId)).toBeGreaterThan(0);
   await expect.poll(() => page.evaluate(() => editorUnitMoveHexes().length)).toBeGreaterThan(0);
@@ -3166,6 +3171,16 @@ test("scenario AI editor configures groups and map pickers", async ({ page, isMo
   await page.getByRole("button", { name: "Add Group" }).click();
   await expect(page.locator(".ai-group-card")).toHaveCount(1);
   await expect(page.locator(".ai-group-owner")).toHaveValue("2");
+  await expect.poll(() => page.evaluate(() => {
+    const row = document.querySelector(".ai-group-edit-row");
+    const deleteButton = document.querySelector(".ai-group-delete");
+    const controls = Array.from(row ? row.children : []);
+    if (!row || !deleteButton || controls.length === 0) {
+      return false;
+    }
+    const deleteBottom = Math.round(deleteButton.getBoundingClientRect().bottom);
+    return controls.every((control) => Math.round(control.getBoundingClientRect().bottom) === deleteBottom);
+  })).toBe(true);
   await page.getByRole("button", { name: "Add Group" }).click();
   await expect(page.locator(".ai-group-card")).toHaveCount(2);
   await page.locator(".ai-group-delete").last().click();
@@ -3329,7 +3344,7 @@ test("AI smoke scenario can enter play and end the human turn", async ({ page, i
   test.skip(isMobile, "scenario play transition is covered once on desktop");
 
   await page.goto("/");
-  await expect.poll(() => page.locator(".unit-roster-item").count()).toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate(() => currentMap && Array.isArray(currentMap.units) && currentMap.units.length > 0)).toBe(true);
   await page.evaluate(async () => {
     const response = await fetch("/api/scenarios/load?name=ai-town-capture-smoke.json");
     const payload = await response.json();

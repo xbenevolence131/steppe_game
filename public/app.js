@@ -100,7 +100,6 @@ const hordeCount = document.querySelector("#horde-count");
 const sidebarFactionMetal = document.querySelector("#sidebar-faction-metal");
 const sidebarSelectionReadout = document.querySelector(".sidebar-selection-readout");
 const unitInspectorInfoToggle = document.querySelector("#unit-inspector-info-toggle");
-const unitRoster = document.querySelector("#unit-roster");
 const unitName = document.querySelector("#unit-name");
 const unitNameInput = document.querySelector("#unit-name-input");
 const unitType = document.querySelector("#unit-type");
@@ -3798,55 +3797,6 @@ function updateEditorUnitResource(field, input) {
   });
 }
 
-function syncUnitRoster() {
-  if (!unitRoster) {
-    return;
-  }
-  unitRoster.replaceChildren();
-  const units = currentMap && Array.isArray(currentMap.units) ? currentMap.units : [];
-  const selected = selectedUnit();
-  if (units.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "unit-roster-empty";
-    empty.textContent = "No deployed units";
-    unitRoster.appendChild(empty);
-    return;
-  }
-
-  for (const unit of units) {
-    const faction = factions[unit.faction] || factions.neutral;
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = "unit-roster-item";
-    item.classList.toggle("is-selected", Boolean(selected && selected.id === unit.id));
-    item.style.setProperty("--unit-color", faction.color);
-
-    const name = document.createElement("span");
-    name.className = "unit-roster-name";
-    name.textContent = unitDisplayName(unit);
-
-    const meta = document.createElement("span");
-    meta.className = "unit-roster-meta";
-    const hp = Number.isFinite(unit.hp) && Number.isFinite(unit.maxHp) ? `${unit.hp}/${unit.maxHp}` : "-";
-    meta.textContent = `${unitKindLabel(unit)} - HP ${hp}`;
-
-    item.append(name, meta);
-    if (appMode === "scenario") {
-      item.addEventListener("click", () => {
-        scenarioTool = "units";
-        openScenarioRegions.add("units");
-        unitTool = "edit";
-        selectEditorUnit(unit);
-      });
-    } else {
-      item.addEventListener("click", () => {
-        selectUnit(unit).catch((error) => window.alert(error.message));
-      });
-    }
-    unitRoster.appendChild(item);
-  }
-}
-
 function syncUnitInspector() {
   const unit = selectedUnit();
   const editing = unitEditActive() && Boolean(unit);
@@ -3987,7 +3937,6 @@ function syncPlayControls() {
   if (nextUnitButton) {
     nextUnitButton.disabled = !canCycleUnits;
   }
-  syncUnitRoster();
   syncUnitInspector();
   syncStrategicAiDashboard();
 }
