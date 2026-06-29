@@ -4691,6 +4691,47 @@ function drawSupplySourceMarkers() {
   ctx.restore();
 }
 
+function townOwnershipMarkerColor(hex) {
+  const owner = territoryOwnerForHex(hex);
+  if (owner === factions.neutral.owner || hex.terrain !== "urban") {
+    return null;
+  }
+  return territoryOutlineColor(owner);
+}
+
+function drawTownOwnershipMarkers() {
+  if (!currentMap || !Array.isArray(currentMap.hexes)) {
+    return;
+  }
+
+  ctx.save();
+  ctx.lineJoin = "round";
+  for (const hex of currentMap.hexes) {
+    const color = townOwnershipMarkerColor(hex);
+    if (!color) {
+      continue;
+    }
+    const center = hexCenter(hex);
+    const points = hexPoints(center.x, center.y, geometry.size * 0.76);
+    ctx.beginPath();
+    points.forEach(([x, y], index) => {
+      if (index === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    });
+    ctx.closePath();
+    ctx.strokeStyle = "rgba(20, 18, 14, 0.78)";
+    ctx.lineWidth = 4.2 / viewport.scale;
+    ctx.stroke();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.1 / viewport.scale;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawMapMarkers(coords, fillStyle, radius) {
   if (!coords || coords.length === 0) {
     return;
@@ -6078,6 +6119,7 @@ function drawMap() {
   drawRiverEdges(currentMap.edges);
   drawWallGates(currentMap.wall_gates);
   drawCrossings(currentMap.crossings);
+  drawTownOwnershipMarkers();
   drawTerritoryOutlines();
   drawSupplySourceMarkers();
   drawMapMarkers(currentMap.river_sources, terrainStyles.river.source, 5);
