@@ -473,9 +473,9 @@ std::string unit_type_csv_path() {
 }
 
 UnitDefaults parse_unit_type_row(const std::vector<std::string>& cells, int line_number) {
-    if (cells.size() != 13) {
+    if (cells.size() != 14) {
         throw std::runtime_error("unit_types.csv line " + std::to_string(line_number)
-            + " must have 13 columns");
+            + " must have 14 columns");
     }
     UnitKind kind = UnitKind::HorseArcher;
     if (!try_unit_kind_from_string(cells[0], kind) || cells[0] == "cavalry") {
@@ -501,10 +501,11 @@ UnitDefaults parse_unit_type_row(const std::vector<std::string>& cells, int line
     defaults.legal_stances = parse_legal_stances_field(cells[10], line_number);
     defaults.population = parse_int_field(cells[11], "population", line_number);
     defaults.horses = parse_int_field(cells[12], "horses", line_number);
+    defaults.livestock = parse_int_field(cells[13], "livestock", line_number);
 
     if (defaults.hp < 1 || defaults.defense < 1 || defaults.attack < 0
         || defaults.readiness_damage < 0 || defaults.readiness < 1 || defaults.move < 0
-        || defaults.population < 0 || defaults.horses < 0) {
+        || defaults.population < 0 || defaults.horses < 0 || defaults.livestock < 0) {
         throw std::runtime_error("invalid negative or zero unit stat in unit_types.csv line "
             + std::to_string(line_number));
     }
@@ -536,6 +537,7 @@ UnitTypeTable parse_unit_type_table(const std::string& path) {
         "legal_stances",
         "population",
         "horses",
+        "livestock",
     };
 
     UnitTypeTable table;
@@ -671,11 +673,14 @@ constexpr int blocked_retreat_readiness_penalty = 15;
 constexpr int unbridged_river_crossing_readiness_cost = 15;
 constexpr double pasture_capacity_grassland = 100.0;
 constexpr double pasture_consumption_per_horse = 15.0;
+constexpr double pasture_consumption_per_livestock = 5.0;
 constexpr double pasture_recovery_per_round = pasture_capacity_grassland / 16.0;
 constexpr int pasture_grazing_radius = 2;
 constexpr int horde_horse_capacity = 20;
+constexpr int livestock_unit_capacity = 100;
+constexpr int livestock_butcher_food_per_head = 10;
 constexpr int starvation_horse_loss_turn_threshold = 3;
-constexpr int starvation_horse_loss_percent = 25;
+constexpr int starvation_animal_loss_percent = 25;
 
 constexpr int move_scale = 8;
 
@@ -1333,6 +1338,7 @@ GameState create_default_play_sandbox(int width, int height, int faction_count) 
         const UnitDefaults defaults = unit_defaults(unit.kind);
         unit.population = defaults.population;
         unit.horses = defaults.horses;
+        unit.livestock = defaults.livestock;
         unit.projects_zoc = default_projects_zoc(kind);
         unit.respects_zoc = default_respects_zoc(kind);
         return unit;
@@ -2697,10 +2703,38 @@ bool raid_hex(GameState& state, int unit_id, Coord target) {
     return true;
 }
 
-DetachHerdOptions detach_herd_options(const GameState& state, int unit_id, int horses) {
+bool butcher_livestock(GameState& state, int unit_id, int livestock) {
+    Unit* unit = find_unit(state, unit_id);
+    if (unit == nullptr
+        || (unit->kind != UnitKind::Horde && unit->kind != UnitKind::Herd)
+        || unit->owner != active_faction(state)
+        || unit->move_done
+        || unit->moved_this_turn
+        || enemy_unit_adjacent_to(state, *unit)
+        || livestock <= 0
+        || livestock > unit->livestock) {
+        return false;
+    }
+
+    FactionState* faction = find_faction(state, unit->owner);
+    if (faction == nullptr) {
+        return false;
+    }
+
+    unit->livestock -= livestock;
+    faction->food += livestock * livestock_butcher_food_per_head;
+    unit->remaining_scaled_move = 0;
+    unit->move_done = true;
+    state.selected_unit_id = unit_id;
+    refresh_legal_actions(state);
+    return true;
+}
+
+DetachHerdOptions detach_herd_options(const GameState& state, int unit_id, int horses, int livestock) {
     DetachHerdOptions options;
     options.unit_id = unit_id;
     options.horses = horses;
+    options.livestock = livestock;
     const Unit* horde = find_unit(state, unit_id);
     if (horde == nullptr
         || horde->kind != UnitKind::Horde
@@ -2708,8 +2742,11 @@ DetachHerdOptions detach_herd_options(const GameState& state, int unit_id, int h
         || horde->move_done
         || horde->moved_this_turn
         || enemy_unit_adjacent_to(state, *horde)
-        || horses <= 0
-        || horses > horde->horses) {
+        || horses < 0
+        || livestock < 0
+        || (horses <= 0 && livestock <= 0)
+        || horses > horde->horses
+        || livestock > horde->livestock) {
         return options;
     }
 
@@ -2717,8 +2754,8 @@ DetachHerdOptions detach_herd_options(const GameState& state, int unit_id, int h
     return options;
 }
 
-bool detach_herd(GameState& state, int unit_id, int horses, Coord destination) {
-    DetachHerdOptions options = detach_herd_options(state, unit_id, horses);
+bool detach_herd(GameState& state, int unit_id, int horses, int livestock, Coord destination) {
+    DetachHerdOptions options = detach_herd_options(state, unit_id, horses, livestock);
     const bool valid_destination = std::find_if(
         options.deployable_hexes.begin(),
         options.deployable_hexes.end(),
@@ -2733,6 +2770,7 @@ bool detach_herd(GameState& state, int unit_id, int horses, Coord destination) {
         return false;
     }
     horde->horses -= horses;
+    horde->livestock -= livestock;
     horde->remaining_scaled_move = 0;
     horde->move_done = true;
 
@@ -2752,6 +2790,7 @@ bool detach_herd(GameState& state, int unit_id, int horses, Coord destination) {
     herd.scaled_move = to_scaled_move(default_move(herd.kind));
     herd.remaining_scaled_move = herd.scaled_move;
     herd.horses = horses;
+    herd.livestock = livestock;
     herd.projects_zoc = default_projects_zoc(herd.kind);
     herd.respects_zoc = default_respects_zoc(herd.kind);
     const int horde_id = horde->id;
@@ -4495,7 +4534,7 @@ bool replace_ai_groups_json(GameState& state, const std::string& ai_groups_json)
 bool grazes_pasture(const Unit& unit) {
     return (unit.kind == UnitKind::Horde || unit.kind == UnitKind::Herd)
         && unit.hp > 0
-        && unit.horses > 0;
+        && (unit.horses > 0 || unit.livestock > 0);
 }
 
 std::vector<GameHex*> grazing_hexes_for_unit(GameState& state, const Unit& unit) {
@@ -4532,7 +4571,8 @@ void apply_pasture_for_round(GameState& state) {
             grazed_coords.push_back(hex->coord);
         }
 
-        const double demand = unit->horses * pasture_consumption_per_horse;
+        const double demand = unit->horses * pasture_consumption_per_horse
+            + unit->livestock * pasture_consumption_per_livestock;
         double consumed = 0.0;
         if (!pasture_hexes.empty()) {
             const double consumption_per_hex = demand / static_cast<double>(pasture_hexes.size());
@@ -4553,14 +4593,24 @@ void apply_pasture_for_round(GameState& state) {
         if (unit->starvation_turns < starvation_horse_loss_turn_threshold) {
             continue;
         }
-        const double numerator = unit->horses * shortfall * starvation_horse_loss_percent;
+        const double numerator = unit->horses * shortfall * starvation_animal_loss_percent;
         const double denominator = std::max(1.0, demand * 100.0);
-        const int horse_loss = std::min(
-            unit->horses,
-            std::max(1, static_cast<int>(std::ceil(numerator / denominator)))
-        );
-        unit->horses = std::max(0, unit->horses - horse_loss);
-        if (unit->horses == 0) {
+        if (unit->horses > 0) {
+            const int horse_loss = std::min(
+                unit->horses,
+                std::max(1, static_cast<int>(std::ceil(numerator / denominator)))
+            );
+            unit->horses = std::max(0, unit->horses - horse_loss);
+        }
+        if (unit->livestock > 0) {
+            const double livestock_numerator = unit->livestock * shortfall * starvation_animal_loss_percent;
+            const int livestock_loss = std::min(
+                unit->livestock,
+                std::max(1, static_cast<int>(std::ceil(livestock_numerator / denominator)))
+            );
+            unit->livestock = std::max(0, unit->livestock - livestock_loss);
+        }
+        if (unit->horses == 0 && unit->livestock == 0) {
             unit->starvation_turns = 0;
         }
     }
@@ -4678,12 +4728,14 @@ void print_unit_json(const Unit& unit, std::ostream& out) {
     if (unit.kind == UnitKind::Horde) {
         out << ",\"population\":" << unit.population
             << ",\"horses\":" << unit.horses
+            << ",\"livestock\":" << unit.livestock
             << ",\"starvationTurns\":" << unit.starvation_turns
             << ",\"productionState\":\"" << (unit.production_active ? "building" : "idle") << "\""
             << ",\"productionKind\":\"" << unit_kind_to_string(unit.production_kind) << "\""
             << ",\"productionTurnsRemaining\":" << unit.production_turns_remaining;
     } else if (unit.kind == UnitKind::Herd) {
         out << ",\"horses\":" << unit.horses
+            << ",\"livestock\":" << unit.livestock
             << ",\"starvationTurns\":" << unit.starvation_turns;
     }
     out << ",\"moveDone\":" << (unit.move_done ? "true" : "false")
@@ -4991,6 +5043,7 @@ std::string game_state_hash(const GameState& state) {
         hash_append_int(hash, unit.remaining_scaled_move);
         hash_append_int(hash, unit.population);
         hash_append_int(hash, unit.horses);
+        hash_append_int(hash, unit.livestock);
         hash_append_int(hash, unit.starvation_turns);
         hash_append_bool(hash, unit.production_active);
         hash_append(hash, unit_kind_to_string(unit.production_kind));
@@ -5174,6 +5227,7 @@ void print_combat_preview_json(const CombatPreview& preview, std::ostream& out) 
 void print_detach_herd_options_json(const DetachHerdOptions& options, std::ostream& out) {
     out << "{\"unitId\":" << options.unit_id
         << ",\"horses\":" << options.horses
+        << ",\"livestock\":" << options.livestock
         << ",\"deployableHexes\":[";
     for (std::size_t i = 0; i < options.deployable_hexes.size(); ++i) {
         if (i > 0) {
@@ -5906,9 +5960,14 @@ GameState parse_game_state_json(const std::string& json) {
         unit.remaining_scaled_move = std::max(0, std::min(unit.remaining_scaled_move, unit.scaled_move));
         unit.population = std::max(0, int_field(unit_json, "population", defaults.population));
         unit.horses = std::max(0, int_field(unit_json, "horses", defaults.horses));
+        unit.livestock = std::max(0, int_field(unit_json, "livestock", defaults.livestock));
         if (unit.kind == UnitKind::Horde) {
             unit.horses = std::min(unit.horses, horde_horse_capacity);
         }
+        if (unit.kind != UnitKind::Horde && unit.kind != UnitKind::Herd) {
+            unit.livestock = 0;
+        }
+        unit.livestock = std::min(unit.livestock, livestock_unit_capacity);
         unit.starvation_turns = std::max(0, int_field(unit_json, "starvationTurns", 0));
         unit.production_active = string_field(unit_json, "productionState", "idle") == "building";
         unit.production_kind = unit_kind_from_string(string_field(unit_json, "productionKind", unit_kind_to_string(UnitKind::HorseArcher)));

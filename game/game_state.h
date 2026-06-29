@@ -158,6 +158,7 @@ struct Unit {
     int remaining_scaled_move = 32;
     int population = 0;
     int horses = 0;
+    int livestock = 0;
     int starvation_turns = 0;
     bool production_active = false;
     UnitKind production_kind = UnitKind::HorseArcher;
@@ -235,6 +236,7 @@ struct UnitDefaults {
     bool respects_zoc = false;
     int population = 0;
     int horses = 0;
+    int livestock = 0;
 };
 
 struct ReachableHex {
@@ -302,6 +304,7 @@ struct CombatPreview {
 struct DetachHerdOptions {
     int unit_id = 0;
     int horses = 0;
+    int livestock = 0;
     std::vector<Coord> deployable_hexes;
 };
 
@@ -375,8 +378,9 @@ bool set_unit_stance(GameState& state, int unit_id, UnitStance stance);
 bool move_unit(GameState& state, int unit_id, Coord destination);
 bool attack_unit(GameState& state, int attacker_id, int defender_id);
 bool raid_hex(GameState& state, int unit_id, Coord target);
-DetachHerdOptions detach_herd_options(const GameState& state, int unit_id, int horses);
-bool detach_herd(GameState& state, int unit_id, int horses, Coord destination);
+DetachHerdOptions detach_herd_options(const GameState& state, int unit_id, int horses, int livestock);
+bool detach_herd(GameState& state, int unit_id, int horses, int livestock, Coord destination);
+bool butcher_livestock(GameState& state, int unit_id, int livestock);
 CreateHorseArchersOptions create_horse_archers_options(const GameState& state, int unit_id);
 bool create_horse_archers(GameState& state, int unit_id, Coord destination);
 CreateUnitOptions create_mongol_lancers_options(const GameState& state, int unit_id);

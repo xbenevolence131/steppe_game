@@ -10,6 +10,17 @@ const combatPreview = document.querySelector("#combat-preview");
 const detachHerdPopover = document.querySelector("#detach-herd-popover");
 const detachHerdForm = document.querySelector("#detach-herd-form");
 const detachHerdHorsesInput = document.querySelector("#detach-herd-horses");
+const detachHerdLivestockInput = document.querySelector("#detach-herd-livestock");
+const detachHerdAvailable = document.querySelector("#detach-herd-available");
+const detachHerdError = document.querySelector("#detach-herd-error");
+const detachHerdConfirm = document.querySelector("#detach-herd-confirm");
+const butcherLivestockPopover = document.querySelector("#butcher-livestock-popover");
+const butcherLivestockForm = document.querySelector("#butcher-livestock-form");
+const butcherLivestockInput = document.querySelector("#butcher-livestock-input");
+const butcherLivestockAvailable = document.querySelector("#butcher-livestock-available");
+const butcherLivestockOutcome = document.querySelector("#butcher-livestock-outcome");
+const butcherLivestockError = document.querySelector("#butcher-livestock-error");
+const butcherLivestockConfirm = document.querySelector("#butcher-livestock-confirm");
 const scenarioModeButton = document.querySelector("#scenario-mode-button");
 const playModeButton = document.querySelector("#play-mode-button");
 const scenarioResizeHandle = document.querySelector("#scenario-resize-handle");
@@ -90,6 +101,7 @@ const statusActiveFactionName = document.querySelector("#status-active-faction-n
 const factionStatusName = document.querySelector("#faction-status-name");
 const factionPopulationTotal = document.querySelector("#faction-population-total");
 const factionHorsesTotal = document.querySelector("#faction-horses-total");
+const factionLivestockTotal = document.querySelector("#faction-livestock-total");
 const factionFoodTotal = document.querySelector("#faction-food-total");
 const factionMetalTotal = document.querySelector("#faction-metal-total");
 const factionTreasureTotal = document.querySelector("#faction-treasure-total");
@@ -125,6 +137,9 @@ const unitPopulationInput = document.querySelector("#unit-population-input");
 const unitHorsesRow = document.querySelector("#unit-horses-row");
 const unitHorses = document.querySelector("#unit-horses");
 const unitHorsesInput = document.querySelector("#unit-horses-input");
+const unitLivestockRow = document.querySelector("#unit-livestock-row");
+const unitLivestock = document.querySelector("#unit-livestock");
+const unitLivestockInput = document.querySelector("#unit-livestock-input");
 const unitStarvationRow = document.querySelector("#unit-starvation-row");
 const unitStarvation = document.querySelector("#unit-starvation");
 const unitProductionRow = document.querySelector("#unit-production-row");
@@ -180,6 +195,7 @@ let contextMenuRequestId = 0;
 let combatPreviewRequestId = 0;
 let combatPreviewTargetId = 0;
 let detachHerdAmountContext = null;
+let butcherLivestockContext = null;
 let detachHerdPlacement = null;
 let createUnitPlacement = null;
 let scenarioFileMode = "load";
@@ -198,6 +214,7 @@ let aiAnimationInProgress = false;
 let playSurfaceMode = "map";
 
 const hordeHorseCapacity = 20;
+const livestockButcherFoodPerHead = 10;
 
 const viewport = {
   scale: 1,
@@ -424,6 +441,7 @@ const fallbackUnitDefaults = {
   respectsZoc: false,
   population: 0,
   horses: 0,
+  livestock: 0,
 };
 
 const unitSpriteColumns = {
@@ -2603,6 +2621,7 @@ function activeFactionResources(owner) {
   const totals = {
     population: 0,
     horses: 0,
+    livestock: 0,
     food: Number.isInteger(faction.food) ? faction.food : 0,
     metal: Number.isInteger(faction.metal) ? faction.metal : 0,
     treasure: Number.isInteger(faction.treasure) ? faction.treasure : 0,
@@ -2616,6 +2635,7 @@ function activeFactionResources(owner) {
     }
     totals.population += Number.isInteger(unit.population) ? unit.population : 0;
     totals.horses += Number.isInteger(unit.horses) ? unit.horses : 0;
+    totals.livestock += Number.isInteger(unit.livestock) ? unit.livestock : 0;
   }
   return totals;
 }
@@ -2800,6 +2820,7 @@ function normalizeUnitDefault(defaults) {
   normalized.respectsZoc = Boolean(defaults.respectsZoc);
   if (Number.isFinite(defaults.population)) normalized.population = Math.max(0, Math.trunc(defaults.population));
   if (Number.isFinite(defaults.horses)) normalized.horses = Math.max(0, Math.trunc(defaults.horses));
+  if (Number.isFinite(defaults.livestock)) normalized.livestock = Math.max(0, Math.trunc(defaults.livestock));
   normalized.allowedFactions = Array.isArray(defaults.allowedFactions)
     ? defaults.allowedFactions.filter((key) => typeof key === "string")
     : [];
@@ -2918,6 +2939,7 @@ function normalizeUnit(unit, index) {
   normalized.stance = typeof unit.stance === "string" ? unit.stance : defaults.stance;
   if (Number.isFinite(unit.population)) normalized.population = Math.max(0, Math.trunc(unit.population));
   if (Number.isFinite(unit.horses)) normalized.horses = clampUnitHorses(kind, unit.horses);
+  if (Number.isFinite(unit.livestock)) normalized.livestock = Math.max(0, Math.trunc(unit.livestock));
   if (Number.isFinite(unit.starvationTurns)) normalized.starvationTurns = Math.max(0, Math.trunc(unit.starvationTurns));
   if (typeof unit.productionState === "string") normalized.productionState = unit.productionState;
   if (typeof unit.productionKind === "string") normalized.productionKind = unit.productionKind;
@@ -3561,17 +3583,28 @@ const contextActionDefinitions = [
       unit
       && actionAvailability
       && actionAvailability.detachHerd
-      && Number.isInteger(unit.horses)
-      && unit.horses > 0
     ),
     enabled: ({ unit, actionAvailability }) => Boolean(
       unit
       && actionAvailability
       && actionAvailability.detachHerd
-      && Number.isInteger(unit.horses)
-      && unit.horses > 0
     ),
     run: async (context) => showDetachHerdAmount(context),
+  },
+  {
+    id: "butcher-livestock",
+    label: "Butcher livestock",
+    visible: ({ unit, actionAvailability }) => Boolean(
+      unit
+      && actionAvailability
+      && actionAvailability.butcherLivestock
+    ),
+    enabled: ({ unit, actionAvailability }) => Boolean(
+      unit
+      && actionAvailability
+      && actionAvailability.butcherLivestock
+    ),
+    run: async (context) => showButcherLivestockAmount(context),
   },
   {
     id: "create-horse-archers",
@@ -3682,10 +3715,10 @@ function resourceFieldsForUnit(unit) {
     return [];
   }
   if (unit.kind === "horde") {
-    return ["population", "horses", "starvation"];
+    return ["population", "horses", "livestock", "starvation"];
   }
   if (unit.kind === "herd") {
-    return ["horses", "starvation"];
+    return ["horses", "livestock", "starvation"];
   }
   return [];
 }
@@ -3727,6 +3760,7 @@ function applyUnitTypeDefaults(unit, kind) {
   unit.respectsZoc = Boolean(defaults.respectsZoc);
   if (Number.isInteger(defaults.population)) unit.population = defaults.population;
   if (Number.isInteger(defaults.horses)) unit.horses = clampUnitHorses(kind, defaults.horses);
+  if (Number.isInteger(defaults.livestock)) unit.livestock = defaults.livestock;
   const stances = defaults.legalStances && defaults.legalStances.length > 0 ? defaults.legalStances : ["default"];
   unit.stance = stances.includes(unit.stance) ? unit.stance : defaults.stance;
   if (!hadCustomName) {
@@ -3835,11 +3869,14 @@ function syncUnitInspector() {
     unitResources.hidden = true;
     unitPopulationRow.hidden = false;
     unitHorsesRow.hidden = false;
+    unitLivestockRow.hidden = false;
     unitStarvationRow.hidden = true;
     unitPopulation.textContent = "0";
     unitPopulationInput.value = "";
     unitHorses.textContent = "0";
     unitHorsesInput.value = "";
+    unitLivestock.textContent = "0";
+    unitLivestockInput.value = "";
     unitStarvation.textContent = "0";
     unitProductionRow.hidden = true;
     unitProduction.textContent = "Idle";
@@ -3881,14 +3918,18 @@ function syncUnitInspector() {
   unitResources.hidden = resourceFields.length === 0;
   unitPopulationRow.hidden = !resourceFields.includes("population");
   unitHorsesRow.hidden = !resourceFields.includes("horses");
+  unitLivestockRow.hidden = !resourceFields.includes("livestock");
   unitStarvationRow.hidden = !resourceFields.includes("starvation");
   const population = Number.isInteger(unit.population) ? unit.population : 0;
   const horses = Number.isInteger(unit.horses) ? unit.horses : 0;
+  const livestock = Number.isInteger(unit.livestock) ? unit.livestock : 0;
   const starvationTurns = Number.isInteger(unit.starvationTurns) ? unit.starvationTurns : 0;
   unitPopulation.textContent = String(population);
   unitPopulationInput.value = String(population);
   unitHorses.textContent = String(horses);
   unitHorsesInput.value = String(horses);
+  unitLivestock.textContent = String(livestock);
+  unitLivestockInput.value = String(livestock);
   if (unit.kind === "horde") {
     unitHorsesInput.max = String(hordeHorseCapacity);
   } else {
@@ -3926,6 +3967,9 @@ function syncPlayControls() {
   const resources = activeFactionResources(owner);
   factionPopulationTotal.textContent = String(resources.population);
   factionHorsesTotal.textContent = String(resources.horses);
+  if (factionLivestockTotal) {
+    factionLivestockTotal.textContent = String(resources.livestock);
+  }
   if (factionFoodTotal) {
     factionFoodTotal.textContent = String(resources.food);
   }
@@ -5533,13 +5577,27 @@ function contextForPointer(event) {
     unit,
     selected: selectedUnit(),
     actionAvailability: {
-      detachHerd: Boolean(hordeCanUseResources && Number.isInteger(unit.horses) && unit.horses > 0),
+      detachHerd: Boolean(
+        hordeCanUseResources
+        && ((Number.isInteger(unit.horses) && unit.horses > 0)
+          || (Number.isInteger(unit.livestock) && unit.livestock > 0))
+      ),
       createHorseArchers: Boolean(
         hordeCanUseResources
       ),
       createMongolLancers: Boolean(
         hordeCanUseResources
         && unit.faction === "mongol"
+      ),
+      butcherLivestock: Boolean(
+        unit
+        && (unit.kind === "horde" || unit.kind === "herd")
+        && unit.owner === activeOwner()
+        && !unit.moveDone
+        && !unit.movedThisTurn
+        && !unitAdjacentToEnemy(unit)
+        && Number.isInteger(unit.livestock)
+        && unit.livestock > 0
       ),
     },
   };
@@ -5614,6 +5672,16 @@ function hideDetachHerdAmount() {
   detachHerdPopover.hidden = true;
 }
 
+function hideButcherLivestockAmount() {
+  butcherLivestockContext = null;
+  butcherLivestockPopover.hidden = true;
+}
+
+function hideResourcePopovers() {
+  hideDetachHerdAmount();
+  hideButcherLivestockAmount();
+}
+
 function cancelDetachHerdPlacement() {
   detachHerdPlacement = null;
   drawMap();
@@ -5624,28 +5692,96 @@ function cancelCreateUnitPlacement() {
   drawMap();
 }
 
-function positionDetachHerdPopover(context) {
+function positionResourcePopover(popover, context) {
   const margin = 8;
-  detachHerdPopover.hidden = false;
-  const maxLeft = Math.max(margin, mapPanel.clientWidth - detachHerdPopover.offsetWidth - margin);
-  const maxTop = Math.max(margin, mapPanel.clientHeight - detachHerdPopover.offsetHeight - margin);
-  detachHerdPopover.style.left = `${clamp(context.panelX, margin, maxLeft)}px`;
-  detachHerdPopover.style.top = `${clamp(context.panelY, margin, maxTop)}px`;
+  popover.hidden = false;
+  const maxLeft = Math.max(margin, mapPanel.clientWidth - popover.offsetWidth - margin);
+  const maxTop = Math.max(margin, mapPanel.clientHeight - popover.offsetHeight - margin);
+  popover.style.left = `${clamp(context.panelX, margin, maxLeft)}px`;
+  popover.style.top = `${clamp(context.panelY, margin, maxTop)}px`;
+}
+
+function readWholeNumberInput(input) {
+  if (!input || input.value.trim() === "") {
+    return null;
+  }
+  const value = Number(input.value);
+  if (!Number.isFinite(value) || !Number.isInteger(value)) {
+    return null;
+  }
+  return value;
+}
+
+function updateDetachHerdValidation() {
+  const unit = detachHerdAmountContext && detachHerdAmountContext.unit;
+  const maxHorses = Number.isInteger(unit && unit.horses) ? unit.horses : 0;
+  const maxLivestock = Number.isInteger(unit && unit.livestock) ? unit.livestock : 0;
+  const horses = readWholeNumberInput(detachHerdHorsesInput);
+  const livestock = readWholeNumberInput(detachHerdLivestockInput);
+  const horseInvalid = horses === null || horses < 0 || horses > maxHorses;
+  const livestockInvalid = livestock === null || livestock < 0 || livestock > maxLivestock;
+  let message = "";
+  if (horseInvalid || livestockInvalid) {
+    message = "Enter whole amounts within the available stock.";
+  } else if (horses + livestock <= 0) {
+    message = "Detach at least 1 horse or livestock.";
+  }
+  detachHerdHorsesInput.classList.toggle("is-invalid", horseInvalid);
+  detachHerdLivestockInput.classList.toggle("is-invalid", livestockInvalid);
+  detachHerdError.textContent = message;
+  detachHerdConfirm.disabled = message !== "";
+  return {
+    valid: message === "",
+    horses: horses === null ? 0 : horses,
+    livestock: livestock === null ? 0 : livestock,
+  };
+}
+
+function updateButcherLivestockValidation() {
+  const unit = butcherLivestockContext && butcherLivestockContext.unit;
+  const maxLivestock = Number.isInteger(unit && unit.livestock) ? unit.livestock : 0;
+  const currentFood = Number.isInteger(butcherLivestockContext && butcherLivestockContext.currentFood)
+    ? butcherLivestockContext.currentFood
+    : 0;
+  const livestock = readWholeNumberInput(butcherLivestockInput);
+  const invalid = livestock === null || livestock <= 0 || livestock > maxLivestock;
+  const foodGain = invalid ? 0 : livestock * livestockButcherFoodPerHead;
+  const predictedFood = currentFood + foodGain;
+  let message = "";
+  if (invalid) {
+    message = `Enter 1-${maxLivestock} livestock.`;
+  }
+  butcherLivestockInput.classList.toggle("is-invalid", invalid);
+  butcherLivestockOutcome.textContent = `Food after: ${predictedFood} (+${foodGain})`;
+  butcherLivestockError.textContent = message;
+  butcherLivestockConfirm.disabled = invalid;
+  return {
+    valid: !invalid,
+    livestock: livestock === null ? 0 : livestock,
+  };
 }
 
 function showDetachHerdAmount(context) {
-  if (!context.unit || context.unit.kind !== "horde" || !Number.isInteger(context.unit.horses) || context.unit.horses <= 0) {
+  const horses = Number.isInteger(context.unit && context.unit.horses) ? context.unit.horses : 0;
+  const livestock = Number.isInteger(context.unit && context.unit.livestock) ? context.unit.livestock : 0;
+  if (!context.unit || context.unit.kind !== "horde" || (horses <= 0 && livestock <= 0)) {
     return false;
   }
   cancelDetachHerdPlacement();
   cancelCreateUnitPlacement();
+  hideButcherLivestockAmount();
   detachHerdAmountContext = context;
-  detachHerdHorsesInput.min = "1";
-  detachHerdHorsesInput.max = String(context.unit.horses);
-  detachHerdHorsesInput.value = String(Math.min(1, context.unit.horses));
-  positionDetachHerdPopover(context);
-  detachHerdHorsesInput.focus();
-  detachHerdHorsesInput.select();
+  detachHerdHorsesInput.min = "0";
+  detachHerdHorsesInput.max = String(horses);
+  detachHerdHorsesInput.value = String(horses > 0 ? 1 : 0);
+  detachHerdLivestockInput.min = "0";
+  detachHerdLivestockInput.max = String(livestock);
+  detachHerdLivestockInput.value = String(livestock > 0 && horses <= 0 ? 1 : 0);
+  detachHerdAvailable.textContent = `Available: ${horses} horses, ${livestock} livestock`;
+  updateDetachHerdValidation();
+  positionResourcePopover(detachHerdPopover, context);
+  (horses > 0 ? detachHerdHorsesInput : detachHerdLivestockInput).focus();
+  (horses > 0 ? detachHerdHorsesInput : detachHerdLivestockInput).select();
   return true;
 }
 
@@ -5656,16 +5792,17 @@ async function confirmDetachHerdAmount() {
   const unit = selectedUnit() && selectedUnit().id === detachHerdAmountContext.unit.id
     ? selectedUnit()
     : detachHerdAmountContext.unit;
-  const maxHorses = Number.isInteger(unit.horses) ? unit.horses : 0;
-  const horses = Math.trunc(clamp(Number(detachHerdHorsesInput.value), 1, maxHorses));
-  if (!Number.isInteger(horses) || horses <= 0) {
+  detachHerdAmountContext.unit = unit;
+  const validation = updateDetachHerdValidation();
+  if (!validation.valid) {
     return;
   }
   try {
     const options = await postAppCommand({
       type: "detach_herd_options",
       unitId: unit.id,
-      horses,
+      horses: validation.horses,
+      livestock: validation.livestock,
     });
     if (!Array.isArray(options.deployableHexes) || options.deployableHexes.length === 0) {
       window.alert("No adjacent deployment hex is available.");
@@ -5674,7 +5811,8 @@ async function confirmDetachHerdAmount() {
     }
     detachHerdPlacement = {
       unitId: unit.id,
-      horses,
+      horses: validation.horses,
+      livestock: validation.livestock,
       deployableHexes: options.deployableHexes,
     };
     hideDetachHerdAmount();
@@ -5682,6 +5820,59 @@ async function confirmDetachHerdAmount() {
   } catch (error) {
     window.alert(error.message);
   }
+}
+
+function showButcherLivestockAmount(context) {
+  const unit = context && context.unit;
+  if (!unit || !Number.isInteger(unit.id) || !Number.isInteger(unit.livestock) || unit.livestock <= 0) {
+    return false;
+  }
+  cancelDetachHerdPlacement();
+  cancelCreateUnitPlacement();
+  hideDetachHerdAmount();
+  const faction = currentMap && currentMap.game && Array.isArray(currentMap.game.factions)
+    ? currentMap.game.factions.find((candidate) => candidate.id === unit.owner)
+    : null;
+  butcherLivestockContext = {
+    unit,
+    currentFood: faction && Number.isInteger(faction.food) ? faction.food : 0,
+  };
+  butcherLivestockInput.min = "1";
+  butcherLivestockInput.max = String(unit.livestock);
+  butcherLivestockInput.value = String(Math.min(1, unit.livestock));
+  butcherLivestockAvailable.textContent = `Available: ${unit.livestock} livestock`;
+  updateButcherLivestockValidation();
+  positionResourcePopover(butcherLivestockPopover, context);
+  butcherLivestockInput.focus();
+  butcherLivestockInput.select();
+  return true;
+}
+
+async function confirmButcherLivestockAmount() {
+  if (!butcherLivestockContext || !butcherLivestockContext.unit) {
+    return false;
+  }
+  const unit = selectedUnit() && selectedUnit().id === butcherLivestockContext.unit.id
+    ? selectedUnit()
+    : butcherLivestockContext.unit;
+  butcherLivestockContext.unit = unit;
+  const faction = currentMap && currentMap.game && Array.isArray(currentMap.game.factions)
+    ? currentMap.game.factions.find((candidate) => candidate.id === unit.owner)
+    : null;
+  butcherLivestockContext.currentFood = faction && Number.isInteger(faction.food) ? faction.food : 0;
+  const validation = updateButcherLivestockValidation();
+  if (!validation.valid) {
+    return false;
+  }
+  applyGamePatch(await postUndoableGameCommand({
+    type: "butcher_livestock",
+    unitId: unit.id,
+    livestock: validation.livestock,
+  }));
+  hideButcherLivestockAmount();
+  syncModeControls();
+  drawMap();
+  return true;
 }
 
 function detachDeployableAt(coord) {
@@ -5702,6 +5893,7 @@ async function deployDetachedHerdAt(coord) {
     type: "detach_herd",
     unitId: detachHerdPlacement.unitId,
     horses: detachHerdPlacement.horses,
+    livestock: detachHerdPlacement.livestock,
     to: { q: coord.q, r: coord.r },
   });
   detachHerdPlacement = null;
@@ -5731,7 +5923,7 @@ async function startHordeUnitProduction(context, commandType) {
   }
   cancelDetachHerdPlacement();
   cancelCreateUnitPlacement();
-  hideDetachHerdAmount();
+  hideResourcePopovers();
   try {
     const payload = await postUndoableGameCommand({
       type: commandType,
@@ -5752,7 +5944,7 @@ async function startCreateUnitPlacement(context, config) {
     return false;
   }
   cancelDetachHerdPlacement();
-  hideDetachHerdAmount();
+  hideResourcePopovers();
   try {
     const options = await postAppCommand({
       type: config.optionsCommandType,
@@ -6061,7 +6253,7 @@ async function executeNextAiGroupTurn() {
 async function undoLastAction() {
   hideCombatPreview();
   hideContextMenu();
-  hideDetachHerdAmount();
+  hideResourcePopovers();
   cancelDetachHerdPlacement();
   cancelCreateUnitPlacement();
 
@@ -6332,6 +6524,7 @@ function makeEditorUnit(coord) {
     remainingMove: defaults.move,
     population: Number.isInteger(defaults.population) ? defaults.population : 0,
     horses: Number.isInteger(defaults.horses) ? defaults.horses : 0,
+    livestock: Number.isInteger(defaults.livestock) ? defaults.livestock : 0,
     projectsZoc: Boolean(defaults.projectsZoc),
     respectsZoc: Boolean(defaults.respectsZoc),
   };
@@ -7293,6 +7486,7 @@ if (unitInspectorInfoToggle) {
 }
 unitPopulationInput.addEventListener("change", () => updateEditorUnitResource("population", unitPopulationInput));
 unitHorsesInput.addEventListener("change", () => updateEditorUnitResource("horses", unitHorsesInput));
+unitLivestockInput.addEventListener("change", () => updateEditorUnitResource("livestock", unitLivestockInput));
 saveButton.addEventListener("click", saveCurrentMap);
 loadButton.addEventListener("click", chooseMapFile);
 loadFileInput.addEventListener("change", () => loadMapFile(loadFileInput.files[0]));
@@ -7336,12 +7530,21 @@ if (diplomacyToggleButton) {
 }
 detachHerdForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  confirmDetachHerdAmount();
+  confirmDetachHerdAmount().catch((error) => window.alert(error.message));
 });
+detachHerdHorsesInput.addEventListener("input", updateDetachHerdValidation);
+detachHerdLivestockInput.addEventListener("input", updateDetachHerdValidation);
+butcherLivestockForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  confirmButcherLivestockAmount().catch((error) => window.alert(error.message));
+});
+butcherLivestockInput.addEventListener("input", updateButcherLivestockValidation);
 contextMenu.addEventListener("pointerdown", (event) => event.stopPropagation());
 contextMenu.addEventListener("click", (event) => event.stopPropagation());
 detachHerdPopover.addEventListener("pointerdown", (event) => event.stopPropagation());
 detachHerdPopover.addEventListener("click", (event) => event.stopPropagation());
+butcherLivestockPopover.addEventListener("pointerdown", (event) => event.stopPropagation());
+butcherLivestockPopover.addEventListener("click", (event) => event.stopPropagation());
 zoomInButton.addEventListener("click", () => zoomFromCenter(1));
 zoomOutButton.addEventListener("click", () => zoomFromCenter(-1));
 fitButton.addEventListener("click", fitMap);
@@ -7411,7 +7614,7 @@ mapPanel.addEventListener("pointerdown", async (event) => {
   hideCombatPreview();
   if (event.button === 2) {
     event.preventDefault();
-    hideDetachHerdAmount();
+    hideResourcePopovers();
     cancelDetachHerdPlacement();
     cancelCreateUnitPlacement();
     if (appMode === "play") {
@@ -7420,7 +7623,7 @@ mapPanel.addEventListener("pointerdown", async (event) => {
     return;
   }
   hideContextMenu();
-  hideDetachHerdAmount();
+  hideResourcePopovers();
   const point = panelToWorld(event);
   if (appMode === "play" && event.button === 0 && detachHerdPlacement) {
     const hex = findNearestHex(point);
@@ -7576,7 +7779,7 @@ mapPanel.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     hideCombatPreview();
     hideContextMenu();
-    hideDetachHerdAmount();
+    hideResourcePopovers();
     cancelDetachHerdPlacement();
     cancelCreateUnitPlacement();
     return;

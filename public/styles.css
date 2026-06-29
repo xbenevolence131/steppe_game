@@ -1350,7 +1350,7 @@ select[hidden] {
 .detach-herd-popover {
   position: absolute;
   z-index: 21;
-  min-width: 176px;
+  min-width: 220px;
   padding: 8px;
   border: 1px solid var(--line);
   background: #f8f3e8;
@@ -1363,9 +1363,33 @@ select[hidden] {
 
 .detach-herd-popover form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: end;
   gap: 8px;
+}
+
+.resource-popover-title,
+.resource-popover-meta,
+.resource-popover-error {
+  grid-column: 1 / -1;
+}
+
+.resource-popover-title {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.resource-popover-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.resource-popover-error {
+  min-height: 16px;
+  color: #9d1f1f;
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .detach-herd-popover label {
@@ -1378,6 +1402,17 @@ select[hidden] {
 .detach-herd-popover input {
   width: 100%;
   min-height: 34px;
+}
+
+.detach-herd-popover input.is-invalid {
+  border-color: #b3261e;
+  background: #fff1ef;
+  color: #7a1813;
+}
+
+.detach-herd-popover button[type="submit"] {
+  grid-column: 1 / -1;
+  justify-self: end;
 }
 
 .play-details-bar {

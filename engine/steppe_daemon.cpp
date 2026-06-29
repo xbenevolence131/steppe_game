@@ -145,6 +145,7 @@ std::string unit_defaults_json() {
             << ",\"respectsZoc\":" << (defaults.respects_zoc ? "true" : "false")
             << ",\"population\":" << defaults.population
             << ",\"horses\":" << defaults.horses
+            << ",\"livestock\":" << defaults.livestock
             << ",\"allowedFactions\":[";
         bool wrote_faction = false;
         const auto write_faction = [&](const char* key, steppe::game::OwnerId owner) {
@@ -403,7 +404,8 @@ std::string handle_command(const std::string& body) {
         const steppe::game::DetachHerdOptions options = steppe::game::detach_herd_options(
             state,
             int_field(command, "unitId", 0),
-            std::max(0, int_field(command, "horses", 0))
+            std::max(0, int_field(command, "horses", 0)),
+            std::max(0, int_field(command, "livestock", 0))
         );
         return command_response(game_id, true, detach_herd_options_json(options));
     }
@@ -413,7 +415,21 @@ std::string handle_command(const std::string& body) {
             state,
             int_field(command, "unitId", 0),
             std::max(0, int_field(command, "horses", 0)),
+            std::max(0, int_field(command, "livestock", 0)),
             coord_field(command, "to")
+        );
+        if (ok) {
+            push_undo_state(game_id, before);
+            advance_state_version(state);
+        }
+        return command_response(game_id, ok, game_patch_json(state, ok, nullptr, ok ? &before : nullptr));
+    }
+    if (type == "butcher_livestock") {
+        const steppe::game::GameState before = state;
+        const bool ok = steppe::game::butcher_livestock(
+            state,
+            int_field(command, "unitId", 0),
+            std::max(0, int_field(command, "livestock", 0))
         );
         if (ok) {
             push_undo_state(game_id, before);

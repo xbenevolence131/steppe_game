@@ -151,6 +151,8 @@ function commandForLegacyArgs(args) {
       return { type: "attack_unit", attackerId: intAfter("--attacker"), defenderId: intAfter("--defender") };
     case "game-raid":
       return { type: "raid_hex", unitId: intAfter("--unit"), target: { q: intAfter("--q"), r: intAfter("--r") } };
+    case "game-butcher":
+      return { type: "butcher_livestock", unitId: intAfter("--unit"), livestock: intAfter("--livestock") };
     case "game-end-turn":
       return { type: "end_turn" };
     case "game-ai-step":
@@ -1192,9 +1194,9 @@ test("food is consumed by faction population on turn end", async ({ isMobile }) 
 
   const state = pastureGameState({ width: 6, height: 1, turnOrder: [1, 2, 3] });
   state.units = [
-    { id: 1, owner: 1, faction: "mongol", kind: "horde", q: 1, r: 1, hp: 10, maxHp: 10, population: 3, horses: 0 },
-    { id: 2, owner: 2, faction: "chinese", kind: "horde", q: 3, r: 1, hp: 10, maxHp: 10, population: 2, horses: 0 },
-    { id: 3, owner: 3, faction: "persian", kind: "horde", q: 6, r: 1, hp: 10, maxHp: 10, population: 4, horses: 0 },
+    { id: 1, owner: 1, faction: "mongol", kind: "horde", q: 1, r: 1, hp: 10, maxHp: 10, population: 3, horses: 0, livestock: 0 },
+    { id: 2, owner: 2, faction: "chinese", kind: "horde", q: 3, r: 1, hp: 10, maxHp: 10, population: 2, horses: 0, livestock: 0 },
+    { id: 3, owner: 3, faction: "persian", kind: "horde", q: 6, r: 1, hp: 10, maxHp: 10, population: 4, horses: 0, livestock: 0 },
   ];
   state.game.activeFactionIndex = 0;
   state.game.factions = [
@@ -1214,11 +1216,31 @@ test("food is consumed by faction population on turn end", async ({ isMobile }) 
   expect(debugFoodByOwner).toEqual({ 1: 10, 2: 10, 3: 10 });
 });
 
+test("hordes can butcher livestock into faction food", async ({ isMobile }) => {
+  test.skip(isMobile, "engine resource rule is covered once on desktop");
+
+  const state = aiDirectiveGameState({ type: "inactive" }, [
+    { id: 1, owner: 0, faction: "mongol", kind: "horde", q: 2, r: 2, hp: 10, maxHp: 10, population: 4, horses: 8, livestock: 12, remainingScaledMove: 24 },
+  ]);
+  state.game.factions.find((faction) => faction.id === 0).food = 3;
+  state.game.activeFactionIndex = 0;
+  state.game.activeOwner = 0;
+  state.game.turnOrder = [0, 2];
+
+  const butchered = runEngineJson(["game-butcher", "--unit", "1", "--livestock", "5"], state);
+  const horde = butchered.units.find((unit) => unit.id === 1);
+  const mongol = butchered.game.factions.find((faction) => faction.id === 0);
+
+  expect(horde.livestock).toBe(7);
+  expect(horde.moveDone).toBe(true);
+  expect(mongol.food).toBe(53);
+});
+
 test("pasture advances on round boundaries rather than faction turns", async ({ isMobile }) => {
   test.skip(isMobile, "engine pasture rule is covered once on desktop");
 
   const state = pastureGameState({
-    unit: { id: 1, owner: 0, faction: "mongol", kind: "horde", q: 4, r: 4, hp: 10, maxHp: 10, horses: 25 },
+    unit: { id: 1, owner: 0, faction: "mongol", kind: "horde", q: 4, r: 4, hp: 10, maxHp: 10, horses: 25, livestock: 0 },
     turnOrder: [0, 2],
   });
 
@@ -1233,6 +1255,25 @@ test("pasture advances on round boundaries rather than faction turns", async ({ 
   expect(nextRound.game.round).toBe(2);
   expect(nextRound.game.activeFactionIndex).toBe(0);
   expect(grazedHexes).toHaveLength(19);
+});
+
+test("animals do not grow organically after a fully supplied pasture round", async ({ isMobile }) => {
+  test.skip(isMobile, "engine pasture rule is covered once on desktop");
+
+  const state = aiDirectiveGameState({ type: "inactive" }, [
+    { id: 1, owner: 0, faction: "mongol", kind: "horde", q: 3, r: 2, hp: 10, maxHp: 10, population: 4, horses: 10, livestock: 20, remainingScaledMove: 24 },
+    { id: 3, owner: 2, faction: "chinese", kind: "infantry", q: 8, r: 4, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+  ]);
+  state.game.turnOrder = [0, 2];
+  state.game.activeFactionIndex = 1;
+  state.game.activeOwner = 2;
+
+  const advanced = runEngineJson(["game-end-turn"], state);
+  const horde = advanced.units.find((unit) => unit.id === 1);
+
+  expect(horde.horses).toBe(10);
+  expect(horde.livestock).toBe(20);
+  expect(horde.starvationTurns).toBe(0);
 });
 
 test("unused pasture recovers continuously each round", async ({ isMobile }) => {
@@ -2200,9 +2241,11 @@ test("play map selection and bottom panel inspect units", async ({ page, isMobil
       if (unit.faction === "mongol") {
         unit.population = 11;
         unit.horses = 5;
+        unit.livestock = 21;
       } else if (unit.faction === "chinese") {
         unit.population = 7;
         unit.horses = 3;
+        unit.livestock = 13;
       }
     }
     currentMap.game.factions.find((faction) => faction.key === "mongol").metal = 2;
@@ -2215,6 +2258,7 @@ test("play map selection and bottom panel inspect units", async ({ page, isMobil
   await expect(page.locator("#faction-status-name")).toHaveText("Mongol");
   await expect(page.locator("#faction-population-total")).toHaveText("11");
   await expect(page.locator("#faction-horses-total")).toHaveText("5");
+  await expect(page.locator("#faction-livestock-total")).toHaveText("21");
   await expect(page.locator("#faction-food-total")).toHaveText("18");
   await expect(page.locator("#faction-metal-total")).toHaveText("2");
   await expect(page.locator("#faction-treasure-total")).toHaveText("0");
@@ -2324,11 +2368,13 @@ test("play map selection and bottom panel inspect units", async ({ page, isMobil
       .reduce((totals, unit) => ({
         population: totals.population + (Number.isInteger(unit.population) ? unit.population : 0),
         horses: totals.horses + (Number.isInteger(unit.horses) ? unit.horses : 0),
-      }), { population: 0, horses: 0 });
+        livestock: totals.livestock + (Number.isInteger(unit.livestock) ? unit.livestock : 0),
+      }), { population: 0, horses: 0, livestock: 0 });
     return {
       name: faction ? faction.name : "Unknown",
       population: String(localHordeResources.population),
       horses: String(localHordeResources.horses),
+      livestock: String(localHordeResources.livestock),
       food: String(faction && Number.isInteger(faction.food) ? faction.food : 0),
       metal: String(faction && Number.isInteger(faction.metal) ? faction.metal : 0),
     };
@@ -2339,6 +2385,7 @@ test("play map selection and bottom panel inspect units", async ({ page, isMobil
   await expect(page.locator("#faction-status-name")).toHaveText(nextFactionStatus.name);
   await expect(page.locator("#faction-population-total")).toHaveText(nextFactionStatus.population);
   await expect(page.locator("#faction-horses-total")).toHaveText(nextFactionStatus.horses);
+  await expect(page.locator("#faction-livestock-total")).toHaveText(nextFactionStatus.livestock);
   await expect(page.locator("#faction-food-total")).toHaveText(nextFactionStatus.food);
   await expect(page.locator("#faction-metal-total")).toHaveText(nextFactionStatus.metal);
 
@@ -2557,6 +2604,58 @@ test("horde inspector shows resource counters", async ({ page, isMobile }) => {
   await expect(page.locator("#unit-resources")).toBeVisible();
   await expect(page.locator("#unit-population")).toHaveText("4");
   await expect(page.locator("#unit-horses")).toHaveText("12");
+  await expect(page.locator("#unit-livestock")).toHaveText("20");
+});
+
+test("hordes can butcher livestock from the context menu", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop pointer geometry is simpler for horde resource assertions");
+
+  await openPlayMode(page);
+
+  const hordePoint = await page.evaluate(() => {
+    const unit = currentMap.units.find((candidate) => candidate.kind === "horde" && candidate.faction === "mongol");
+    const faction = currentMap.game.factions.find((candidate) => candidate.id === unit.owner);
+    const panel = mapPanel.getBoundingClientRect();
+    const center = hexCenter(unit);
+    return {
+      unitId: unit.id,
+      initialFood: faction.food,
+      x: panel.left + viewport.offsetX + center.x * viewport.scale,
+      y: panel.top + viewport.offsetY + center.y * viewport.scale,
+    };
+  });
+
+  await page.mouse.click(hordePoint.x, hordePoint.y, { button: "right" });
+  await expect(page.locator("#context-menu [data-action='butcher-livestock']")).toHaveText("Butcher livestock");
+  await page.locator("#context-menu [data-action='butcher-livestock']").click();
+  await expect(page.locator("#butcher-livestock-popover")).toBeVisible();
+  await expect(page.locator("#butcher-livestock-available")).toHaveText("Available: 20 livestock");
+  await expect(page.locator("#butcher-livestock-input")).toHaveAttribute("max", "20");
+  await expect(page.locator("#butcher-livestock-outcome")).toHaveText(`Food after: ${hordePoint.initialFood + 10} (+10)`);
+  await page.locator("#butcher-livestock-input").fill("21");
+  await expect(page.locator("#butcher-livestock-input")).toHaveClass(/is-invalid/);
+  await expect(page.locator("#butcher-livestock-confirm")).toBeDisabled();
+  await page.locator("#butcher-livestock-input").fill("5");
+  await expect(page.locator("#butcher-livestock-input")).not.toHaveClass(/is-invalid/);
+  await expect(page.locator("#butcher-livestock-confirm")).toBeEnabled();
+  await expect(page.locator("#butcher-livestock-outcome")).toHaveText(`Food after: ${hordePoint.initialFood + 50} (+50)`);
+  await page.locator("#butcher-livestock-form").press("Enter");
+
+  await expect.poll(() => page.evaluate((unitId) => {
+    const horde = currentMap.units.find((unit) => unit.id === unitId);
+    const faction = currentMap.game.factions.find((candidate) => candidate.id === horde.owner);
+    return {
+      livestock: horde.livestock,
+      food: faction.food,
+      statusLivestock: document.querySelector("#faction-livestock-total").textContent,
+      statusFood: document.querySelector("#faction-food-total").textContent,
+    };
+  }, hordePoint.unitId)).toEqual({
+    livestock: 15,
+    food: hordePoint.initialFood + 50,
+    statusLivestock: "15",
+    statusFood: String(hordePoint.initialFood + 50),
+  });
 });
 
 test("detach herd creates a herd from horde horses", async ({ page, isMobile }) => {
@@ -2579,7 +2678,16 @@ test("detach herd creates a herd from horde horses", async ({ page, isMobile }) 
   await expect(page.locator("#context-menu [data-action='detach-herd']")).toHaveText("Detach herd");
   await page.locator("#context-menu [data-action='detach-herd']").click();
   await expect(page.locator("#detach-herd-popover")).toBeVisible();
+  await expect(page.locator("#detach-herd-available")).toHaveText("Available: 12 horses, 20 livestock");
+  await expect(page.locator("#detach-herd-horses")).toHaveAttribute("max", "12");
+  await expect(page.locator("#detach-herd-livestock")).toHaveAttribute("max", "20");
+  await page.locator("#detach-herd-horses").fill("13");
+  await expect(page.locator("#detach-herd-horses")).toHaveClass(/is-invalid/);
+  await expect(page.locator("#detach-herd-confirm")).toBeDisabled();
   await page.locator("#detach-herd-horses").fill("3");
+  await page.locator("#detach-herd-livestock").fill("4");
+  await expect(page.locator("#detach-herd-horses")).not.toHaveClass(/is-invalid/);
+  await expect(page.locator("#detach-herd-confirm")).toBeEnabled();
   await page.locator("#detach-herd-form").press("Enter");
 
   await expect.poll(() => page.evaluate(() => detachHerdPlacement && detachHerdPlacement.deployableHexes.length)).toBeGreaterThan(0);
@@ -2598,16 +2706,20 @@ test("detach herd creates a herd from horde horses", async ({ page, isMobile }) 
   await page.mouse.click(deployPoint.x, deployPoint.y);
   await expect.poll(() => page.evaluate((unitId) => {
     const horde = currentMap.units.find((unit) => unit.id === unitId);
-    const detached = currentMap.units.find((unit) => unit.kind === "herd" && unit.horses === 3);
+    const detached = currentMap.units.find((unit) => unit.kind === "herd" && unit.horses === 3 && unit.livestock === 4);
     return {
       hordeHorses: horde.horses,
+      hordeLivestock: horde.livestock,
       detachedAt: detached ? `${detached.q},${detached.r}` : "",
       statusHorses: document.querySelector("#faction-horses-total").textContent,
+      statusLivestock: document.querySelector("#faction-livestock-total").textContent,
     };
   }, hordePoint.unitId)).toEqual({
     hordeHorses: 9,
+    hordeLivestock: 16,
     detachedAt: `${deployPoint.q},${deployPoint.r}`,
     statusHorses: "9",
+    statusLivestock: "16",
   });
 });
 
@@ -2784,6 +2896,7 @@ test("horde resource actions are unavailable after movement", async ({ page, isM
   expect(result.detachDeployable).toBe(0);
   await page.mouse.click(result.x, result.y, { button: "right" });
   await expect(page.locator("#context-menu [data-action='detach-herd']")).toHaveCount(0);
+  await expect(page.locator("#context-menu [data-action='butcher-livestock']")).toHaveCount(0);
   await expect(page.locator("#context-menu [data-action='create-horse-archers']")).toHaveCount(0);
   await expect(page.locator("#context-menu [data-action='create-mongol-lancers']")).toHaveCount(0);
 });
@@ -2834,6 +2947,7 @@ test("horde resource actions are unavailable next to enemies", async ({ page, is
   await expect(page.locator("#combat-preview")).toContainText("Result RDY");
   await page.mouse.click(result.x, result.y, { button: "right" });
   await expect(page.locator("#context-menu [data-action='detach-herd']")).toHaveCount(0);
+  await expect(page.locator("#context-menu [data-action='butcher-livestock']")).toHaveCount(0);
   await expect(page.locator("#context-menu [data-action='create-horse-archers']")).toHaveCount(0);
   await expect(page.locator("#context-menu [data-action='create-mongol-lancers']")).toHaveCount(0);
 });
@@ -3072,6 +3186,7 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect.poll(() => page.evaluate(() => currentMap.units[0].respectsZoc)).toBe(true);
   await expect.poll(() => page.evaluate(() => currentMap.units[0].population)).toBe(4);
   await expect.poll(() => page.evaluate(() => currentMap.units[0].horses)).toBe(12);
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].livestock)).toBe(20);
   await expect.poll(async () => {
     const view = await editorEngineView(page);
     return { count: view.units.length, kind: view.units[0]?.kind, owner: view.units[0]?.owner };
@@ -3122,25 +3237,36 @@ test("scenario editor modes toggle terrain edges and units", async ({ page, isMo
   await expect(page.locator("#unit-resources")).toBeVisible();
   await expect(page.locator("#unit-population-row")).toBeHidden();
   await expect(page.locator("#unit-horses-row")).toBeVisible();
+  await expect(page.locator("#unit-livestock-row")).toBeVisible();
   await expect(page.locator("#unit-horses")).toBeHidden();
   await expect(page.locator("#unit-horses-input")).toBeVisible();
+  await expect(page.locator("#unit-livestock")).toBeHidden();
+  await expect(page.locator("#unit-livestock-input")).toBeVisible();
   await page.locator("#unit-horses-input").fill("9");
   await page.locator("#unit-horses-input").dispatchEvent("change");
+  await page.locator("#unit-livestock-input").fill("18");
+  await page.locator("#unit-livestock-input").dispatchEvent("change");
   await expect.poll(() => page.evaluate(() => currentMap.units[0].horses)).toBe(9);
+  await expect.poll(() => page.evaluate(() => currentMap.units[0].livestock)).toBe(18);
   await page.locator("#unit-type-input").selectOption("horde");
   await expect.poll(() => page.evaluate(() => currentMap.units[0].kind)).toBe("horde");
   await expect(page.locator("#unit-population-row")).toBeVisible();
   await expect(page.locator("#unit-horses-row")).toBeVisible();
+  await expect(page.locator("#unit-livestock-row")).toBeVisible();
   await expect(page.locator("#unit-population-input")).toHaveValue("4");
   await expect(page.locator("#unit-horses-input")).toHaveValue("12");
+  await expect(page.locator("#unit-livestock-input")).toHaveValue("20");
   await page.locator("#unit-population-input").fill("6");
   await page.locator("#unit-population-input").dispatchEvent("change");
   await page.locator("#unit-horses-input").fill("15");
   await page.locator("#unit-horses-input").dispatchEvent("change");
+  await page.locator("#unit-livestock-input").fill("33");
+  await page.locator("#unit-livestock-input").dispatchEvent("change");
   await expect.poll(() => page.evaluate(() => ({
     population: currentMap.units[0].population,
     horses: currentMap.units[0].horses,
-  }))).toEqual({ population: 6, horses: 15 });
+    livestock: currentMap.units[0].livestock,
+  }))).toEqual({ population: 6, horses: 15, livestock: 33 });
   await page.locator("#unit-type-input").selectOption("horse_archer");
   await expect.poll(() => page.evaluate(() => currentMap.units[0].kind)).toBe("horse_archer");
   await expect(page.locator("#unit-type-input")).toHaveValue("horse_archer");

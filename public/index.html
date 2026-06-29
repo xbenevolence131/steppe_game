@@ -285,6 +285,10 @@
             <dd id="faction-horses-total">0</dd>
           </div>
           <div>
+            <dt>Livestock</dt>
+            <dd id="faction-livestock-total">0</dd>
+          </div>
+          <div>
             <dt>Food</dt>
             <dd id="faction-food-total">0</dd>
           </div>
@@ -335,11 +339,31 @@
             <div id="combat-preview" class="combat-preview" hidden></div>
             <div id="detach-herd-popover" class="detach-herd-popover" hidden>
               <form id="detach-herd-form">
+                <div class="resource-popover-title">Detach herd</div>
+                <div id="detach-herd-available" class="resource-popover-meta">Available: 0 horses, 0 livestock</div>
                 <label>
                   <span>Horses</span>
-                  <input id="detach-herd-horses" type="number" min="1" step="1" value="1">
+                  <input id="detach-herd-horses" type="number" min="0" step="1" value="1">
                 </label>
-                <button id="detach-herd-confirm" type="submit">OK</button>
+                <label>
+                  <span>Livestock</span>
+                  <input id="detach-herd-livestock" type="number" min="0" step="1" value="0">
+                </label>
+                <div id="detach-herd-error" class="resource-popover-error" aria-live="polite"></div>
+                <button id="detach-herd-confirm" type="submit">Done</button>
+              </form>
+            </div>
+            <div id="butcher-livestock-popover" class="detach-herd-popover" hidden>
+              <form id="butcher-livestock-form">
+                <div class="resource-popover-title">Butcher livestock</div>
+                <div id="butcher-livestock-available" class="resource-popover-meta">Available: 0 livestock</div>
+                <label>
+                  <span>Livestock</span>
+                  <input id="butcher-livestock-input" type="number" min="1" step="1" value="1">
+                </label>
+                <div id="butcher-livestock-outcome" class="resource-popover-meta">Food after: 0</div>
+                <div id="butcher-livestock-error" class="resource-popover-error" aria-live="polite"></div>
+                <button id="butcher-livestock-confirm" type="submit">Done</button>
               </form>
             </div>
           </div>
@@ -438,6 +462,11 @@
                       <span class="unit-condition-label">Horses</span>
                     <span id="unit-horses" class="inspector-read">0</span>
                     <input id="unit-horses-input" class="inspector-edit" type="number" min="0" step="1">
+                    </span>
+                    <span id="unit-livestock-row" class="unit-resource-field">
+                      <span class="unit-condition-label">Livestock</span>
+                      <span id="unit-livestock" class="inspector-read">0</span>
+                      <input id="unit-livestock-input" class="inspector-edit" type="number" min="0" step="1">
                     </span>
                     <span id="unit-starvation-row" class="unit-resource-field">
                       <span class="unit-condition-label">Starve</span>
