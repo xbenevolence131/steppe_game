@@ -1863,9 +1863,16 @@ test("great wall avoids the southwest corner on southern access seeds", async ({
 
 test("scenario controls sit above the shared map", async ({ page }) => {
   await page.goto("/");
+  await page.evaluate(() => {
+    localStorage.removeItem("steppe.scenarioPanelHeight");
+    if (typeof applyScenarioPanelHeight === "function") {
+      applyScenarioPanelHeight(156, false);
+    }
+  });
   await page.getByRole("button", { name: "Scenario Edit" }).click();
 
   await expect(page.locator("#scenario-controls")).toBeVisible();
+  await expect(page.locator("#scenario-resize-handle")).toBeVisible();
   await expect(page.locator(".app-header .mode-chooser")).toBeVisible();
   await expect(page.getByRole("button", { name: "Session", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Factions", exact: true })).toBeVisible();
@@ -1922,6 +1929,51 @@ test("scenario controls sit above the shared map", async ({ page }) => {
   expect(layout.mapLeft).toBeGreaterThanOrEqual(0);
   expect(layout.mapWidth).toBeGreaterThan(layout.viewportWidth * 0.95);
   expect(layout.scrollWidth).toBeLessThanOrEqual(layout.viewportWidth);
+
+  const beforeResize = await page.evaluate(() => {
+    const topbar = document.querySelector("#scenario-controls").getBoundingClientRect();
+    const handle = document.querySelector("#scenario-resize-handle").getBoundingClientRect();
+    const map = document.querySelector("#map-panel").getBoundingClientRect();
+    return {
+      topbarHeight: topbar.height,
+      handleX: handle.left + handle.width / 2,
+      handleY: handle.top + handle.height / 2,
+      mapHeight: map.height,
+    };
+  });
+  await page.mouse.move(beforeResize.handleX, beforeResize.handleY);
+  await page.mouse.down();
+  await page.mouse.move(beforeResize.handleX, beforeResize.handleY - 50);
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => {
+    const topbar = document.querySelector("#scenario-controls").getBoundingClientRect();
+    const map = document.querySelector("#map-panel").getBoundingClientRect();
+    return {
+      topbarHeight: Math.round(topbar.height),
+      mapHeight: Math.round(map.height),
+      storedHeight: Number.parseInt(localStorage.getItem("steppe.scenarioPanelHeight"), 10),
+    };
+  })).toEqual(expect.objectContaining({
+    storedHeight: expect.any(Number),
+  }));
+  const afterResize = await page.evaluate(() => {
+    const topbar = document.querySelector("#scenario-controls").getBoundingClientRect();
+    const map = document.querySelector("#map-panel").getBoundingClientRect();
+    return {
+      topbarHeight: topbar.height,
+      mapHeight: map.height,
+      storedHeight: Number.parseInt(localStorage.getItem("steppe.scenarioPanelHeight"), 10),
+    };
+  });
+  expect(afterResize.topbarHeight).toBeLessThan(beforeResize.topbarHeight - 20);
+  expect(afterResize.mapHeight).toBeGreaterThan(beforeResize.mapHeight + 20);
+  expect(afterResize.storedHeight).toBeLessThan(beforeResize.topbarHeight);
+  await page.evaluate(() => {
+    localStorage.removeItem("steppe.scenarioPanelHeight");
+    if (typeof applyScenarioPanelHeight === "function") {
+      applyScenarioPanelHeight(156, false);
+    }
+  });
 });
 
 test("generated great wall contains Chinese towns from outside", async ({ page, isMobile }) => {

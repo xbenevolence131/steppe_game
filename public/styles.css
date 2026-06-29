@@ -66,6 +66,7 @@ body {
 }
 
 .app-shell {
+  --scenario-panel-height: 156px;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
   height: 100%;
@@ -74,7 +75,7 @@ body {
 }
 
 .app-shell.is-scenario {
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: var(--scenario-panel-height) 8px minmax(0, 1fr);
 }
 
 .app-shell.is-play {
@@ -92,12 +93,42 @@ body {
   border-bottom: 1px solid var(--line);
   background: var(--surface);
   padding: 6px;
-  max-height: 156px;
+  min-height: 0;
   overflow: auto;
 }
 
 .app-shell.is-scenario .scenario-topbar {
   display: grid;
+}
+
+.scenario-resize-handle {
+  display: none;
+  min-height: 8px;
+  border-bottom: 1px solid var(--line);
+  background:
+    linear-gradient(to bottom, rgba(185, 173, 150, 0.2), rgba(185, 173, 150, 0.35)),
+    var(--surface);
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.scenario-resize-handle::before {
+  content: "";
+  display: block;
+  width: 58px;
+  height: 2px;
+  margin: 3px auto;
+  border-radius: 999px;
+  background: rgba(92, 83, 68, 0.45);
+}
+
+.scenario-resize-handle:focus-visible {
+  outline: 2px solid #1f4f52;
+  outline-offset: -2px;
+}
+
+.app-shell.is-scenario .scenario-resize-handle {
+  display: block;
 }
 
 .faction-status-bar {
@@ -1801,10 +1832,13 @@ select[hidden] {
     grid-template-rows: auto minmax(0, 1fr);
   }
 
+  .app-shell.is-scenario {
+    grid-template-rows: minmax(96px, var(--scenario-panel-height)) 8px minmax(0, 1fr);
+  }
+
   .scenario-topbar,
   .app-shell.is-scenario .scenario-topbar {
     grid-template-columns: 1fr;
-    max-height: 42vh;
     overflow: auto;
   }
 

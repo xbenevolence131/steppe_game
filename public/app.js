@@ -12,6 +12,7 @@ const detachHerdForm = document.querySelector("#detach-herd-form");
 const detachHerdHorsesInput = document.querySelector("#detach-herd-horses");
 const scenarioModeButton = document.querySelector("#scenario-mode-button");
 const playModeButton = document.querySelector("#play-mode-button");
+const scenarioResizeHandle = document.querySelector("#scenario-resize-handle");
 const widthInput = document.querySelector("#map-width");
 const heightInput = document.querySelector("#map-height");
 const riversInput = document.querySelector("#river-sources");
@@ -190,6 +191,7 @@ let unitsViewEnabled = true;
 let coordinateLabelsEnabled = true;
 let unitInspectorStatsVisible = false;
 let scenarioDetailsCollapsed = false;
+let scenarioPanelHeight = 156;
 let selectedHexCoord = null;
 let aiAnimationState = null;
 let aiAnimationInProgress = false;
@@ -221,6 +223,9 @@ const moveScale = 8;
 const scenarioDirectoryDbName = "steppe-scenario-files";
 const scenarioDirectoryStoreName = "handles";
 const scenarioDirectoryHandleKey = "scenario-directory";
+const scenarioPanelHeightStorageKey = "steppe.scenarioPanelHeight";
+const defaultScenarioPanelHeight = 156;
+const minScenarioPanelHeight = 112;
 
 const editorTerrains = [
   { key: "grassland", label: "Grassland", fill: "#d8c596", stroke: "#7e735f", labelColor: "#29251d" },
@@ -3020,17 +3025,22 @@ function hasEngineProjection() {
   return engineProjection.version > 0 && engineProjection.hash.length > 0;
 }
 
+function resetScenarioEditorSyncQueue() {
+  scenarioEditorSyncVersion += 1;
+  scenarioEditorEngineSync = Promise.resolve(false);
+}
+
 function syncScenarioEditorToEngine() {
   if (!currentMap) {
     return Promise.resolve(false);
   }
   scenarioEditorSyncVersion += 1;
   const syncVersion = scenarioEditorSyncVersion;
-  const snapshot = scenarioSnapshot();
-  const commandType = hasEngineProjection() ? "set_editor_state" : "load_game";
   scenarioEditorEngineSync = scenarioEditorEngineSync
     .catch(() => false)
     .then(async () => {
+      const commandType = hasEngineProjection() ? "set_editor_state" : "load_game";
+      const snapshot = scenarioSnapshot();
       let command = { type: commandType, state: snapshot };
       let payload;
       try {
@@ -4048,6 +4058,89 @@ function toggleScenarioDetailsPanel() {
   if (currentMap) {
     requestAnimationFrame(drawMap);
   }
+}
+
+function maxScenarioPanelHeight() {
+  const viewportHeight = Number.isFinite(window.innerHeight) ? window.innerHeight : 720;
+  const halfViewport = Math.round(viewportHeight * 0.55);
+  const mapPreservingMax = viewportHeight - 220;
+  return Math.max(minScenarioPanelHeight, Math.min(halfViewport, mapPreservingMax));
+}
+
+function clampScenarioPanelHeight(value) {
+  const numeric = Number.isFinite(value) ? value : defaultScenarioPanelHeight;
+  return Math.max(minScenarioPanelHeight, Math.min(maxScenarioPanelHeight(), Math.round(numeric)));
+}
+
+function applyScenarioPanelHeight(value, persist = true) {
+  scenarioPanelHeight = clampScenarioPanelHeight(value);
+  appShell.style.setProperty("--scenario-panel-height", `${scenarioPanelHeight}px`);
+  if (scenarioResizeHandle) {
+    scenarioResizeHandle.setAttribute("aria-valuemin", String(minScenarioPanelHeight));
+    scenarioResizeHandle.setAttribute("aria-valuemax", String(maxScenarioPanelHeight()));
+    scenarioResizeHandle.setAttribute("aria-valuenow", String(scenarioPanelHeight));
+  }
+  if (persist) {
+    try {
+      window.localStorage.setItem(scenarioPanelHeightStorageKey, String(scenarioPanelHeight));
+    } catch {
+      // Ignore storage failures in private or restricted contexts.
+    }
+  }
+  if (currentMap) {
+    requestAnimationFrame(drawMap);
+  }
+}
+
+function loadScenarioPanelHeight() {
+  try {
+    const stored = Number.parseInt(window.localStorage.getItem(scenarioPanelHeightStorageKey), 10);
+    if (Number.isFinite(stored)) {
+      scenarioPanelHeight = stored;
+    }
+  } catch {
+    scenarioPanelHeight = defaultScenarioPanelHeight;
+  }
+  applyScenarioPanelHeight(scenarioPanelHeight, false);
+}
+
+function resetScenarioPanelHeight() {
+  applyScenarioPanelHeight(defaultScenarioPanelHeight);
+}
+
+function startScenarioPanelResize(event) {
+  if (appMode !== "scenario" || !scenarioResizeHandle) {
+    return;
+  }
+  event.preventDefault();
+  const startY = event.clientY;
+  const startHeight = document.querySelector("#scenario-controls")?.getBoundingClientRect().height || scenarioPanelHeight;
+  scenarioResizeHandle.setPointerCapture(event.pointerId);
+  scenarioResizeHandle.classList.add("is-dragging");
+
+  const onPointerMove = (moveEvent) => {
+    applyScenarioPanelHeight(startHeight + moveEvent.clientY - startY);
+  };
+  const onPointerUp = (upEvent) => {
+    if (scenarioResizeHandle.hasPointerCapture(upEvent.pointerId)) {
+      scenarioResizeHandle.releasePointerCapture(upEvent.pointerId);
+    }
+    scenarioResizeHandle.classList.remove("is-dragging");
+    scenarioResizeHandle.removeEventListener("pointermove", onPointerMove);
+    scenarioResizeHandle.removeEventListener("pointerup", onPointerUp);
+    scenarioResizeHandle.removeEventListener("pointercancel", onPointerUp);
+  };
+
+  scenarioResizeHandle.addEventListener("pointermove", onPointerMove);
+  scenarioResizeHandle.addEventListener("pointerup", onPointerUp);
+  scenarioResizeHandle.addEventListener("pointercancel", onPointerUp);
+}
+
+function nudgeScenarioPanelHeight(delta) {
+  if (appMode !== "scenario") {
+    return;
+  }
+  applyScenarioPanelHeight(scenarioPanelHeight + delta);
 }
 
 function syncModeControls() {
@@ -6700,6 +6793,7 @@ async function createDefaultPlayScenario() {
 
 async function loadScenarioByName(filename) {
   const payload = await scenarioApi(`/api/scenarios/load?name=${encodeURIComponent(filename)}`);
+  resetScenarioEditorSyncQueue();
   currentMap = normalizeLoadedMap(payload.scenario);
   selectedHexCoord = null;
   terrainUndo = new Map();
@@ -7027,11 +7121,16 @@ async function confirmScenarioFileDialog() {
 
 async function loadMapText(text) {
   try {
+    if (appInitialization) {
+      await appInitialization;
+    }
+    resetScenarioEditorSyncQueue();
     currentMap = normalizeLoadedMap(JSON.parse(text));
     selectedHexCoord = null;
     terrainUndo = new Map();
     clearUndoHistory();
     ensureGameMeta();
+    syncEngineProjectionMeta(currentMap, "load_map_text");
     widthInput.value = currentMap.width;
     heightInput.value = currentMap.height;
     syncModeControls();
@@ -7206,6 +7305,28 @@ zoomOutButton.addEventListener("click", () => zoomFromCenter(-1));
 fitButton.addEventListener("click", fitMap);
 if (detailsToggleButton) {
   detailsToggleButton.addEventListener("click", toggleScenarioDetailsPanel);
+}
+if (scenarioResizeHandle) {
+  scenarioResizeHandle.addEventListener("pointerdown", startScenarioPanelResize);
+  scenarioResizeHandle.addEventListener("dblclick", resetScenarioPanelHeight);
+  scenarioResizeHandle.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      nudgeScenarioPanelHeight(event.shiftKey ? -32 : -12);
+    } else if (event.key === "ArrowDown") {
+      event.preventDefault();
+      nudgeScenarioPanelHeight(event.shiftKey ? 32 : 12);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      applyScenarioPanelHeight(minScenarioPanelHeight);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      applyScenarioPanelHeight(maxScenarioPanelHeight());
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      resetScenarioPanelHeight();
+    }
+  });
 }
 pastureViewButton.addEventListener("click", () => {
   pastureViewEnabled = !pastureViewEnabled;
@@ -7445,6 +7566,7 @@ window.addEventListener("keydown", (event) => {
 });
 
 window.addEventListener("resize", () => {
+  applyScenarioPanelHeight(scenarioPanelHeight, false);
   if (currentMap) {
     drawMap();
   }
@@ -7457,6 +7579,7 @@ new ResizeObserver(() => {
 }).observe(mapPanel);
 
 initializeTerrainPalette();
+loadScenarioPanelHeight();
 syncModeControls();
 loadBitmapUnitSprites();
 appInitialization = initializeApp();
