@@ -735,6 +735,13 @@ bool edge_equal(const RiverEdge& first, const RiverEdge& second) {
     return coord_equal(first.a, second.a) && coord_equal(first.b, second.b);
 }
 
+bool edge_less(const RiverEdge& first, const RiverEdge& second) {
+    if (!coord_equal(first.a, second.a)) {
+        return coord_less(first.a, second.a);
+    }
+    return coord_less(first.b, second.b);
+}
+
 bool river_edge_between(const GameState& state, const Coord& first, const Coord& second) {
     const RiverEdge edge = canonical_edge(first, second);
     return std::find_if(state.rivers.begin(), state.rivers.end(), [&](const RiverEdge& river) {
@@ -1434,6 +1441,89 @@ std::set<Coord, decltype(coord_less)*> supplied_hex_coords(const GameState& stat
     }
 
     return supplied;
+}
+
+bool wall_side_blocked_hex(const GameHex& hex) {
+    return hex.terrain == Terrain::Mountain || hex.terrain == Terrain::Lake;
+}
+
+std::set<RiverEdge, decltype(edge_less)*> great_wall_edge_set(const GameState& state) {
+    std::set<RiverEdge, decltype(edge_less)*> wall_edges(edge_less);
+    for (const Wall& wall : state.walls) {
+        if (!wall.feature.empty() && wall.feature != "great_wall") {
+            continue;
+        }
+        for (const RiverEdge& edge : wall.edge_path) {
+            wall_edges.insert(canonical_edge(edge.a, edge.b));
+        }
+    }
+    return wall_edges;
+}
+
+std::set<Coord, decltype(coord_less)*> great_wall_outside_hexes(const GameState& state) {
+    std::set<Coord, decltype(coord_less)*> outside(coord_less);
+    const auto wall_edges = great_wall_edge_set(state);
+    if (wall_edges.empty()) {
+        return outside;
+    }
+
+    int max_left_seed_row = state.height;
+    bool wall_touches_left_edge = false;
+    for (const RiverEdge& edge : wall_edges) {
+        const auto consider = [&](const Coord& coord) {
+            if (coord.q != 1) {
+                return;
+            }
+            wall_touches_left_edge = true;
+            max_left_seed_row = std::min(max_left_seed_row, coord.r);
+        };
+        consider(edge.a);
+        consider(edge.b);
+    }
+    if (!wall_touches_left_edge) {
+        max_left_seed_row = state.height;
+    }
+
+    std::deque<Coord> frontier;
+    const auto add = [&](const Coord& coord) {
+        if (!in_bounds(state, coord) || outside.find(coord) != outside.end()) {
+            return;
+        }
+        const GameHex* hex = find_hex(state, coord);
+        if (hex == nullptr || wall_side_blocked_hex(*hex)) {
+            return;
+        }
+        outside.insert(coord);
+        frontier.push_back(coord);
+    };
+
+    for (int q = 1; q <= state.width; ++q) {
+        add({q, 1});
+    }
+    for (int r = 1; r <= max_left_seed_row; ++r) {
+        add({1, r});
+    }
+
+    while (!frontier.empty()) {
+        const Coord current = frontier.front();
+        frontier.pop_front();
+        for (int direction = 0; direction < 6; ++direction) {
+            const Coord next = neighbor_in_direction(current, direction);
+            if (!in_bounds(state, next) || outside.find(next) != outside.end()) {
+                continue;
+            }
+            if (wall_edges.find(canonical_edge(current, next)) != wall_edges.end()) {
+                continue;
+            }
+            const GameHex* hex = find_hex(state, next);
+            if (hex == nullptr || wall_side_blocked_hex(*hex)) {
+                continue;
+            }
+            outside.insert(next);
+            frontier.push_back(next);
+        }
+    }
+    return outside;
 }
 
 const Unit* unit_at(const GameState& state, const Coord& coord);
@@ -3258,16 +3348,37 @@ bool wall_gate_hold_coord(const GameState& state, OwnerId owner, const WallGate&
     if (candidates.empty()) {
         return false;
     }
+
+    if (owner == chinese_owner) {
+        const auto outside_wall = great_wall_outside_hexes(state);
+        if (!outside_wall.empty()) {
+            std::vector<Coord> enclosed_candidates;
+            for (const Coord& coord : candidates) {
+                if (outside_wall.find(coord) == outside_wall.end()) {
+                    enclosed_candidates.push_back(coord);
+                }
+            }
+            if (!enclosed_candidates.empty()) {
+                candidates = std::move(enclosed_candidates);
+            }
+        }
+    }
+
     bool found = false;
     int best_score = std::numeric_limits<int>::min();
     for (const Coord& coord : candidates) {
         const GameHex* hex = find_hex(state, coord);
         const int owned_settlement_distance = nearest_owned_settlement_distance(state, owner, coord);
-        if (owned_settlement_distance == std::numeric_limits<int>::max() || owned_settlement_distance > 8) {
+        const bool owned_hex = hex != nullptr && hex->owner == owner;
+        if (!owned_hex
+            && (owned_settlement_distance == std::numeric_limits<int>::max() || owned_settlement_distance > 8)) {
             continue;
         }
-        const int score = (hex != nullptr && hex->owner == owner ? 80 : 0)
-            - owned_settlement_distance * 12
+        const int settlement_distance_penalty = owned_settlement_distance == std::numeric_limits<int>::max()
+            ? 0
+            : owned_settlement_distance * 12;
+        const int score = (owned_hex ? 80 : 0)
+            - settlement_distance_penalty
             + terrain_defense_percent_at(state, coord);
         if (!found || score > best_score || (score == best_score && coord_less(coord, target))) {
             target = coord;
@@ -3457,6 +3568,18 @@ int generated_field_army_group_id(OwnerId owner, int index) {
     return -200000 - owner * 1000 - index;
 }
 
+enum class DefensiveHexKind {
+    Town,
+    WallGate,
+};
+
+struct DefensiveHex {
+    Coord coord;
+    DefensiveHexKind kind = DefensiveHexKind::Town;
+    int priority = 0;
+    int desired_garrison = 1;
+};
+
 std::string generated_settled_mobile_role(const GameState& state, OwnerId owner) {
     bool has_field_disposition = false;
     bool has_war = false;
@@ -3486,24 +3609,72 @@ std::string generated_settled_mobile_group_name(const std::string& role) {
     return "Field Army";
 }
 
-bool owned_urban_hex(const GameState& state, OwnerId owner, Coord coord) {
-    const GameHex* hex = find_hex(state, coord);
-    return hex != nullptr && hex->owner == owner && hex->terrain == Terrain::Urban;
+std::string defensive_hex_group_name(DefensiveHexKind kind) {
+    switch (kind) {
+        case DefensiveHexKind::Town:
+            return "Town Garrison";
+        case DefensiveHexKind::WallGate:
+            return "Gate Garrison";
+    }
+    return "Garrison";
 }
 
-bool wall_gate_hold_hex(const GameState& state, OwnerId owner, Coord coord) {
-    for (const WallGate& gate : state.wall_gates) {
-        if (!coord_equal(coord, gate.edge.a) && !coord_equal(coord, gate.edge.b)) {
+bool defensive_hex_kind_less(DefensiveHexKind first, DefensiveHexKind second) {
+    return static_cast<int>(first) < static_cast<int>(second);
+}
+
+void add_owned_defensive_hex(std::vector<DefensiveHex>& objectives, DefensiveHex objective) {
+    auto existing = std::find_if(objectives.begin(), objectives.end(), [&](const DefensiveHex& prior) {
+        return coord_equal(prior.coord, objective.coord);
+    });
+    if (existing == objectives.end()) {
+        objectives.push_back(objective);
+        return;
+    }
+    if (objective.priority > existing->priority
+        || (objective.priority == existing->priority
+            && defensive_hex_kind_less(objective.kind, existing->kind))) {
+        *existing = objective;
+    }
+}
+
+std::vector<DefensiveHex> owned_defensive_hexes(const GameState& state, OwnerId owner) {
+    std::vector<DefensiveHex> objectives;
+    for (const GameHex& hex : state.hexes) {
+        if (hex.owner != owner || hex.terrain != Terrain::Urban) {
             continue;
         }
-        const GameHex* hex = find_hex(state, coord);
-        if (hex != nullptr
-            && hex->owner == owner
-            && terrain_movement_cost(hex->terrain) != blocked_movement_cost()) {
-            return true;
-        }
+        DefensiveHex objective;
+        objective.coord = hex.coord;
+        objective.kind = DefensiveHexKind::Town;
+        objective.priority = 90 + terrain_defense_percent_at(state, hex.coord);
+        objective.desired_garrison = 1;
+        add_owned_defensive_hex(objectives, objective);
     }
-    return false;
+
+    for (const WallGate& gate : state.wall_gates) {
+        Coord gate_coord;
+        if (!wall_gate_hold_coord(state, owner, gate, gate_coord)) {
+            continue;
+        }
+        DefensiveHex objective;
+        objective.coord = gate_coord;
+        objective.kind = DefensiveHexKind::WallGate;
+        objective.priority = 80 + terrain_defense_percent_at(state, gate_coord);
+        objective.desired_garrison = 1;
+        add_owned_defensive_hex(objectives, objective);
+    }
+
+    std::sort(objectives.begin(), objectives.end(), [](const DefensiveHex& first, const DefensiveHex& second) {
+        if (first.priority != second.priority) {
+            return first.priority > second.priority;
+        }
+        if (first.kind != second.kind) {
+            return defensive_hex_kind_less(first.kind, second.kind);
+        }
+        return coord_less(first.coord, second.coord);
+    });
+    return objectives;
 }
 
 bool friendly_combat_unit_holding_coord(const GameState& state, OwnerId owner, Coord coord) {
@@ -3518,50 +3689,96 @@ bool friendly_combat_unit_holding_coord(const GameState& state, OwnerId owner, C
     return false;
 }
 
+bool garrison_infantry_unit(UnitKind kind) {
+    switch (kind) {
+        case UnitKind::ChineseMilitia:
+        case UnitKind::Infantry:
+        case UnitKind::PersianInfantry:
+        case UnitKind::JurchenInfantry:
+        case UnitKind::ForestWarband:
+            return true;
+        case UnitKind::ChineseCavalry:
+        case UnitKind::PersianCavalry:
+        case UnitKind::JurchenCavalry:
+        case UnitKind::ForestRaiders:
+        case UnitKind::HorseArcher:
+        case UnitKind::MongolLancer:
+        case UnitKind::Herd:
+        case UnitKind::Horde:
+            return false;
+    }
+    return false;
+}
+
+bool unassigned_unit_holding_coord(const GameState& state, const std::vector<int>& unit_ids, Coord coord) {
+    for (const int unit_id : unit_ids) {
+        const Unit* unit = find_unit(state, unit_id);
+        if (unit != nullptr && coord_equal(unit->coord, coord)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool assign_best_garrison_unit(
+    const GameState& state,
+    std::vector<int>& available_unit_ids,
+    const DefensiveHex& objective,
+    int& assigned_unit_id
+) {
+    bool found = false;
+    std::size_t best_index = 0;
+    int best_score = std::numeric_limits<int>::max();
+    for (std::size_t index = 0; index < available_unit_ids.size(); ++index) {
+        const Unit* unit = find_unit(state, available_unit_ids[index]);
+        if (unit == nullptr || unit->hp <= 0 || !can_attack(unit->kind) || !garrison_infantry_unit(unit->kind)) {
+            continue;
+        }
+        const int distance = hex_distance(unit->coord, objective.coord);
+        const int score = (coord_equal(unit->coord, objective.coord) ? -100000 : 0)
+            + distance * 100
+            + unit->id;
+        if (!found || score < best_score) {
+            best_index = index;
+            best_score = score;
+            found = true;
+        }
+    }
+    if (!found) {
+        return false;
+    }
+    assigned_unit_id = available_unit_ids[best_index];
+    available_unit_ids.erase(available_unit_ids.begin() + static_cast<std::ptrdiff_t>(best_index));
+    return true;
+}
+
 bool reserve_defensive_hole_target(const GameState& state, OwnerId owner, Coord origin, Coord& target) {
     bool found = false;
     int best_score = std::numeric_limits<int>::max();
 
-    const auto consider = [&](Coord candidate, int priority) {
-        if (!passable_ai_objective_hex(state, candidate)
-            || friendly_combat_unit_holding_coord(state, owner, candidate)) {
+    const auto consider = [&](const DefensiveHex& objective) {
+        if (!passable_ai_objective_hex(state, objective.coord)
+            || friendly_combat_unit_holding_coord(state, owner, objective.coord)) {
             return;
         }
-        const Unit* threat = nearest_enemy_unit_from_coord(state, owner, candidate);
+        const Unit* threat = nearest_enemy_unit_from_coord(state, owner, objective.coord);
         int threat_bonus = 0;
         if (threat != nullptr) {
-            const int threat_distance = hex_distance(threat->coord, candidate);
+            const int threat_distance = hex_distance(threat->coord, objective.coord);
             if (threat_distance <= 5) {
                 threat_bonus = (6 - threat_distance) * 160 + threat->attack * 12 + threat->readiness;
             }
         }
-        const int score = hex_distance(origin, candidate) * 16 - threat_bonus - priority;
-        if (!found || score < best_score || (score == best_score && coord_less(candidate, target))) {
-            target = candidate;
+        const int score = hex_distance(origin, objective.coord) * 16 - threat_bonus - objective.priority;
+        if (!found || score < best_score || (score == best_score && coord_less(objective.coord, target))) {
+            target = objective.coord;
             best_score = score;
             found = true;
         }
     };
 
-    for (const GameHex& hex : state.hexes) {
-        if (hex.owner == owner && hex.terrain == Terrain::Urban) {
-            consider(hex.coord, 40);
-        }
-    }
-    std::vector<Coord> considered_gates;
-    for (const WallGate& gate : state.wall_gates) {
-        Coord gate_coord;
-        if (!wall_gate_hold_coord(state, owner, gate, gate_coord)) {
-            continue;
-        }
-        const bool duplicate = std::any_of(considered_gates.begin(), considered_gates.end(), [&](const Coord& prior) {
-            return coord_equal(prior, gate_coord);
-        });
-        if (duplicate) {
-            continue;
-        }
-        considered_gates.push_back(gate_coord);
-        consider(gate_coord, 40);
+    for (const DefensiveHex& objective : owned_defensive_hexes(state, owner)) {
+        consider(objective);
     }
     return found;
 }
@@ -3595,25 +3812,35 @@ void refresh_generated_strategic_ai_group(GameState& state, OwnerId owner) {
     }
 
     if (settled_archetype(faction_archetype(state, owner))) {
-        std::vector<int> remaining_unit_ids;
         int garrison_index = 0;
-        for (const int unit_id : unassigned_unit_ids) {
+        std::vector<int> remaining_unit_ids = std::move(unassigned_unit_ids);
+        for (const DefensiveHex& objective : owned_defensive_hexes(state, owner)) {
+            if (objective.desired_garrison <= 0 || remaining_unit_ids.empty()) {
+                break;
+            }
+            if (!unassigned_unit_holding_coord(state, remaining_unit_ids, objective.coord)
+                && friendly_combat_unit_holding_coord(state, owner, objective.coord)) {
+                continue;
+            }
+            int unit_id = 0;
+            if (!assign_best_garrison_unit(state, remaining_unit_ids, objective, unit_id)) {
+                continue;
+            }
             const Unit* unit = find_unit(state, unit_id);
-            const bool town_garrison = unit != nullptr && owned_urban_hex(state, owner, unit->coord);
-            const bool gate_garrison = unit != nullptr && !town_garrison && wall_gate_hold_hex(state, owner, unit->coord);
-            if (!town_garrison && !gate_garrison) {
-                remaining_unit_ids.push_back(unit_id);
+            if (unit == nullptr) {
                 continue;
             }
 
             AiDirective directive;
-            directive.kind = AiDirectiveKind::HoldHex;
-            directive.target = unit->coord;
+            directive.kind = coord_equal(unit->coord, objective.coord)
+                ? AiDirectiveKind::HoldHex
+                : AiDirectiveKind::DefendHex;
+            directive.target = objective.coord;
 
             AiGroup group;
             group.id = generated_town_garrison_group_id(owner, garrison_index++);
             group.owner = owner;
-            group.name = town_garrison ? "Town Garrison" : "Gate Garrison";
+            group.name = defensive_hex_group_name(objective.kind);
             group.role = "garrison";
             group.unit_ids = {unit_id};
             group.directive = directive;

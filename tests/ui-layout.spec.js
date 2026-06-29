@@ -1277,6 +1277,54 @@ test("settled AI auto assigns owned urban units to hold hex", async ({ isMobile 
   expect(chineseUnit.combatDone).toBe(false);
 });
 
+test("settled AI assigns available units to uncovered owned urban hexes", async ({ isMobile }) => {
+  test.skip(isMobile, "engine settled AI rule is covered once on desktop");
+
+  const state = settledGateDefenseAiGameState();
+  state.wall_gates = [];
+  state.units = [
+    { id: 1, owner: 0, faction: "mongol", kind: "horse_archer", q: 4, r: 2, hp: 10, maxHp: 10, remainingScaledMove: 32 },
+    { id: 3, owner: 2, faction: "chinese", kind: "infantry", q: 9, r: 4, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+  ];
+
+  const result = runEngineJson(["game-end-turn"], state);
+  const chineseUnit = result.units.find((unit) => unit.id === 3);
+  const garrison = result.game.aiGroups.find((group) => group.unitIds.includes(3));
+  expect(garrison).toEqual(expect.objectContaining({
+    generated: true,
+    role: "garrison",
+    name: "Town Garrison",
+    directive: expect.objectContaining({
+      type: "defend_hex",
+      target: { q: 7, r: 2 },
+    }),
+  }));
+  expect(chineseUnit).not.toEqual(expect.objectContaining({ q: 9, r: 4 }));
+});
+
+test("settled AI keeps cavalry out of generated garrisons", async ({ isMobile }) => {
+  test.skip(isMobile, "engine settled AI rule is covered once on desktop");
+
+  const state = settledGateDefenseAiGameState();
+  state.wall_gates = [];
+  state.units = [
+    { id: 1, owner: 0, faction: "mongol", kind: "horse_archer", q: 4, r: 2, hp: 10, maxHp: 10, remainingScaledMove: 32 },
+    { id: 3, owner: 2, faction: "chinese", kind: "chinese_cavalry", q: 9, r: 4, hp: 10, maxHp: 10, remainingScaledMove: 24 },
+  ];
+  state.game.activeFactionIndex = 1;
+  state.game.activeOwner = 2;
+
+  const result = runEngineJson(["game-ai-step"], state);
+  const chineseGroup = result.game.aiGroups.find((group) => group.unitIds.includes(3));
+  expect(chineseGroup).toEqual(expect.objectContaining({
+    generated: true,
+    role: "field_army",
+    name: "Field Army",
+  }));
+  expect(chineseGroup.name).not.toBe("Town Garrison");
+  expect(chineseGroup.name).not.toBe("Gate Garrison");
+});
+
 test("settled AI town garrisons follow urban hex owner not town feature", async ({ isMobile }) => {
   test.skip(isMobile, "engine settled AI rule is covered once on desktop");
 
@@ -1287,8 +1335,10 @@ test("settled AI town garrisons follow urban hex owner not town feature", async 
       ? { ...hex, owner: 0, terrain: "urban", labels: ["urban", "chinese_town"] }
       : hex
   ));
+  state.game.activeFactionIndex = 1;
+  state.game.activeOwner = 2;
 
-  const result = runEngineJson(["game-end-turn"], state);
+  const result = runEngineJson(["game-ai-step"], state);
   const chineseGroup = result.game.aiGroups.find((group) => group.unitIds.includes(3));
   expect(chineseGroup).toBeTruthy();
   expect(chineseGroup.name).not.toBe("Town Garrison");
@@ -1324,6 +1374,91 @@ test("settled AI auto assigns wall gate units to hold hex", async ({ isMobile })
   expect(chineseUnit.q).toBe(6);
   expect(chineseUnit.r).toBe(2);
   expect(chineseUnit.combatDone).toBe(false);
+});
+
+test("settled AI assigns available units to uncovered wall gate hexes", async ({ isMobile }) => {
+  test.skip(isMobile, "engine settled AI rule is covered once on desktop");
+
+  const state = settledGateDefenseAiGameState();
+  state.towns = [];
+  state.hexes = state.hexes.map((hex) => (
+    hex.q === 7 && hex.r === 2
+      ? { ...hex, terrain: "grassland", labels: ["base_steppe"], owner: 2 }
+      : hex
+  ));
+  state.units = [
+    { id: 1, owner: 0, faction: "mongol", kind: "horse_archer", q: 4, r: 2, hp: 10, maxHp: 10, remainingScaledMove: 32 },
+    { id: 3, owner: 2, faction: "chinese", kind: "infantry", q: 9, r: 4, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+  ];
+
+  const result = runEngineJson(["game-end-turn"], state);
+  const chineseUnit = result.units.find((unit) => unit.id === 3);
+  const garrison = result.game.aiGroups.find((group) => group.unitIds.includes(3));
+  expect(garrison).toEqual(expect.objectContaining({
+    generated: true,
+    role: "garrison",
+    name: "Gate Garrison",
+    directive: expect.objectContaining({
+      type: "defend_hex",
+      target: { q: 6, r: 2 },
+    }),
+  }));
+  expect(chineseUnit).not.toEqual(expect.objectContaining({ q: 9, r: 4 }));
+});
+
+test("settled AI uses the enclosed Great Wall side for gate garrisons", async ({ isMobile }) => {
+  test.skip(isMobile, "engine settled AI rule is covered once on desktop");
+
+  const state = settledGateDefenseAiGameState();
+  state.towns = [];
+  const enclosure = [
+    [{ q: 6, r: 2 }, { q: 7, r: 2 }],
+    [{ q: 6, r: 2 }, { q: 7, r: 3 }],
+    [{ q: 6, r: 2 }, { q: 6, r: 1 }],
+    [{ q: 6, r: 2 }, { q: 5, r: 2 }],
+    [{ q: 6, r: 2 }, { q: 5, r: 3 }],
+    [{ q: 6, r: 2 }, { q: 6, r: 3 }],
+  ];
+  state.walls = [{
+    id: 1,
+    feature: "great_wall",
+    edge_path: enclosure.map(([a, b]) => ({ a, b })),
+  }];
+  state.wall_gates = [{
+    id: 1,
+    kind: "gate",
+    edge: { a: { q: 5, r: 2 }, b: { q: 6, r: 2 } },
+  }];
+  state.hexes = state.hexes.map((hex) => {
+    if (hex.q === 5 && hex.r === 2) {
+      return { ...hex, terrain: "grassland", labels: ["base_steppe"], owner: 2 };
+    }
+    if (hex.q === 6 && hex.r === 2) {
+      return { ...hex, terrain: "grassland", labels: ["base_steppe"], owner: 2 };
+    }
+    if (hex.q === 7 && hex.r === 2) {
+      return { ...hex, terrain: "grassland", labels: ["base_steppe"], owner: 2 };
+    }
+    return hex;
+  });
+  state.units = [
+    { id: 1, owner: 0, faction: "mongol", kind: "horse_archer", q: 4, r: 2, hp: 10, maxHp: 10, remainingScaledMove: 32 },
+    { id: 3, owner: 2, faction: "chinese", kind: "infantry", q: 9, r: 4, hp: 10, maxHp: 10, remainingScaledMove: 16 },
+  ];
+  state.game.activeFactionIndex = 1;
+  state.game.activeOwner = 2;
+
+  const result = runEngineJson(["game-ai-step"], state);
+  const garrison = result.game.aiGroups.find((group) => group.unitIds.includes(3));
+  expect(garrison).toEqual(expect.objectContaining({
+    generated: true,
+    role: "garrison",
+    name: "Gate Garrison",
+    directive: expect.objectContaining({
+      type: "defend_hex",
+      target: { q: 6, r: 2 },
+    }),
+  }));
 });
 
 test("settled AI turns remaining gate defenders into hold garrisons after redeploying", async ({ isMobile }) => {
