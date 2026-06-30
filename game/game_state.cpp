@@ -414,16 +414,32 @@ int clamp_disposition(int disposition) {
     return std::max(0, std::min(100, disposition));
 }
 
+int clamp_fear(int fear) {
+    return std::max(0, std::min(100, fear));
+}
+
 bool hostile_disposition(int disposition) {
     return clamp_disposition(disposition) <= 35;
+}
+
+bool hostile_relationship(int disposition, int fear) {
+    return hostile_disposition(disposition) && clamp_fear(fear) < 75;
 }
 
 bool raiding_disposition(int disposition) {
     return clamp_disposition(disposition) <= 15;
 }
 
+bool raiding_relationship(int disposition, int fear) {
+    return raiding_disposition(disposition) && clamp_fear(fear) <= 45;
+}
+
 bool field_army_disposition(int disposition) {
     return clamp_disposition(disposition) <= 30;
+}
+
+bool field_army_relationship(int disposition, int fear) {
+    return field_army_disposition(disposition) && clamp_fear(fear) < 75;
 }
 
 struct UnitTypeTable {
@@ -1035,13 +1051,15 @@ bool unit_kind_available_to_archetype(UnitKind kind, const std::string& archetyp
 }
 
 void normalize_diplomacy(GameState& state) {
-    std::map<int, int> existing_disposition;
+    std::map<int, DiplomaticRelationship> existing_relationships;
     for (const DiplomaticRelationship& relationship : state.diplomacy) {
         if (relationship.owner == neutral_owner || relationship.target == neutral_owner || relationship.owner == relationship.target) {
             continue;
         }
-        existing_disposition[diplomacy_key(relationship.owner, relationship.target)] =
-            clamp_disposition(relationship.disposition);
+        DiplomaticRelationship normalized = relationship;
+        normalized.disposition = clamp_disposition(normalized.disposition);
+        normalized.fear = clamp_fear(normalized.fear);
+        existing_relationships[diplomacy_key(relationship.owner, relationship.target)] = normalized;
     }
 
     std::vector<OwnerId> owners;
@@ -1075,11 +1093,12 @@ void normalize_diplomacy(GameState& state) {
                 continue;
             }
             const int key = diplomacy_key(owner, target);
-            const auto found = existing_disposition.find(key);
+            const auto found = existing_relationships.find(key);
             DiplomaticRelationship relationship;
             relationship.owner = owner;
             relationship.target = target;
-            relationship.disposition = found == existing_disposition.end() ? 25 : found->second;
+            relationship.disposition = found == existing_relationships.end() ? 25 : found->second.disposition;
+            relationship.fear = found == existing_relationships.end() ? 25 : found->second.fear;
             normalized.push_back(relationship);
         }
     }
@@ -1096,11 +1115,21 @@ int disposition_toward(const GameState& state, OwnerId owner, OwnerId target) {
     return found == state.diplomacy.end() ? 25 : clamp_disposition(found->disposition);
 }
 
+int fear_toward(const GameState& state, OwnerId owner, OwnerId target) {
+    if (owner == target || owner == neutral_owner || target == neutral_owner) {
+        return 0;
+    }
+    const auto found = std::find_if(state.diplomacy.begin(), state.diplomacy.end(), [&](const DiplomaticRelationship& relationship) {
+        return relationship.owner == owner && relationship.target == target;
+    });
+    return found == state.diplomacy.end() ? 25 : clamp_fear(found->fear);
+}
+
 bool at_war(const GameState& state, OwnerId first, OwnerId second) {
     if (first == second || first == neutral_owner || second == neutral_owner) {
         return false;
     }
-    return hostile_disposition(disposition_toward(state, first, second));
+    return hostile_relationship(disposition_toward(state, first, second), fear_toward(state, first, second));
 }
 
 bool hostile_units(const GameState& state, const Unit& first, const Unit& second) {
@@ -3526,7 +3555,8 @@ bool strategic_directive_for_owner(const GameState& state, OwnerId owner, Coord 
         }
         if (nearest_capturable_hex(state, owner, origin, target, target_owner)) {
             const int disposition = target_owner == neutral_owner ? 25 : disposition_toward(state, owner, target_owner);
-            if (!hostile_disposition(disposition)) {
+            const int fear = target_owner == neutral_owner ? 25 : fear_toward(state, owner, target_owner);
+            if (!hostile_relationship(disposition, fear)) {
                 return false;
             }
             directive.kind = AiDirectiveKind::CaptureHex;
@@ -3535,7 +3565,8 @@ bool strategic_directive_for_owner(const GameState& state, OwnerId owner, Coord 
         }
         if (const Unit* horde = nearest_enemy_unit_from_coord(state, owner, origin, neutral_owner, true)) {
             const int disposition = disposition_toward(state, owner, horde->owner);
-            if (raiding_disposition(disposition)) {
+            const int fear = fear_toward(state, owner, horde->owner);
+            if (raiding_relationship(disposition, fear)) {
                 directive.kind = AiDirectiveKind::HuntHorde;
                 directive.target_owner = horde->owner;
                 return true;
@@ -3543,7 +3574,8 @@ bool strategic_directive_for_owner(const GameState& state, OwnerId owner, Coord 
         }
         if (const Unit* enemy = nearest_enemy_unit_from_coord(state, owner, origin)) {
             const int disposition = disposition_toward(state, owner, enemy->owner);
-            if (!hostile_disposition(disposition)) {
+            const int fear = fear_toward(state, owner, enemy->owner);
+            if (!hostile_relationship(disposition, fear)) {
                 return false;
             }
             directive = default_hunt_directive();
@@ -3623,15 +3655,18 @@ std::string generated_settled_mobile_role(const GameState& state, OwnerId owner)
     bool has_field_disposition = false;
     bool has_war = false;
     for (const DiplomaticRelationship& relationship : state.diplomacy) {
-        if (relationship.owner != owner || relationship.target == neutral_owner || !hostile_disposition(relationship.disposition)) {
+        if (relationship.owner != owner
+            || relationship.target == neutral_owner
+            || !hostile_relationship(relationship.disposition, relationship.fear)) {
             continue;
         }
         has_war = true;
         const int disposition = clamp_disposition(relationship.disposition);
-        if (raiding_disposition(disposition)) {
+        const int fear = clamp_fear(relationship.fear);
+        if (raiding_relationship(disposition, fear)) {
             return "raiding_force";
         }
-        if (field_army_disposition(disposition)) {
+        if (field_army_relationship(disposition, fear)) {
             has_field_disposition = true;
         }
     }
@@ -4945,6 +4980,7 @@ void print_diplomacy_json(const std::vector<DiplomaticRelationship>& diplomacy, 
             << ",\"target\":" << relationship.target
             << ",\"targetFaction\":\"" << escape_json(target.key) << "\""
             << ",\"disposition\":" << clamp_disposition(relationship.disposition)
+            << ",\"fear\":" << clamp_fear(relationship.fear)
             << "}";
     }
     out << "]";
@@ -5016,6 +5052,7 @@ std::string game_state_hash(const GameState& state) {
         hash_append_int(hash, relationship.owner);
         hash_append_int(hash, relationship.target);
         hash_append_int(hash, clamp_disposition(relationship.disposition));
+        hash_append_int(hash, clamp_fear(relationship.fear));
     }
     for (const AiGroup& group : state.ai_groups) {
         hash_append_int(hash, group.id);
@@ -5711,6 +5748,7 @@ GameState parse_game_state_json(const std::string& json) {
             }
             relationship.disposition = clamp_disposition(disposition);
         }
+        relationship.fear = clamp_fear(int_field(diplomacy_json, "fear", 25));
         state.diplomacy.push_back(std::move(relationship));
     }
     normalize_diplomacy(state);

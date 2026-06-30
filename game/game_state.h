@@ -220,6 +220,7 @@ struct DiplomaticRelationship {
     OwnerId owner = neutral_owner;
     OwnerId target = neutral_owner;
     int disposition = 25;
+    int fear = 25;
 };
 
 struct UnitDefaults {

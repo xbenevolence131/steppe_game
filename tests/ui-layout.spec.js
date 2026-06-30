@@ -1615,8 +1615,8 @@ test("settled AI auto groups remaining units into field armies", async ({ isMobi
   expect(fieldArmies.every((group) => group.name === "Field Army")).toBe(true);
 });
 
-test("settled AI disposition controls generated mobile group role", async ({ isMobile }) => {
-  test.skip(isMobile, "engine settled AI disposition is covered once on desktop");
+test("settled AI relationship scores control generated mobile group role", async ({ isMobile }) => {
+  test.skip(isMobile, "engine settled AI relationship scoring is covered once on desktop");
 
   const baseState = aiDirectiveGameState(
     { type: "hunt" },
@@ -1656,6 +1656,25 @@ test("settled AI disposition controls generated mobile group role", async ({ isM
     generated: true,
     role: "field_army",
     name: "Field Army",
+  }));
+
+  const deterredState = JSON.parse(JSON.stringify(baseState));
+  deterredState.game.diplomacy = [{
+    owner: 2,
+    faction: "chinese",
+    target: 0,
+    targetFaction: "mongol",
+    disposition: 10,
+    fear: 90,
+  }];
+  const deterred = runEngineJson(["game-end-turn"], deterredState);
+  expect(deterred.game.diplomacy.find((relationship) => relationship.owner === 2 && relationship.target === 0)).toEqual(expect.objectContaining({
+    disposition: 10,
+    fear: 90,
+  }));
+  expect(deterred.game.aiGroups.find((group) => group.owner === 2)).toEqual(expect.objectContaining({
+    generated: true,
+    directive: expect.objectContaining({ type: "inactive" }),
   }));
 });
 
@@ -3338,11 +3357,13 @@ test("scenario AI editor configures groups and map pickers", async ({ page, isMo
   await expect(page.locator('[data-scenario-region="factions"]')).toHaveClass(/is-active/);
   await page.getByLabel("Chinese disposition toward Mongol").fill("35");
   await page.getByLabel("Chinese disposition toward Mongol").dispatchEvent("change");
+  await page.getByLabel("Chinese fear toward Mongol").fill("80");
+  await page.getByLabel("Chinese fear toward Mongol").dispatchEvent("change");
   await expect.poll(async () => {
     const view = await editorEngineView(page);
     const relationship = view.game.diplomacy.find((candidate) => candidate.owner === 2 && candidate.target === 0);
-    return relationship ? relationship.disposition : null;
-  }).toBe(35);
+    return relationship ? { disposition: relationship.disposition, fear: relationship.fear } : null;
+  }).toEqual({ disposition: 35, fear: 80 });
 
   await page.getByRole("button", { name: "AI", exact: true }).click();
   await expect(page.locator('[data-scenario-region="ai"]')).toHaveClass(/is-active/);

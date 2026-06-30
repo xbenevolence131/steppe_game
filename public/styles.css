@@ -1073,6 +1073,11 @@ select[hidden] {
   font-weight: 700;
 }
 
+.diplomacy-table td.is-deterred {
+  color: #7a4f16;
+  font-weight: 700;
+}
+
 .diplomacy-table td.is-neutral {
   color: var(--text);
 }
@@ -1117,15 +1122,23 @@ select[hidden] {
 
 .faction-relationship-cell {
   display: grid;
-  grid-template-columns: 64px;
-  gap: 6px;
+  grid-template-columns: auto 58px;
+  gap: 4px 6px;
   align-items: center;
   justify-content: center;
 }
 
-.faction-disposition-input {
+.faction-relationship-cell span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.faction-disposition-input,
+.faction-fear-input {
   min-width: 0;
-  width: 64px;
+  width: 58px;
 }
 
 .context-menu {

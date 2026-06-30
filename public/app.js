@@ -1599,6 +1599,8 @@ function syncFactionRelationshipControls() {
       if (ownerFaction.id === targetFaction.id) {
         cell.textContent = "-";
       } else {
+        const dispositionLabelEl = document.createElement("span");
+        dispositionLabelEl.textContent = "Disp";
         const dispositionInput = document.createElement("input");
         dispositionInput.type = "number";
         dispositionInput.min = "0";
@@ -1611,9 +1613,23 @@ function syncFactionRelationshipControls() {
           updateDiplomacyDisposition(ownerFaction.id, targetFaction.id, dispositionInput.value);
         });
 
+        const fearLabelEl = document.createElement("span");
+        fearLabelEl.textContent = "Fear";
+        const fearInput = document.createElement("input");
+        fearInput.type = "number";
+        fearInput.min = "0";
+        fearInput.max = "100";
+        fearInput.step = "1";
+        fearInput.className = "faction-fear-input";
+        fearInput.value = String(diplomacyFear(ownerFaction.id, targetFaction.id));
+        fearInput.setAttribute("aria-label", `${optionLabelForFaction(ownerFaction)} fear toward ${optionLabelForFaction(targetFaction)}`);
+        fearInput.addEventListener("change", () => {
+          updateDiplomacyFear(ownerFaction.id, targetFaction.id, fearInput.value);
+        });
+
         const cellStack = document.createElement("div");
         cellStack.className = "faction-relationship-cell";
-        cellStack.append(dispositionInput);
+        cellStack.append(dispositionLabelEl, dispositionInput, fearLabelEl, fearInput);
         cell.appendChild(cellStack);
       }
       row.appendChild(cell);
@@ -2032,8 +2048,9 @@ function syncDiplomacyScreen() {
         cell.textContent = "-";
       } else {
         const disposition = diplomacyDisposition(ownerFaction.id, targetFaction.id);
-        cell.textContent = `${dispositionLabel(disposition)} / ${disposition}`;
-        cell.className = `is-${dispositionBand(disposition)}`;
+        const fear = diplomacyFear(ownerFaction.id, targetFaction.id);
+        cell.textContent = `${relationshipLabel(disposition, fear)} / D${disposition} F${fear}`;
+        cell.className = `is-${relationshipBand(disposition, fear)}`;
       }
       row.appendChild(cell);
     }
@@ -2434,6 +2451,11 @@ function clampDisposition(value, fallback = 25) {
   return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.trunc(parsed))) : fallback;
 }
 
+function clampFear(value, fallback = 25) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.trunc(parsed))) : fallback;
+}
+
 function legacyDisposition(relationship) {
   if (Number.isFinite(relationship.disposition)) {
     return clampDisposition(relationship.disposition);
@@ -2458,6 +2480,17 @@ function legacyDisposition(relationship) {
   }
 }
 
+function legacyFear(relationship) {
+  if (Number.isFinite(relationship.fear)) {
+    return clampFear(relationship.fear);
+  }
+  return 25;
+}
+
+function hostileRelationship(disposition, fear) {
+  return clampDisposition(disposition) <= 35 && clampFear(fear) < 75;
+}
+
 function dispositionBand(disposition) {
   const value = clampDisposition(disposition);
   if (value <= 15) return "hostile";
@@ -2472,6 +2505,27 @@ function dispositionLabel(disposition) {
   if (value <= 35) return "Unfriendly";
   if (value < 65) return "Neutral";
   return "Friendly";
+}
+
+function relationshipBand(disposition, fear) {
+  const dispositionValue = clampDisposition(disposition);
+  const fearValue = clampFear(fear);
+  if (dispositionValue <= 35 && fearValue >= 75) return "deterred";
+  if (hostileRelationship(dispositionValue, fearValue)) return dispositionValue <= 15 ? "hostile" : "threat";
+  if (dispositionValue >= 65) return "friendly";
+  return "neutral";
+}
+
+function relationshipLabel(disposition, fear) {
+  const dispositionValue = clampDisposition(disposition);
+  const fearValue = clampFear(fear);
+  if (dispositionValue <= 35 && fearValue >= 75) return "Hostile but afraid";
+  if (dispositionValue <= 15 && fearValue <= 45) return "Raiding";
+  if (hostileRelationship(dispositionValue, fearValue)) return "Hostile";
+  if (dispositionValue >= 65 && fearValue >= 65) return "Respectful";
+  if (dispositionValue >= 65) return "Friendly";
+  if (fearValue >= 65) return "Wary";
+  return "Neutral";
 }
 
 function normalizeDiplomacy(rawDiplomacy) {
@@ -2493,7 +2547,10 @@ function normalizeDiplomacy(rawDiplomacy) {
         continue;
       }
       const key = diplomacyOwnerKey(owner, target);
-      prior.set(key, legacyDisposition(relationship));
+      prior.set(key, {
+        disposition: legacyDisposition(relationship),
+        fear: legacyFear(relationship),
+      });
     }
   }
 
@@ -2509,7 +2566,8 @@ function normalizeDiplomacy(rawDiplomacy) {
         faction: ownerFaction.key,
         target: targetFaction.id,
         targetFaction: targetFaction.key,
-        disposition: prior.has(key) ? prior.get(key) : 25,
+        disposition: prior.has(key) ? prior.get(key).disposition : 25,
+        fear: prior.has(key) ? prior.get(key).fear : 25,
       });
     }
   }
@@ -2525,23 +2583,43 @@ function diplomacyDisposition(owner, target) {
   return relationship ? clampDisposition(relationship.disposition) : 25;
 }
 
-function updateDiplomacyDisposition(owner, target, value) {
+function diplomacyFear(owner, target) {
+  const relationship = currentMap
+    && currentMap.game
+    && Array.isArray(currentMap.game.diplomacy)
+    ? currentMap.game.diplomacy.find((candidate) => candidate.owner === owner && candidate.target === target)
+    : null;
+  return relationship ? clampFear(relationship.fear) : 25;
+}
+
+function updateDiplomacyRelationship(owner, target, field, value) {
   if (!currentMap || owner === target) {
     return;
   }
   ensureGameMeta();
-  const disposition = clampDisposition(value);
   currentMap.game.diplomacy = normalizeDiplomacy(currentMap.game.diplomacy);
   const relationship = currentMap.game.diplomacy.find((candidate) => candidate.owner === owner && candidate.target === target);
   if (!relationship) {
     return;
   }
   recordLocalUndo();
-  relationship.disposition = disposition;
+  if (field === "fear") {
+    relationship.fear = clampFear(value);
+  } else {
+    relationship.disposition = clampDisposition(value);
+  }
   currentMap.game.diplomacy = normalizeDiplomacy(currentMap.game.diplomacy);
   syncFactionRelationshipControls();
   syncDiplomacyScreen();
   void syncScenarioEditorToEngine();
+}
+
+function updateDiplomacyDisposition(owner, target, value) {
+  updateDiplomacyRelationship(owner, target, "disposition", value);
+}
+
+function updateDiplomacyFear(owner, target, value) {
+  updateDiplomacyRelationship(owner, target, "fear", value);
 }
 
 function activeAiGroup() {
