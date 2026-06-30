@@ -2036,6 +2036,31 @@ test("scenario controls sit above the shared map", async ({ page }) => {
   });
 });
 
+test("play mode map fills space after scenario edits", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop map workbench layout is covered once on desktop");
+
+  await page.goto("/");
+  await page.evaluate(() => {
+    localStorage.removeItem("steppe.scenarioPanelHeight");
+    if (typeof applyScenarioPanelHeight === "function") {
+      applyScenarioPanelHeight(220, false);
+    }
+  });
+  await page.getByRole("button", { name: "Scenario Edit" }).click();
+  await page.getByRole("button", { name: "New Scenario" }).click();
+  await page.getByRole("button", { name: "Factions", exact: true }).click();
+  await page.getByLabel("AI Control Chinese").check();
+  const scenarioMapHeight = await page.evaluate(() => document.querySelector("#map-panel").getBoundingClientRect().height);
+
+  await page.getByRole("button", { name: "Play" }).click();
+  await page.evaluate(() => playModeEngineSync);
+  await expect(page.locator("#scenario-controls")).toBeHidden();
+  await expect(page.locator("#strategic-ai-dashboard")).toBeHidden();
+  await expect(page.locator("#faction-status-bar")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.querySelector("#map-panel").getBoundingClientRect().height))
+    .toBeGreaterThan(scenarioMapHeight + 80);
+});
+
 test("generated great wall contains Chinese towns from outside", async ({ page, isMobile }) => {
   test.skip(!isMobile, "data invariant is covered once on mobile project");
 
