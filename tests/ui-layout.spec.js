@@ -1194,7 +1194,7 @@ test("game time derives weeks months and seasons from rounds", async ({ isMobile
 
   const initial = runEngineOutputJson(["game-new"]);
   expect(initial.game.time).toEqual({
-    year: 1,
+    year: 1180,
     weekOfYear: 1,
     month: 1,
     monthName: "jan",
@@ -1212,7 +1212,7 @@ test("game time derives weeks months and seasons from rounds", async ({ isMobile
   const advanced = runEngineJson(["game-end-turn"], state);
   expect(advanced.game.round).toBe(21);
   expect(advanced.game.time).toEqual({
-    year: 1,
+    year: 1180,
     weekOfYear: 21,
     month: 6,
     monthName: "jun",
@@ -2506,7 +2506,7 @@ test("play map selection and bottom panel inspect units", async ({ page, isMobil
   await expect(page.locator(".control-status-line")).toContainText("Round");
   await expect(page.locator(".control-status-line")).toContainText("Mongol");
   await expect(page.locator("#round-count")).toHaveText("1");
-  await expect(page.locator("#time-label")).toHaveText("Winter Y1 Jan W1");
+  await expect(page.locator("#time-label")).toHaveText("Winter Y1180 Jan W1");
   await expect(page.locator("#status-active-faction-name")).toHaveText("Mongol");
   await expect(page.evaluate(() => {
     const round = document.querySelector("#round-count").getBoundingClientRect();

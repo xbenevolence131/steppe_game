@@ -39,7 +39,7 @@ bool contains_label(const std::vector<std::string>& labels, const std::string& l
 }
 
 struct GameTime {
-    int year = 1;
+    int year = 1180;
     int week_of_year = 1;
     int month = 1;
     int week_of_month = 1;
@@ -48,6 +48,7 @@ struct GameTime {
 };
 
 GameTime game_time_for_round(int round) {
+    constexpr int start_year = 1180;
     constexpr int weeks_per_month = 4;
     constexpr int months_per_year = 12;
     constexpr int weeks_per_year = weeks_per_month * months_per_year;
@@ -62,7 +63,7 @@ GameTime game_time_for_round(int round) {
     const int month = ((week_of_year - 1) / weeks_per_month) + 1;
 
     GameTime time;
-    time.year = (week_index / weeks_per_year) + 1;
+    time.year = start_year + (week_index / weeks_per_year);
     time.week_of_year = week_of_year;
     time.month = month;
     time.week_of_month = ((week_of_year - 1) % weeks_per_month) + 1;

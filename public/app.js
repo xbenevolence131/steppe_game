@@ -2789,6 +2789,7 @@ const monthNames = [
   "jul", "aug", "sep", "oct", "nov", "dec",
 ];
 const seasonNames = ["winter", "spring", "summer", "fall"];
+const gameStartYear = 1180;
 
 function seasonForMonth(month) {
   if (month === 12 || month <= 2) {
@@ -2809,7 +2810,7 @@ function gameTimeForRound(round) {
   const weekOfYear = (weekIndex % 48) + 1;
   const month = Math.floor((weekOfYear - 1) / 4) + 1;
   return {
-    year: Math.floor(weekIndex / 48) + 1,
+    year: gameStartYear + Math.floor(weekIndex / 48),
     weekOfYear,
     month,
     monthName: monthNames[month - 1],
