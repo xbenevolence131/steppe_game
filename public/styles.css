@@ -1794,12 +1794,18 @@ select[hidden] {
   min-height: var(--bottom-panel-row-height);
   min-width: 0;
   color: var(--muted);
+  white-space: nowrap;
 }
 
 .control-status-line strong,
 .control-status-line #status-active-faction-name {
   color: var(--text);
   font-weight: 700;
+}
+
+.control-status-line .time-label {
+  color: var(--muted);
+  font-weight: 650;
 }
 
 .unit-cycle-row {

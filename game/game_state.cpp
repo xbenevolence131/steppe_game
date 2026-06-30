@@ -38,6 +38,59 @@ bool contains_label(const std::vector<std::string>& labels, const std::string& l
     return std::find(labels.begin(), labels.end(), label) != labels.end();
 }
 
+struct GameTime {
+    int year = 1;
+    int week_of_year = 1;
+    int month = 1;
+    int week_of_month = 1;
+    const char* month_name = "jan";
+    const char* season = "spring";
+};
+
+GameTime game_time_for_round(int round) {
+    constexpr int weeks_per_month = 4;
+    constexpr int months_per_year = 12;
+    constexpr int weeks_per_year = weeks_per_month * months_per_year;
+    constexpr std::array<const char*, months_per_year> month_names = {
+        "jan", "feb", "mar", "apr", "may", "jun",
+        "jul", "aug", "sep", "oct", "nov", "dec",
+    };
+
+    const int normalized_round = std::max(1, round);
+    const int week_index = normalized_round - 1;
+    const int week_of_year = (week_index % weeks_per_year) + 1;
+    const int month = ((week_of_year - 1) / weeks_per_month) + 1;
+
+    GameTime time;
+    time.year = (week_index / weeks_per_year) + 1;
+    time.week_of_year = week_of_year;
+    time.month = month;
+    time.week_of_month = ((week_of_year - 1) % weeks_per_month) + 1;
+    time.month_name = month_names[month - 1];
+    if (month == 12 || month <= 2) {
+        time.season = "winter";
+    } else if (month <= 5) {
+        time.season = "spring";
+    } else if (month <= 8) {
+        time.season = "summer";
+    } else {
+        time.season = "fall";
+    }
+    return time;
+}
+
+void print_game_time_json(int round, std::ostream& out) {
+    const GameTime time = game_time_for_round(round);
+    out << "\"time\":{"
+        << "\"year\":" << time.year
+        << ",\"weekOfYear\":" << time.week_of_year
+        << ",\"month\":" << time.month
+        << ",\"monthName\":\"" << time.month_name << "\""
+        << ",\"weekOfMonth\":" << time.week_of_month
+        << ",\"season\":\"" << time.season << "\""
+        << "}";
+}
+
 void add_tag_for_label(HexTagMask& mask, const std::string& label) {
     if (label == "base_steppe") {
         add_tag(mask, HexTag::BaseSteppe);
@@ -5191,6 +5244,8 @@ void print_game_meta_json(const GameState& state, std::ostream& out) {
     out << "\"stateVersion\":" << state.state_version << ",";
     out << "\"stateHash\":\"" << game_state_hash(state) << "\",";
     out << "\"round\":" << state.round << ",";
+    print_game_time_json(state.round, out);
+    out << ",";
     out << "\"activeFactionIndex\":" << state.active_faction_index << ",";
     out << "\"activeOwner\":" << active_faction(state) << ",";
     out << "\"selectedUnitId\":" << state.selected_unit_id << ",";

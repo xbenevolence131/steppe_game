@@ -1189,6 +1189,38 @@ test("end turn skips AI controlled factions", async ({ isMobile }) => {
   expect(advanced.game.activeOwner).toBe(3);
 });
 
+test("game time derives weeks months and seasons from rounds", async ({ isMobile }) => {
+  test.skip(isMobile, "engine time rule is covered once on desktop");
+
+  const initial = runEngineOutputJson(["game-new"]);
+  expect(initial.game.time).toEqual({
+    year: 1,
+    weekOfYear: 1,
+    month: 1,
+    monthName: "jan",
+    weekOfMonth: 1,
+    season: "winter",
+  });
+
+  const state = combatGameState("grassland");
+  state.game.round = 20;
+  state.game.turnOrder = [1];
+  state.game.activeFactionIndex = 0;
+  state.game.activeOwner = 1;
+  state.game.foodConsumption = false;
+
+  const advanced = runEngineJson(["game-end-turn"], state);
+  expect(advanced.game.round).toBe(21);
+  expect(advanced.game.time).toEqual({
+    year: 1,
+    weekOfYear: 21,
+    month: 6,
+    monthName: "jun",
+    weekOfMonth: 1,
+    season: "summer",
+  });
+});
+
 test("food is consumed by faction population on round end", async ({ isMobile }) => {
   test.skip(isMobile, "engine resource rule is covered once on desktop");
 
@@ -2474,11 +2506,13 @@ test("play map selection and bottom panel inspect units", async ({ page, isMobil
   await expect(page.locator(".control-status-line")).toContainText("Round");
   await expect(page.locator(".control-status-line")).toContainText("Mongol");
   await expect(page.locator("#round-count")).toHaveText("1");
+  await expect(page.locator("#time-label")).toHaveText("Winter Y1 Jan W1");
   await expect(page.locator("#status-active-faction-name")).toHaveText("Mongol");
   await expect(page.evaluate(() => {
     const round = document.querySelector("#round-count").getBoundingClientRect();
+    const time = document.querySelector("#time-label").getBoundingClientRect();
     const faction = document.querySelector("#status-active-faction-name").getBoundingClientRect();
-    return Math.abs(round.top - faction.top) <= 1;
+    return Math.abs(round.top - time.top) <= 1 && Math.abs(round.top - faction.top) <= 1;
   })).resolves.toBe(true);
   await expect(page.locator("#status-end-turn-button")).toBeVisible();
   await expect(page.locator("#status-end-turn-button")).toBeEnabled();

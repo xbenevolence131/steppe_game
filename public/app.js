@@ -107,6 +107,7 @@ const factionHungerTotal = document.querySelector("#faction-hunger-total");
 const factionMetalTotal = document.querySelector("#faction-metal-total");
 const factionTreasureTotal = document.querySelector("#faction-treasure-total");
 const roundCount = document.querySelector("#round-count");
+const timeLabel = document.querySelector("#time-label");
 const turnStatusReadout = document.querySelector("#turn-status-readout");
 const herdCount = document.querySelector("#herd-count");
 const horseArcherCount = document.querySelector("#horse-archer-count");
@@ -2783,6 +2784,65 @@ function selectedUnit() {
     : null;
 }
 
+const monthNames = [
+  "jan", "feb", "mar", "apr", "may", "jun",
+  "jul", "aug", "sep", "oct", "nov", "dec",
+];
+const seasonNames = ["winter", "spring", "summer", "fall"];
+
+function seasonForMonth(month) {
+  if (month === 12 || month <= 2) {
+    return "winter";
+  }
+  if (month <= 5) {
+    return "spring";
+  }
+  if (month <= 8) {
+    return "summer";
+  }
+  return "fall";
+}
+
+function gameTimeForRound(round) {
+  const normalizedRound = Number.isInteger(round) && round > 0 ? round : 1;
+  const weekIndex = normalizedRound - 1;
+  const weekOfYear = (weekIndex % 48) + 1;
+  const month = Math.floor((weekOfYear - 1) / 4) + 1;
+  return {
+    year: Math.floor(weekIndex / 48) + 1,
+    weekOfYear,
+    month,
+    monthName: monthNames[month - 1],
+    weekOfMonth: ((weekOfYear - 1) % 4) + 1,
+    season: seasonForMonth(month),
+  };
+}
+
+function normalizeGameTime(game, round) {
+  const fallback = gameTimeForRound(round);
+  const raw = game && typeof game === "object" && game.time && typeof game.time === "object"
+    ? game.time
+    : {};
+  return {
+    year: Number.isInteger(raw.year) ? raw.year : fallback.year,
+    weekOfYear: Number.isInteger(raw.weekOfYear) ? raw.weekOfYear : fallback.weekOfYear,
+    month: Number.isInteger(raw.month) ? raw.month : fallback.month,
+    monthName: monthNames.includes(raw.monthName) ? raw.monthName : fallback.monthName,
+    weekOfMonth: Number.isInteger(raw.weekOfMonth) ? raw.weekOfMonth : fallback.weekOfMonth,
+    season: seasonNames.includes(raw.season) ? raw.season : fallback.season,
+  };
+}
+
+function gameTimeLabel(time) {
+  const season = typeof time.season === "string" && time.season
+    ? `${time.season.charAt(0).toUpperCase()}${time.season.slice(1)}`
+    : "Spring";
+  const month = typeof time.monthName === "string" && time.monthName
+    ? `${time.monthName.charAt(0).toUpperCase()}${time.monthName.slice(1)}`
+    : `M${time.month}`;
+  return `${season} Y${time.year} ${month} W${time.weekOfMonth}`;
+}
+
 function ensureGameMeta() {
   if (!currentMap) {
     return;
@@ -2816,6 +2876,8 @@ function ensureGameMeta() {
         .map((faction) => faction.id);
     }
     currentTurn = Number.isInteger(currentMap.game.round) ? currentMap.game.round : 1;
+    currentMap.game.round = currentTurn;
+    currentMap.game.time = normalizeGameTime(currentMap.game, currentTurn);
     const maxIndex = Math.max(0, currentMap.game.turnOrder.length - 1);
     activeFactionIndex = Number.isInteger(currentMap.game.activeFactionIndex)
       ? Math.max(0, Math.min(currentMap.game.activeFactionIndex, maxIndex))
@@ -2880,6 +2942,7 @@ function ensureGameMeta() {
     : 0;
   const activeOwner = currentMap.game.turnOrder[activeFactionIndex] ?? null;
   currentMap.game.round = currentTurn;
+  currentMap.game.time = normalizeGameTime(currentMap.game, currentTurn);
   currentMap.game.activeFactionIndex = activeFactionIndex;
   currentMap.game.activeOwner = currentMap.game.turnOrder[activeFactionIndex] ?? null;
   currentMap.game.legalMoves = Array.isArray(currentMap.game.legalMoves) ? currentMap.game.legalMoves : [];
@@ -4082,8 +4145,10 @@ function syncPlayControls() {
   ensureGameMeta();
   const faction = activeFaction();
   const owner = activeOwner();
+  const time = normalizeGameTime(currentMap && currentMap.game, currentTurn);
+  const timeText = gameTimeLabel(time);
   if (turnCounter) {
-    turnCounter.textContent = `Round ${currentTurn} · ${faction.name} turn`;
+    turnCounter.textContent = `Round ${currentTurn} - ${timeText} - ${faction.name} turn`;
   }
   if (activeFactionName) {
     activeFactionName.textContent = faction.name;
@@ -4091,6 +4156,9 @@ function syncPlayControls() {
   statusActiveFactionName.textContent = faction.name;
   factionStatusName.textContent = faction.name;
   roundCount.textContent = String(currentTurn);
+  if (timeLabel) {
+    timeLabel.textContent = timeText;
+  }
   turnStatusReadout.textContent = `${faction.name} turn`;
   if (herdCount) {
     herdCount.textContent = String(countUnits("herd", owner));
