@@ -1189,7 +1189,7 @@ test("end turn skips AI controlled factions", async ({ isMobile }) => {
   expect(advanced.game.activeOwner).toBe(3);
 });
 
-test("food is consumed by faction population on turn end", async ({ isMobile }) => {
+test("food is consumed by faction population on round end", async ({ isMobile }) => {
   test.skip(isMobile, "engine resource rule is covered once on desktop");
 
   const state = pastureGameState({ width: 6, height: 1, turnOrder: [1, 2, 3] });
@@ -1205,15 +1205,96 @@ test("food is consumed by faction population on turn end", async ({ isMobile }) 
     { id: 3, key: "persian", name: "Persian", color: "#1f4fa3", enabled: true, ai: false, metal: 4, treasure: 0, food: 10 },
   ];
 
-  const advanced = runEngineJson(["game-end-turn"], state);
-  const foodByOwner = Object.fromEntries(advanced.game.factions.map((faction) => [faction.id, faction.food]));
-  expect(advanced.game.activeOwner).toBe(3);
-  expect(foodByOwner).toEqual({ 1: 7, 2: 8, 3: 10 });
+  const factionTurn = runEngineJson(["game-end-turn"], state);
+  const factionTurnFoodByOwner = Object.fromEntries(factionTurn.game.factions.map((faction) => [faction.id, faction.food]));
+  expect(factionTurn.game.activeOwner).toBe(3);
+  expect(factionTurn.game.round).toBe(1);
+  expect(factionTurnFoodByOwner).toEqual({ 1: 10, 2: 10, 3: 10 });
+
+  const nextRound = runEngineJson(["game-end-turn"], factionTurn);
+  const foodByOwner = Object.fromEntries(nextRound.game.factions.map((faction) => [faction.id, faction.food]));
+  const hungerByOwner = Object.fromEntries(nextRound.game.factions.map((faction) => [faction.id, faction.hunger]));
+  expect(nextRound.game.activeOwner).toBe(1);
+  expect(nextRound.game.round).toBe(2);
+  expect(foodByOwner).toEqual({ 1: 7, 2: 8, 3: 6 });
+  expect(hungerByOwner).toEqual({ 1: 0, 2: 0, 3: 0 });
 
   state.game.foodConsumption = false;
-  const debugAdvanced = runEngineJson(["game-end-turn"], state);
+  const debugAdvanced = runEngineJson(["game-end-turn"], runEngineJson(["game-end-turn"], state));
   const debugFoodByOwner = Object.fromEntries(debugAdvanced.game.factions.map((faction) => [faction.id, faction.food]));
+  const debugHungerByOwner = Object.fromEntries(debugAdvanced.game.factions.map((faction) => [faction.id, faction.hunger]));
   expect(debugFoodByOwner).toEqual({ 1: 10, 2: 10, 3: 10 });
+  expect(debugHungerByOwner).toEqual({ 1: 0, 2: 0, 3: 0 });
+});
+
+test("food shortages increase faction hunger and penalize readiness", async ({ isMobile }) => {
+  test.skip(isMobile, "engine starvation rule is covered once on desktop");
+
+  const state = aiDirectiveGameState({ type: "inactive" }, [
+    { id: 1, owner: 0, faction: "mongol", kind: "horde", q: 2, r: 2, hp: 10, maxHp: 10, population: 4, horses: 0, livestock: 0, readiness: 100, remainingScaledMove: 24 },
+    { id: 2, owner: 0, faction: "mongol", kind: "horse_archer", q: 3, r: 2, hp: 10, maxHp: 10, readiness: 100, remainingScaledMove: 32 },
+  ]);
+  state.game.turnOrder = [2, 0];
+  state.game.activeFactionIndex = 1;
+  state.game.activeOwner = 0;
+  state.game.factions.find((faction) => faction.id === 2).ai = false;
+  state.game.factions.find((faction) => faction.id === 0).food = 1;
+
+  const advanced = runEngineJson(["game-end-turn"], state);
+  const mongol = advanced.game.factions.find((faction) => faction.id === 0);
+  const horde = advanced.units.find((unit) => unit.id === 1);
+  const horseArcher = advanced.units.find((unit) => unit.id === 2);
+
+  expect(mongol.food).toBe(0);
+  expect(mongol.hunger).toBe(3);
+  expect(horde.population).toBe(4);
+  expect(horde.readiness).toBe(90);
+  expect(horseArcher.readiness).toBe(90);
+});
+
+test("severe hunger removes horde population and resets to seven", async ({ isMobile }) => {
+  test.skip(isMobile, "engine starvation rule is covered once on desktop");
+
+  const state = aiDirectiveGameState({ type: "inactive" }, [
+    { id: 1, owner: 0, faction: "mongol", kind: "horde", q: 2, r: 2, hp: 10, maxHp: 10, population: 4, horses: 0, livestock: 0, readiness: 100, remainingScaledMove: 24 },
+  ]);
+  state.game.turnOrder = [2, 0];
+  state.game.activeFactionIndex = 1;
+  state.game.activeOwner = 0;
+  state.game.factions.find((faction) => faction.id === 2).ai = false;
+  const mongol = state.game.factions.find((faction) => faction.id === 0);
+  mongol.food = 0;
+  mongol.hunger = 9;
+
+  const advanced = runEngineJson(["game-end-turn"], state);
+  const advancedMongol = advanced.game.factions.find((faction) => faction.id === 0);
+  const horde = advanced.units.find((unit) => unit.id === 1);
+
+  expect(advancedMongol.hunger).toBe(7);
+  expect(horde.population).toBe(3);
+  expect(horde.readiness).toBe(90);
+});
+
+test("hunger blocks readiness recovery before applying starvation penalty", async ({ isMobile }) => {
+  test.skip(isMobile, "engine starvation rule is covered once on desktop");
+
+  const state = aiDirectiveGameState({ type: "inactive" }, [
+    { id: 1, owner: 0, faction: "mongol", kind: "horde", q: 2, r: 2, hp: 10, maxHp: 10, population: 4, horses: 0, livestock: 0, readiness: 90, remainingScaledMove: 24 },
+  ]);
+  state.game.turnOrder = [0];
+  state.game.activeFactionIndex = 0;
+  state.game.activeOwner = 0;
+  const mongol = state.game.factions.find((faction) => faction.id === 0);
+  mongol.food = 0;
+  mongol.hunger = 9;
+
+  const advanced = runEngineJson(["game-end-turn"], state);
+  const advancedMongol = advanced.game.factions.find((faction) => faction.id === 0);
+  const horde = advanced.units.find((unit) => unit.id === 1);
+
+  expect(advancedMongol.hunger).toBe(7);
+  expect(horde.population).toBe(3);
+  expect(horde.readiness).toBe(80);
 });
 
 test("hordes can butcher livestock into faction food", async ({ isMobile }) => {
@@ -1669,11 +1750,34 @@ test("settled AI relationship scores control generated mobile group role", async
   }];
   const deterred = runEngineJson(["game-end-turn"], deterredState);
   expect(deterred.game.diplomacy.find((relationship) => relationship.owner === 2 && relationship.target === 0)).toEqual(expect.objectContaining({
+    status: "peace",
     disposition: 10,
     fear: 90,
   }));
   expect(deterred.game.aiGroups.find((group) => group.owner === 2)).toEqual(expect.objectContaining({
     generated: true,
+    directive: expect.objectContaining({ type: "inactive" }),
+  }));
+
+  const explicitPeaceState = JSON.parse(JSON.stringify(baseState));
+  explicitPeaceState.game.diplomacy = [{
+    owner: 2,
+    faction: "chinese",
+    target: 0,
+    targetFaction: "mongol",
+    status: "peace",
+    disposition: 10,
+    fear: 10,
+  }];
+  const explicitPeace = runEngineJson(["game-end-turn"], explicitPeaceState);
+  expect(explicitPeace.game.diplomacy.find((relationship) => relationship.owner === 2 && relationship.target === 0)).toEqual(expect.objectContaining({
+    status: "peace",
+    disposition: 10,
+    fear: 10,
+  }));
+  expect(explicitPeace.game.aiGroups.find((group) => group.owner === 2)).toEqual(expect.objectContaining({
+    generated: true,
+    role: "reserve",
     directive: expect.objectContaining({ type: "inactive" }),
   }));
 });
@@ -3380,6 +3484,7 @@ test("scenario AI editor configures groups and map pickers", async ({ page, isMo
 
   await page.getByRole("button", { name: "Factions", exact: true }).click();
   await expect(page.locator('[data-scenario-region="factions"]')).toHaveClass(/is-active/);
+  await page.getByLabel("Chinese war state toward Mongol").selectOption("peace");
   await page.getByLabel("Chinese disposition toward Mongol").fill("35");
   await page.getByLabel("Chinese disposition toward Mongol").dispatchEvent("change");
   await page.getByLabel("Chinese fear toward Mongol").fill("80");
@@ -3387,8 +3492,8 @@ test("scenario AI editor configures groups and map pickers", async ({ page, isMo
   await expect.poll(async () => {
     const view = await editorEngineView(page);
     const relationship = view.game.diplomacy.find((candidate) => candidate.owner === 2 && candidate.target === 0);
-    return relationship ? { disposition: relationship.disposition, fear: relationship.fear } : null;
-  }).toEqual({ disposition: 35, fear: 80 });
+    return relationship ? { status: relationship.status, disposition: relationship.disposition, fear: relationship.fear } : null;
+  }).toEqual({ status: "peace", disposition: 35, fear: 80 });
 
   await page.getByRole("button", { name: "AI", exact: true }).click();
   await expect(page.locator('[data-scenario-region="ai"]')).toHaveClass(/is-active/);

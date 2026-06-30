@@ -112,6 +112,7 @@ struct FactionState {
     int metal = 0;
     int treasure = 0;
     int food = 0;
+    int hunger = 0;
     bool enabled = true;
     bool ai_controlled = false;
 };
@@ -221,6 +222,7 @@ struct DiplomaticRelationship {
     OwnerId target = neutral_owner;
     int disposition = 25;
     int fear = 25;
+    bool at_war = true;
 };
 
 struct UnitDefaults {

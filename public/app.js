@@ -103,6 +103,7 @@ const factionPopulationTotal = document.querySelector("#faction-population-total
 const factionHorsesTotal = document.querySelector("#faction-horses-total");
 const factionLivestockTotal = document.querySelector("#faction-livestock-total");
 const factionFoodTotal = document.querySelector("#faction-food-total");
+const factionHungerTotal = document.querySelector("#faction-hunger-total");
 const factionMetalTotal = document.querySelector("#faction-metal-total");
 const factionTreasureTotal = document.querySelector("#faction-treasure-total");
 const roundCount = document.querySelector("#round-count");
@@ -1599,6 +1600,25 @@ function syncFactionRelationshipControls() {
       if (ownerFaction.id === targetFaction.id) {
         cell.textContent = "-";
       } else {
+        const statusLabelEl = document.createElement("span");
+        statusLabelEl.textContent = "State";
+        const statusSelect = document.createElement("select");
+        statusSelect.className = "faction-status-input";
+        statusSelect.setAttribute("aria-label", `${optionLabelForFaction(ownerFaction)} war state toward ${optionLabelForFaction(targetFaction)}`);
+        for (const option of [
+          { value: "peace", label: "Peace" },
+          { value: "war", label: "War" },
+        ]) {
+          const statusOption = document.createElement("option");
+          statusOption.value = option.value;
+          statusOption.textContent = option.label;
+          statusSelect.appendChild(statusOption);
+        }
+        statusSelect.value = diplomacyStatus(ownerFaction.id, targetFaction.id);
+        statusSelect.addEventListener("change", () => {
+          updateDiplomacyStatus(ownerFaction.id, targetFaction.id, statusSelect.value);
+        });
+
         const dispositionLabelEl = document.createElement("span");
         dispositionLabelEl.textContent = "Disp";
         const dispositionInput = document.createElement("input");
@@ -1629,7 +1649,7 @@ function syncFactionRelationshipControls() {
 
         const cellStack = document.createElement("div");
         cellStack.className = "faction-relationship-cell";
-        cellStack.append(dispositionLabelEl, dispositionInput, fearLabelEl, fearInput);
+        cellStack.append(statusLabelEl, statusSelect, dispositionLabelEl, dispositionInput, fearLabelEl, fearInput);
         cell.appendChild(cellStack);
       }
       row.appendChild(cell);
@@ -2047,10 +2067,11 @@ function syncDiplomacyScreen() {
       if (ownerFaction.id === targetFaction.id) {
         cell.textContent = "-";
       } else {
+        const status = diplomacyStatus(ownerFaction.id, targetFaction.id);
         const disposition = diplomacyDisposition(ownerFaction.id, targetFaction.id);
         const fear = diplomacyFear(ownerFaction.id, targetFaction.id);
-        cell.textContent = `${relationshipLabel(disposition, fear)} / D${disposition} F${fear}`;
-        cell.className = `is-${relationshipBand(disposition, fear)}`;
+        cell.textContent = `${relationshipLabel(status, disposition, fear)} / ${status.toUpperCase()} D${disposition} F${fear}`;
+        cell.className = `is-${relationshipBand(status, disposition, fear)}`;
       }
       row.appendChild(cell);
     }
@@ -2257,6 +2278,7 @@ function updateScenarioFactionsFromControls() {
     metal: faction.metal,
     treasure: faction.treasure,
     food: faction.food,
+    hunger: faction.hunger,
     enabled: faction.enabled,
     ai: faction.ai,
   }));
@@ -2282,6 +2304,7 @@ function normalizeScenarioFaction(faction, fallbackKey = "mongol") {
     metal: Number.isFinite(faction && faction.metal) ? Math.max(0, Math.trunc(faction.metal)) : defaults.metal,
     treasure: Number.isFinite(faction && faction.treasure) ? Math.max(0, Math.trunc(faction.treasure)) : defaults.treasure,
     food: Number.isFinite(faction && faction.food) ? Math.max(0, Math.trunc(faction.food)) : defaults.food,
+    hunger: Number.isFinite(faction && faction.hunger) ? Math.max(0, Math.trunc(faction.hunger)) : 0,
     enabled: faction && faction.enabled !== undefined ? Boolean(faction.enabled) : Boolean(defaults.enabled),
     ai: faction && faction.ai !== undefined ? Boolean(faction.ai) : Boolean(defaults.ai),
   };
@@ -2491,6 +2514,16 @@ function hostileRelationship(disposition, fear) {
   return clampDisposition(disposition) <= 35 && clampFear(fear) < 75;
 }
 
+function legacyStatus(relationship, disposition, fear) {
+  if (relationship && relationship.status === "peace") {
+    return "peace";
+  }
+  if (relationship && relationship.status === "war") {
+    return "war";
+  }
+  return hostileRelationship(disposition, fear) ? "war" : "peace";
+}
+
 function dispositionBand(disposition) {
   const value = clampDisposition(disposition);
   if (value <= 15) return "hostile";
@@ -2507,7 +2540,8 @@ function dispositionLabel(disposition) {
   return "Friendly";
 }
 
-function relationshipBand(disposition, fear) {
+function relationshipBand(status, disposition, fear) {
+  if (status === "war") return "hostile";
   const dispositionValue = clampDisposition(disposition);
   const fearValue = clampFear(fear);
   if (dispositionValue <= 35 && fearValue >= 75) return "deterred";
@@ -2516,7 +2550,8 @@ function relationshipBand(disposition, fear) {
   return "neutral";
 }
 
-function relationshipLabel(disposition, fear) {
+function relationshipLabel(status, disposition, fear) {
+  if (status === "war") return "War";
   const dispositionValue = clampDisposition(disposition);
   const fearValue = clampFear(fear);
   if (dispositionValue <= 35 && fearValue >= 75) return "Hostile but afraid";
@@ -2547,9 +2582,12 @@ function normalizeDiplomacy(rawDiplomacy) {
         continue;
       }
       const key = diplomacyOwnerKey(owner, target);
+      const disposition = legacyDisposition(relationship);
+      const fear = legacyFear(relationship);
       prior.set(key, {
-        disposition: legacyDisposition(relationship),
-        fear: legacyFear(relationship),
+        status: legacyStatus(relationship, disposition, fear),
+        disposition,
+        fear,
       });
     }
   }
@@ -2561,11 +2599,13 @@ function normalizeDiplomacy(rawDiplomacy) {
         continue;
       }
       const key = diplomacyOwnerKey(ownerFaction.id, targetFaction.id);
+      const reverseKey = diplomacyOwnerKey(targetFaction.id, ownerFaction.id);
       normalized.push({
         owner: ownerFaction.id,
         faction: ownerFaction.key,
         target: targetFaction.id,
         targetFaction: targetFaction.key,
+        status: prior.has(key) ? prior.get(key).status : (prior.has(reverseKey) ? prior.get(reverseKey).status : "war"),
         disposition: prior.has(key) ? prior.get(key).disposition : 25,
         fear: prior.has(key) ? prior.get(key).fear : 25,
       });
@@ -2581,6 +2621,15 @@ function diplomacyDisposition(owner, target) {
     ? currentMap.game.diplomacy.find((candidate) => candidate.owner === owner && candidate.target === target)
     : null;
   return relationship ? clampDisposition(relationship.disposition) : 25;
+}
+
+function diplomacyStatus(owner, target) {
+  const relationship = currentMap
+    && currentMap.game
+    && Array.isArray(currentMap.game.diplomacy)
+    ? currentMap.game.diplomacy.find((candidate) => candidate.owner === owner && candidate.target === target)
+    : null;
+  return relationship && relationship.status === "peace" ? "peace" : "war";
 }
 
 function diplomacyFear(owner, target) {
@@ -2603,7 +2652,9 @@ function updateDiplomacyRelationship(owner, target, field, value) {
     return;
   }
   recordLocalUndo();
-  if (field === "fear") {
+  if (field === "status") {
+    relationship.status = value === "peace" ? "peace" : "war";
+  } else if (field === "fear") {
     relationship.fear = clampFear(value);
   } else {
     relationship.disposition = clampDisposition(value);
@@ -2616,6 +2667,10 @@ function updateDiplomacyRelationship(owner, target, field, value) {
 
 function updateDiplomacyDisposition(owner, target, value) {
   updateDiplomacyRelationship(owner, target, "disposition", value);
+}
+
+function updateDiplomacyStatus(owner, target, value) {
+  updateDiplomacyRelationship(owner, target, "status", value);
 }
 
 function updateDiplomacyFear(owner, target, value) {
@@ -2701,6 +2756,7 @@ function activeFactionResources(owner) {
     horses: 0,
     livestock: 0,
     food: Number.isInteger(faction.food) ? faction.food : 0,
+    hunger: Number.isInteger(faction.hunger) ? faction.hunger : 0,
     metal: Number.isInteger(faction.metal) ? faction.metal : 0,
     treasure: Number.isInteger(faction.treasure) ? faction.treasure : 0,
   };
@@ -2750,6 +2806,7 @@ function ensureGameMeta() {
       metal: faction.metal,
       treasure: faction.treasure,
       food: faction.food,
+      hunger: faction.hunger,
       enabled: faction.enabled,
       ai: faction.ai,
     }));
@@ -2784,6 +2841,7 @@ function ensureGameMeta() {
         metal: Number.isFinite(prior.metal) ? prior.metal : faction.metal,
         treasure: Number.isFinite(prior.treasure) ? prior.treasure : faction.treasure,
         food: Number.isFinite(prior.food) ? prior.food : faction.food,
+        hunger: Number.isFinite(prior.hunger) ? prior.hunger : faction.hunger,
       }, faction.key)
       : faction;
   });
@@ -2802,6 +2860,7 @@ function ensureGameMeta() {
     metal: faction.metal,
     treasure: faction.treasure,
     food: faction.food,
+    hunger: faction.hunger,
     enabled: faction.enabled,
     ai: faction.ai,
   }));
@@ -4050,6 +4109,9 @@ function syncPlayControls() {
   }
   if (factionFoodTotal) {
     factionFoodTotal.textContent = String(resources.food);
+  }
+  if (factionHungerTotal) {
+    factionHungerTotal.textContent = String(resources.hunger);
   }
   factionMetalTotal.textContent = String(resources.metal);
   factionTreasureTotal.textContent = String(resources.treasure);

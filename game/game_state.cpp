@@ -340,21 +340,21 @@ std::vector<UnitStance> parse_legal_stances_field(const std::string& value, int 
 
 FactionState faction_for_owner(OwnerId owner) {
     if (owner == mongol_owner) {
-        return {mongol_owner, "mongol", "Mongol", "steppe_nomad", "#d6a21a", 4, 0, 20, true, false};
+        return {mongol_owner, "mongol", "Mongol", "steppe_nomad", "#d6a21a", 4, 0, 20, 0, true, false};
     }
     if (owner == chinese_owner) {
-        return {chinese_owner, "chinese", "Chinese", "chinese", "#c93632", 4, 0, 20, true, false};
+        return {chinese_owner, "chinese", "Chinese", "chinese", "#c93632", 4, 0, 20, 0, true, false};
     }
     if (owner == persian_owner) {
-        return {persian_owner, "persian", "Persian", "persian", "#1f4fa3", 4, 0, 20, true, false};
+        return {persian_owner, "persian", "Persian", "persian", "#1f4fa3", 4, 0, 20, 0, true, false};
     }
     if (owner == jurchen_owner) {
-        return {jurchen_owner, "jurchen", "Jurchen", "jurchen", "#1f6f68", 4, 0, 20, true, true};
+        return {jurchen_owner, "jurchen", "Jurchen", "jurchen", "#1f6f68", 4, 0, 20, 0, true, true};
     }
     if (owner == forest_nomad_owner) {
-        return {forest_nomad_owner, "forest_nomad", "Forest Nomads", "forest_nomad", "#2f6b35", 2, 0, 20, true, true};
+        return {forest_nomad_owner, "forest_nomad", "Forest Nomads", "forest_nomad", "#2f6b35", 2, 0, 20, 0, true, true};
     }
-    return {neutral_owner, "neutral", "Neutral", "neutral", "#777777", 0, 0, 0, false, false};
+    return {neutral_owner, "neutral", "Neutral", "neutral", "#777777", 0, 0, 0, 0, false, false};
 }
 
 OwnerId owner_from_faction_key(const std::string& key, OwnerId fallback = neutral_owner) {
@@ -680,6 +680,10 @@ constexpr int max_move_readiness_cost = 5;
 constexpr int attack_readiness_cost = 10;
 constexpr int turn_readiness_recovery = 15;
 constexpr int food_consumption_per_population = 1;
+constexpr int faction_hunger_readiness_threshold = 3;
+constexpr int faction_hunger_starvation_threshold = 10;
+constexpr int faction_hunger_starvation_reset = 7;
+constexpr int faction_hunger_readiness_penalty = 10;
 constexpr int flanked_defense_percent = 75;
 constexpr int defender_retreat_condition_threshold = 50;
 constexpr int feigned_retreat_pursuit_readiness_penalty = 15;
@@ -1094,11 +1098,19 @@ void normalize_diplomacy(GameState& state) {
             }
             const int key = diplomacy_key(owner, target);
             const auto found = existing_relationships.find(key);
+            const auto reverse_found = existing_relationships.find(diplomacy_key(target, owner));
             DiplomaticRelationship relationship;
             relationship.owner = owner;
             relationship.target = target;
             relationship.disposition = found == existing_relationships.end() ? 25 : found->second.disposition;
             relationship.fear = found == existing_relationships.end() ? 25 : found->second.fear;
+            if (found != existing_relationships.end()) {
+                relationship.at_war = found->second.at_war;
+            } else if (reverse_found != existing_relationships.end()) {
+                relationship.at_war = reverse_found->second.at_war;
+            } else {
+                relationship.at_war = true;
+            }
             normalized.push_back(relationship);
         }
     }
@@ -1125,11 +1137,22 @@ int fear_toward(const GameState& state, OwnerId owner, OwnerId target) {
     return found == state.diplomacy.end() ? 25 : clamp_fear(found->fear);
 }
 
+bool relationship_at_war_toward(const GameState& state, OwnerId owner, OwnerId target) {
+    if (owner == target || owner == neutral_owner || target == neutral_owner) {
+        return false;
+    }
+    const auto found = std::find_if(state.diplomacy.begin(), state.diplomacy.end(), [&](const DiplomaticRelationship& relationship) {
+        return relationship.owner == owner && relationship.target == target;
+    });
+    return found == state.diplomacy.end() ? true : found->at_war;
+}
+
 bool at_war(const GameState& state, OwnerId first, OwnerId second) {
     if (first == second || first == neutral_owner || second == neutral_owner) {
         return false;
     }
-    return hostile_relationship(disposition_toward(state, first, second), fear_toward(state, first, second));
+    return relationship_at_war_toward(state, first, second)
+        || relationship_at_war_toward(state, second, first);
 }
 
 bool hostile_units(const GameState& state, const Unit& first, const Unit& second) {
@@ -1773,16 +1796,83 @@ int faction_population(const GameState& state, OwnerId owner) {
     return population;
 }
 
-void consume_faction_food(GameState& state, OwnerId owner) {
+std::uint32_t mix_starvation_seed(std::uint32_t seed, int round, OwnerId owner, int hunger) {
+    std::uint32_t value = seed ^ 0x9e3779b9u;
+    value ^= static_cast<std::uint32_t>(round + 0x7f4a7c15u) + (value << 6) + (value >> 2);
+    value ^= static_cast<std::uint32_t>(owner * 2654435761u) + (value << 6) + (value >> 2);
+    value ^= static_cast<std::uint32_t>(hunger * 2246822519u) + (value << 6) + (value >> 2);
+    return value;
+}
+
+void reduce_random_horde_population(GameState& state, OwnerId owner, int hunger) {
+    std::vector<Unit*> candidates;
+    for (Unit& unit : state.units) {
+        if (unit.owner == owner && unit.kind == UnitKind::Horde && unit.hp > 0 && unit.population > 0) {
+            candidates.push_back(&unit);
+        }
+    }
+    if (candidates.empty()) {
+        return;
+    }
+    std::sort(candidates.begin(), candidates.end(), [](const Unit* first, const Unit* second) {
+        return first->id < second->id;
+    });
+    const std::uint32_t roll = mix_starvation_seed(
+        static_cast<std::uint32_t>(state.seed),
+        state.round,
+        owner,
+        hunger
+    );
+    Unit* selected = candidates[roll % candidates.size()];
+    selected->population = std::max(0, selected->population - 1);
+}
+
+void apply_faction_food_for_round(GameState& state) {
     if (!state.food_consumption_enabled) {
         return;
     }
-    FactionState* faction = find_faction(state, owner);
-    if (faction == nullptr) {
-        return;
+
+    for (FactionState& faction : state.factions) {
+        if (!faction.enabled || faction.id == neutral_owner) {
+            continue;
+        }
+
+        const int required_food = faction_population(state, faction.id) * food_consumption_per_population;
+        if (required_food <= 0) {
+            faction.hunger = 0;
+            continue;
+        }
+
+        const int available_food = std::max(0, faction.food);
+        const int consumed_food = std::min(available_food, required_food);
+        faction.food = available_food - consumed_food;
+        const int food_shortage = required_food - consumed_food;
+
+        if (food_shortage <= 0) {
+            faction.hunger = 0;
+        } else {
+            faction.hunger += food_shortage;
+        }
+
+        if (faction.hunger >= faction_hunger_starvation_threshold) {
+            reduce_random_horde_population(state, faction.id, faction.hunger);
+            faction.hunger = faction_hunger_starvation_reset;
+        }
+
     }
-    const int demand = faction_population(state, owner) * food_consumption_per_population;
-    faction->food = std::max(0, faction->food - demand);
+}
+
+void apply_faction_hunger_readiness_effects(GameState& state) {
+    for (const FactionState& faction : state.factions) {
+        if (!faction.enabled || faction.id == neutral_owner || faction.hunger < faction_hunger_readiness_threshold) {
+            continue;
+        }
+        for (Unit& unit : state.units) {
+            if (unit.owner == faction.id && unit.hp > 0) {
+                unit.readiness = std::max(0, unit.readiness - faction_hunger_readiness_penalty);
+            }
+        }
+    }
 }
 
 bool faction_ai_controlled(const GameState& state, OwnerId owner) {
@@ -2970,6 +3060,9 @@ bool complete_horde_production(GameState& state, Unit& horde) {
 
 void start_faction_turn(GameState& state, OwnerId owner) {
     std::vector<int> ready_horde_ids;
+    const FactionState* faction = find_faction(state, owner);
+    const bool hunger_blocks_recovery = faction != nullptr
+        && faction->hunger >= faction_hunger_readiness_threshold;
     for (Unit& unit : state.units) {
         if (unit.owner == owner) {
             if (unit.kind == UnitKind::Horde && unit.production_active) {
@@ -2979,7 +3072,8 @@ void start_faction_turn(GameState& state, OwnerId owner) {
                 }
             }
             const bool currently_in_contact = enemy_unit_adjacent_to(state, unit);
-            if (!unit.moved_this_turn
+            if (!hunger_blocks_recovery
+                && !unit.moved_this_turn
                 && !unit.combat_done
                 && !unit.contacted_enemy_this_turn
                 && !currently_in_contact) {
@@ -3554,9 +3648,7 @@ bool strategic_directive_for_owner(const GameState& state, OwnerId owner, Coord 
             return true;
         }
         if (nearest_capturable_hex(state, owner, origin, target, target_owner)) {
-            const int disposition = target_owner == neutral_owner ? 25 : disposition_toward(state, owner, target_owner);
-            const int fear = target_owner == neutral_owner ? 25 : fear_toward(state, owner, target_owner);
-            if (!hostile_relationship(disposition, fear)) {
+            if (target_owner == neutral_owner || !at_war(state, owner, target_owner)) {
                 return false;
             }
             directive.kind = AiDirectiveKind::CaptureHex;
@@ -3573,11 +3665,6 @@ bool strategic_directive_for_owner(const GameState& state, OwnerId owner, Coord 
             }
         }
         if (const Unit* enemy = nearest_enemy_unit_from_coord(state, owner, origin)) {
-            const int disposition = disposition_toward(state, owner, enemy->owner);
-            const int fear = fear_toward(state, owner, enemy->owner);
-            if (!hostile_relationship(disposition, fear)) {
-                return false;
-            }
             directive = default_hunt_directive();
             return true;
         }
@@ -3653,14 +3740,12 @@ struct DefensiveHex {
 
 std::string generated_settled_mobile_role(const GameState& state, OwnerId owner) {
     bool has_field_disposition = false;
-    bool has_war = false;
     for (const DiplomaticRelationship& relationship : state.diplomacy) {
         if (relationship.owner != owner
             || relationship.target == neutral_owner
-            || !hostile_relationship(relationship.disposition, relationship.fear)) {
+            || !at_war(state, owner, relationship.target)) {
             continue;
         }
-        has_war = true;
         const int disposition = clamp_disposition(relationship.disposition);
         const int fear = clamp_fear(relationship.fear);
         if (raiding_relationship(disposition, fear)) {
@@ -3670,7 +3755,7 @@ std::string generated_settled_mobile_role(const GameState& state, OwnerId owner)
             has_field_disposition = true;
         }
     }
-    return has_field_disposition || !has_war ? "field_army" : "reserve";
+    return has_field_disposition ? "field_army" : "reserve";
 }
 
 std::string generated_settled_mobile_group_name(const std::string& role) {
@@ -4686,12 +4771,15 @@ void end_turn(GameState& state, std::vector<AiAnimationStep>* /*animation*/) {
         state.turn_order = {mongol_owner, chinese_owner};
     }
 
-    consume_faction_food(state, active_faction(state));
     const bool completed_round = advance_to_next_faction(state);
     if (completed_round) {
+        apply_faction_food_for_round(state);
         apply_pasture_for_round(state);
     }
     start_faction_turn(state, active_faction(state));
+    if (completed_round) {
+        apply_faction_hunger_readiness_effects(state);
+    }
 }
 
 void print_coord_json(const Coord& coord, std::ostream& out) {
@@ -4979,6 +5067,7 @@ void print_diplomacy_json(const std::vector<DiplomaticRelationship>& diplomacy, 
             << ",\"faction\":\"" << escape_json(owner.key) << "\""
             << ",\"target\":" << relationship.target
             << ",\"targetFaction\":\"" << escape_json(target.key) << "\""
+            << ",\"status\":\"" << (relationship.at_war ? "war" : "peace") << "\""
             << ",\"disposition\":" << clamp_disposition(relationship.disposition)
             << ",\"fear\":" << clamp_fear(relationship.fear)
             << "}";
@@ -5045,12 +5134,14 @@ std::string game_state_hash(const GameState& state) {
         hash_append_int(hash, faction.metal);
         hash_append_int(hash, faction.treasure);
         hash_append_int(hash, faction.food);
+        hash_append_int(hash, faction.hunger);
         hash_append_bool(hash, faction.enabled);
         hash_append_bool(hash, faction.ai_controlled);
     }
     for (const DiplomaticRelationship& relationship : state.diplomacy) {
         hash_append_int(hash, relationship.owner);
         hash_append_int(hash, relationship.target);
+        hash_append_bool(hash, relationship.at_war);
         hash_append_int(hash, clamp_disposition(relationship.disposition));
         hash_append_int(hash, clamp_fear(relationship.fear));
     }
@@ -5131,6 +5222,7 @@ void print_game_meta_json(const GameState& state, std::ostream& out) {
             << ",\"metal\":" << faction.metal
             << ",\"treasure\":" << faction.treasure
             << ",\"food\":" << faction.food
+            << ",\"hunger\":" << faction.hunger
             << ",\"enabled\":" << (faction.enabled ? "true" : "false")
             << ",\"ai\":" << (faction.ai_controlled ? "true" : "false")
             << "}";
@@ -5568,7 +5660,10 @@ void print_game_events_json(const GameState& state, const GameState* before, std
             continue;
         }
         const FactionState& prior = found->second;
-        if (prior.metal != faction.metal || prior.treasure != faction.treasure || prior.food != faction.food) {
+        if (prior.metal != faction.metal
+            || prior.treasure != faction.treasure
+            || prior.food != faction.food
+            || prior.hunger != faction.hunger) {
             event_prefix();
             out << "{\"type\":\"faction_resources_changed\",\"owner\":" << faction.id
                 << ",\"fromMetal\":" << prior.metal
@@ -5577,6 +5672,8 @@ void print_game_events_json(const GameState& state, const GameState* before, std
                 << ",\"toTreasure\":" << faction.treasure
                 << ",\"fromFood\":" << prior.food
                 << ",\"toFood\":" << faction.food
+                << ",\"fromHunger\":" << prior.hunger
+                << ",\"toHunger\":" << faction.hunger
                 << "}";
         }
     }
@@ -5697,6 +5794,7 @@ GameState parse_game_state_json(const std::string& json) {
             faction.metal = std::max(0, int_field(faction_json, "metal", 0));
             faction.treasure = std::max(0, int_field(faction_json, "treasure", 0));
             faction.food = std::max(0, int_field(faction_json, "food", faction.food));
+            faction.hunger = std::max(0, int_field(faction_json, "hunger", faction.hunger));
             faction.enabled = bool_field(faction_json, "enabled", true);
             faction.ai_controlled = bool_field(faction_json, "ai", false);
             state.factions.push_back(std::move(faction));
@@ -5726,6 +5824,7 @@ GameState parse_game_state_json(const std::string& json) {
             "target",
             owner_from_faction_key(string_field(diplomacy_json, "targetFaction", ""), neutral_owner)
         );
+        const bool has_explicit_status = diplomacy_json.contains("status") && diplomacy_json["status"].is_string();
         if (diplomacy_json.contains("disposition") && diplomacy_json["disposition"].is_number_integer()) {
             relationship.disposition = clamp_disposition(diplomacy_json["disposition"].get<int>());
         } else {
@@ -5749,6 +5848,9 @@ GameState parse_game_state_json(const std::string& json) {
             relationship.disposition = clamp_disposition(disposition);
         }
         relationship.fear = clamp_fear(int_field(diplomacy_json, "fear", 25));
+        relationship.at_war = has_explicit_status
+            ? string_field(diplomacy_json, "status", "war") != "peace"
+            : hostile_relationship(relationship.disposition, relationship.fear);
         state.diplomacy.push_back(std::move(relationship));
     }
     normalize_diplomacy(state);

@@ -1122,7 +1122,7 @@ select[hidden] {
 
 .faction-relationship-cell {
   display: grid;
-  grid-template-columns: auto 58px;
+  grid-template-columns: auto 66px;
   gap: 4px 6px;
   align-items: center;
   justify-content: center;
@@ -1135,10 +1135,11 @@ select[hidden] {
   text-align: right;
 }
 
+.faction-status-input,
 .faction-disposition-input,
 .faction-fear-input {
   min-width: 0;
-  width: 58px;
+  width: 66px;
 }
 
 .context-menu {
