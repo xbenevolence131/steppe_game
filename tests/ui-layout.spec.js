@@ -1259,6 +1259,38 @@ test("food is consumed by faction population on round end", async ({ isMobile })
   expect(debugHungerByOwner).toEqual({ 1: 0, 2: 0, 3: 0 });
 });
 
+test("owned farmland produces faction food on round end", async ({ isMobile }) => {
+  test.skip(isMobile, "engine resource rule is covered once on desktop");
+
+  const state = pastureGameState({ width: 4, height: 1, turnOrder: [1] });
+  state.hexes = state.hexes.map((hex) => (
+    hex.q <= 2
+      ? { ...hex, terrain: "farmland", owner: 1 }
+      : { ...hex, owner: -1 }
+  ));
+  state.units = [
+    { id: 1, owner: 1, faction: "mongol", kind: "horde", q: 1, r: 1, hp: 10, maxHp: 10, population: 3, horses: 0, livestock: 0 },
+  ];
+  state.game.activeFactionIndex = 0;
+  state.game.activeOwner = 1;
+  state.game.factions = [
+    { id: 1, key: "mongol", name: "Mongol", color: "#d6a21a", enabled: true, ai: false, metal: 4, treasure: 0, food: 0, hunger: 5 },
+  ];
+
+  const advanced = runEngineJson(["game-end-turn"], state);
+  const mongol = advanced.game.factions.find((faction) => faction.id === 1);
+
+  expect(advanced.game.round).toBe(2);
+  expect(mongol.food).toBe(1);
+  expect(mongol.hunger).toBe(0);
+
+  state.game.foodConsumption = false;
+  const disabled = runEngineJson(["game-end-turn"], state);
+  const disabledMongol = disabled.game.factions.find((faction) => faction.id === 1);
+  expect(disabledMongol.food).toBe(0);
+  expect(disabledMongol.hunger).toBe(5);
+});
+
 test("food shortages increase faction hunger and penalize readiness", async ({ isMobile }) => {
   test.skip(isMobile, "engine starvation rule is covered once on desktop");
 
@@ -2495,6 +2527,13 @@ test("play map selection and bottom panel inspect units", async ({ page, isMobil
   await expect(page.locator(".hex-inspector h2")).toContainText("Hex Inspector Panel");
   await expect(page.locator("#hex-title-coordinate")).toHaveText(/\d+,\d+/);
   await expect(page.locator("#hex-name")).toHaveText(await page.evaluate(() => selectedHex().name));
+  await page.evaluate(() => {
+    const hex = selectedHex();
+    hex.terrain = "grassland";
+    hex.pasture = { capacity: 100, remaining: 72.6 };
+    syncHexInspector();
+  });
+  await expect(page.locator("#hex-pasture")).toHaveText("73/100");
   await expect(page.evaluate(() => {
     const title = document.querySelector(".hex-inspector h2").getBoundingClientRect();
     const coordinate = document.querySelector("#hex-title-coordinate").getBoundingClientRect();

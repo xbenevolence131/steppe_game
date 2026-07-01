@@ -734,6 +734,7 @@ constexpr int max_move_readiness_cost = 5;
 constexpr int attack_readiness_cost = 10;
 constexpr int turn_readiness_recovery = 15;
 constexpr int food_consumption_per_population = 1;
+constexpr int farmland_food_per_round = 2;
 constexpr int faction_hunger_readiness_threshold = 3;
 constexpr int faction_hunger_starvation_threshold = 10;
 constexpr int faction_hunger_starvation_reset = 7;
@@ -1881,6 +1882,16 @@ void reduce_random_horde_population(GameState& state, OwnerId owner, int hunger)
     selected->population = std::max(0, selected->population - 1);
 }
 
+int faction_farmland_food(const GameState& state, OwnerId owner) {
+    int farmland_count = 0;
+    for (const GameHex& hex : state.hexes) {
+        if (hex.owner == owner && hex.terrain == Terrain::Farmland) {
+            farmland_count += 1;
+        }
+    }
+    return farmland_count * farmland_food_per_round;
+}
+
 void apply_faction_food_for_round(GameState& state) {
     if (!state.food_consumption_enabled) {
         return;
@@ -1891,13 +1902,15 @@ void apply_faction_food_for_round(GameState& state) {
             continue;
         }
 
+        faction.food = std::max(0, faction.food) + faction_farmland_food(state, faction.id);
+
         const int required_food = faction_population(state, faction.id) * food_consumption_per_population;
         if (required_food <= 0) {
             faction.hunger = 0;
             continue;
         }
 
-        const int available_food = std::max(0, faction.food);
+        const int available_food = faction.food;
         const int consumed_food = std::min(available_food, required_food);
         faction.food = available_food - consumed_food;
         const int food_shortage = required_food - consumed_food;

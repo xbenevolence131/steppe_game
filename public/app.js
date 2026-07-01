@@ -617,6 +617,10 @@ function formatPastureValue(value) {
   return Number.isFinite(value) ? value.toFixed(2) : "0.00";
 }
 
+function formatPastureInspectorValue(value) {
+  return Number.isFinite(value) ? String(Math.round(value)) : "0";
+}
+
 function normalizePasture(rawPasture, terrain) {
   const fallback = defaultPastureForTerrain(terrain);
   if (!rawPasture || typeof rawPasture !== "object") {
@@ -4275,7 +4279,7 @@ function syncHexInspector() {
   hexSupplyState.textContent = supplyStateLabel(hex);
   hexPastureRow.hidden = pasture.capacity <= 0;
   hexPasture.textContent = pasture.capacity > 0
-    ? `${formatPastureValue(pasture.remaining)}/${formatPastureValue(pasture.capacity)}`
+    ? `${formatPastureInspectorValue(pasture.remaining)}/${formatPastureInspectorValue(pasture.capacity)}`
     : "-";
 }
 
